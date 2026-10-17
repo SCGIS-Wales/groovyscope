@@ -84,4 +84,36 @@ class DynamicCodeFinderSpec extends Specification {
         services.workspace().close(uri)
         services.markDirty()
     }
+
+    def 'execute() on a runner is not a process; on strings, lists and untyped values it is'() {
+        given:
+        def services = Fixtures.services('basic-app')
+        String uri = 'file:///virtual/Exec.groovy'
+        services.workspace().open(uri, '''
+            class Runner { int execute() { 0 } }
+            class Uses {
+                Runner runner = new Runner()
+                void go(String command, List<String> argv, def anything) {
+                    runner.execute()
+                    new Runner().execute()
+                    command.execute()
+                    argv.execute()
+                    anything.execute()
+                    "ls ${command}".execute()
+                    ['ls', '-la'].execute()
+                }
+            }
+        ''')
+        services.markDirty()
+
+        when:
+        def lines = services.dynamicCode([uri]).findAll { it.kind() == 'process-execution' }*.location()*.range()*.start()*.line()
+
+        then: 'runner.execute() and new Runner().execute() (lines 5 and 6, zero-based) are not reported'
+        lines.sort() == [7, 8, 9, 10, 11]
+
+        cleanup:
+        services.workspace().close(uri)
+        services.markDirty()
+    }
 }

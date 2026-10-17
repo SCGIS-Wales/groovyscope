@@ -211,7 +211,8 @@ the daemon serves several Kiro sessions on the same workspace from one compiled 
 `find_dynamic_code` is the one tool with no LSP counterpart: `DynamicCodeFinder` walks the index for the
 constructs that defeat static analysis (classes with neither `@CompileStatic` nor `@CompileDynamic`, `def`
 on public methods, `methodMissing`/`propertyMissing`/`invokeMethod` hooks, `metaClass` writes, `@Grab` on
-classes, methods or imports, `Eval`/`GroovyShell`/template engines, and `execute()`), so an agent can review
+classes, methods or imports, `Eval`/`GroovyShell`/template engines, and `execute()` on a string, GString,
+list, array or untyped receiver, the GDK's process launcher), so an agent can review
 them before trusting navigation or impact answers around them.
 
 ## Token economy

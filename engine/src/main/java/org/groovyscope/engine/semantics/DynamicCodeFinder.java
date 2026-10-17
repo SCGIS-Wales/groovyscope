@@ -27,8 +27,14 @@ import org.codehaus.groovy.ast.ConstructorNode;
 import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.Parameter;
+import org.codehaus.groovy.ast.Variable;
+import org.codehaus.groovy.ast.expr.CastExpression;
 import org.codehaus.groovy.ast.expr.ClassExpression;
+import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
+import org.codehaus.groovy.ast.expr.Expression;
+import org.codehaus.groovy.ast.expr.GStringExpression;
+import org.codehaus.groovy.ast.expr.ListExpression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.PropertyExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
@@ -167,7 +173,8 @@ public final class DynamicCodeFinder {
             out.add(new Finding("dynamic-evaluation", location(entry), describe(entry),
                     receiver.getNameWithoutPackage() + "." + name + " evaluates code at runtime"));
         } else if ("execute".equals(name) && call.getObjectExpression() != null
-                && !(call.getObjectExpression() instanceof VariableExpression v && v.isThisExpression())) {
+                && !(call.getObjectExpression() instanceof VariableExpression v && v.isThisExpression())
+                && mayRunProcess(call.getObjectExpression())) {
             out.add(new Finding("process-execution", location(entry), describe(entry),
                     "execute() runs an external process; its input must not come from untrusted data"));
         } else if (("invokeMethod".equals(name) || "setMetaClass".equals(name)) && !call.isImplicitThis()) {
@@ -180,6 +187,44 @@ public final class DynamicCodeFinder {
         ClassNode type = annotation.getClassNode();
         return type != null && GRAB_ANNOTATIONS.contains(type.getNameWithoutPackage())
                 && (type.getPackageName() == null || "groovy.lang".equals(type.getPackageName()));
+    }
+
+    /** Types whose {@code execute()} is Groovy's process launcher (the GDK adds it to strings, lists and arrays). */
+    static final Set<String> PROCESS_RECEIVERS = Set.of("java.lang.String", "groovy.lang.GString", "java.lang.Object",
+            "java.lang.CharSequence", "java.util.List", "java.util.Collection", "java.util.ArrayList",
+            "java.lang.String[]", "java.lang.Object[]");
+
+    /**
+     * Whether {@code receiver.execute()} can be the GDK's process launcher: a string, GString, list or array,
+     * or a receiver whose type is unknown or dynamic. A receiver declared as any other class (a runner, a task)
+     * calls that class's own {@code execute()}.
+     */
+    static boolean mayRunProcess(Expression receiver) {
+        if (receiver instanceof ConstantExpression constant) {
+            return constant.getValue() instanceof String;
+        }
+        if (receiver instanceof GStringExpression || receiver instanceof ListExpression) {
+            return true;
+        }
+        if (receiver instanceof CastExpression cast) {
+            return isProcessReceiver(cast.getType());
+        }
+        if (receiver instanceof ConstructorCallExpression constructor) {
+            return isProcessReceiver(constructor.getType());
+        }
+        if (receiver instanceof VariableExpression variable) {
+            Variable accessed = variable.getAccessedVariable();
+            if (accessed == null || accessed.isDynamicTyped()) {
+                return true;
+            }
+            return isProcessReceiver(accessed.getOriginType());
+        }
+        return true; // property chains, method results: unknown, so reported
+    }
+
+    private static boolean isProcessReceiver(ClassNode type) {
+        return type == null || PROCESS_RECEIVERS.contains(type.getName())
+                || type.isArray() && isProcessReceiver(type.getComponentType());
     }
 
     static boolean hasAnnotation(AnnotatedNode node, Set<String> names) {
