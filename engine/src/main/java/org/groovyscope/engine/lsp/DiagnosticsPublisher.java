@@ -47,6 +47,7 @@ final class DiagnosticsPublisher {
     });
     private final Map<String, List<org.groovyscope.engine.model.Diagnostic>> lastPublished = new java.util.HashMap<>();
     private ScheduledFuture<?> pending;
+    private volatile boolean stopped;
 
     DiagnosticsPublisher(Supplier<LanguageServices> services, Supplier<LanguageClient> client) {
         this.services = services;
@@ -81,7 +82,7 @@ final class DiagnosticsPublisher {
     void publishNow() {
         LanguageServices current = services.get();
         LanguageClient target = client.get();
-        if (current == null || target == null) {
+        if (current == null || target == null || stopped) {
             return;
         }
         try {
@@ -102,6 +103,9 @@ final class DiagnosticsPublisher {
                 lastPublished.putAll(changed);
             }
             for (Map.Entry<String, List<org.groovyscope.engine.model.Diagnostic>> entry : changed.entrySet()) {
+                if (stopped) {
+                    return;
+                }
                 List<Diagnostic> converted = new ArrayList<>();
                 for (org.groovyscope.engine.model.Diagnostic diagnostic : entry.getValue()) {
                     converted.add(Converters.toLsp(diagnostic));
@@ -116,7 +120,17 @@ final class DiagnosticsPublisher {
         }
     }
 
-    void shutdown() {
-        executor.shutdownNow();
+    /**
+     * Stops publishing. Pending publishes are cancelled and a running one stops before its next notification,
+     * but the thread is never interrupted: interrupting a thread that is writing to an interruptible channel (the
+     * client's socket or pipe) closes that channel, and the reply to the client's {@code shutdown} request could
+     * then never be sent.
+     */
+    synchronized void shutdown() {
+        stopped = true;
+        if (pending != null) {
+            pending.cancel(false);
+        }
+        executor.shutdown();
     }
 }
