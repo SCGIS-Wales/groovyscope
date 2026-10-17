@@ -17,7 +17,7 @@ CONFIG_FILENAME = ".groovyscope.yaml"
 ENV_PREFIX = "GROOVYSCOPE_"
 ENV_SEPARATOR = "__"
 # Environment variables that configure the CLI itself rather than the YAML document.
-RESERVED_ENV = frozenset({"GROOVYSCOPE_JAR", "GROOVYSCOPE_LOG", "GROOVYSCOPE_CONFIG"})
+RESERVED_ENV = frozenset({"GROOVYSCOPE_JAR", "GROOVYSCOPE_LOG", "GROOVYSCOPE_CONFIG", "GROOVYSCOPE_CONFIG_JSON"})
 
 Config = dict[str, Any]
 

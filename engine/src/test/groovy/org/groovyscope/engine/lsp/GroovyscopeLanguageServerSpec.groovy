@@ -18,14 +18,9 @@ package org.groovyscope.engine.lsp
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.function.IntConsumer
-import org.eclipse.lsp4j.DidChangeConfigurationParams
-import org.eclipse.lsp4j.DidChangeTextDocumentParams
-import org.eclipse.lsp4j.DidChangeWatchedFilesParams
-import org.eclipse.lsp4j.DidCloseTextDocumentParams
-import org.eclipse.lsp4j.DidOpenTextDocumentParams
-import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.WorkspaceFolder
+import org.groovyscope.engine.config.EngineConfig
 import spock.lang.Specification
 
 class GroovyscopeLanguageServerSpec extends Specification {
@@ -33,17 +28,26 @@ class GroovyscopeLanguageServerSpec extends Specification {
     static final Path FALLBACK = Paths.get('/tmp/fallback')
 
     List<Integer> exitCodes = []
-    GroovyscopeLanguageServer server = new GroovyscopeLanguageServer({ int code -> exitCodes << code } as IntConsumer, FALLBACK)
+    GroovyscopeLanguageServer server = new GroovyscopeLanguageServer(
+        { int code -> exitCodes << code } as IntConsumer, FALLBACK, EngineConfig.DEFAULTS)
 
-    def 'initialize reports the server name, version and empty capabilities'() {
+    def 'initialize reports the server name, version and navigation capabilities'() {
         when:
         def result = server.initialize(new InitializeParams()).get()
 
         then:
         result.serverInfo.name == GroovyscopeLanguageServer.SERVER_NAME
         result.serverInfo.version ==~ /\d+\.\d+\.\d+.*/
-        result.capabilities != null
-        result.capabilities.definitionProvider == null
+        result.capabilities.definitionProvider.getLeft()
+        result.capabilities.referencesProvider.getLeft()
+        result.capabilities.hoverProvider.getLeft()
+        result.capabilities.documentSymbolProvider.getLeft()
+        result.capabilities.workspaceSymbolProvider.getLeft()
+        result.capabilities.renameProvider.getRight().prepareProvider
+        result.capabilities.completionProvider.triggerCharacters == ['.']
+        result.capabilities.signatureHelpProvider.triggerCharacters == ['(', ',']
+        server.services() != null
+        server.workspaceRoot() == FALLBACK
     }
 
     def 'exit after shutdown yields exit code 0'() {
@@ -111,19 +115,13 @@ class GroovyscopeLanguageServerSpec extends Specification {
         uri << [null, '', '   ', 'http://host/x', 'file:::bad uri with spaces', ':nope']
     }
 
-    def 'document and workspace notifications are accepted and counted'() {
+    def 'requests before initialize are rejected as not initialized'() {
         when:
-        def docs = server.textDocumentService as NoOpTextDocumentService
-        docs.didOpen(new DidOpenTextDocumentParams())
-        docs.didChange(new DidChangeTextDocumentParams())
-        docs.didSave(new DidSaveTextDocumentParams())
-        docs.didClose(new DidCloseTextDocumentParams())
-        def ws = server.workspaceService as NoOpWorkspaceService
-        ws.didChangeConfiguration(new DidChangeConfigurationParams())
-        ws.didChangeWatchedFiles(new DidChangeWatchedFilesParams())
+        server.textDocumentService.hover(new org.eclipse.lsp4j.HoverParams(
+            new org.eclipse.lsp4j.TextDocumentIdentifier('file:///x.groovy'), new org.eclipse.lsp4j.Position(0, 0))).get()
 
         then:
-        docs.notificationCount() == 4
-        ws.notificationCount() == 2
+        def e = thrown(java.util.concurrent.ExecutionException)
+        e.cause instanceof org.eclipse.lsp4j.jsonrpc.ResponseErrorException
     }
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -22,6 +23,7 @@ from groovyscope.render import table
 
 EXIT_NOT_IMPLEMENTED = 3
 LOG_ENV = "GROOVYSCOPE_LOG"
+CONFIG_ENV = "GROOVYSCOPE_CONFIG_JSON"
 LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
 
 ExecFn = Callable[[str, Sequence[str]], Any]
@@ -182,6 +184,8 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
     command, effective = resolve_engine(obj)
     if effective["daemon"]["enabled"]:
         logging.getLogger(__name__).info("daemon mode arrives in a later stage; running the engine directly")
+    # The engine reads the validated, effective configuration from the environment (see EngineConfig).
+    os.environ[CONFIG_ENV] = json.dumps({**effective, "root": str(obj["root"])}, sort_keys=True)
     _EXEC(command[0], [*command, "lsp", "--stdio"])
 
 

@@ -19,7 +19,13 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Done when: CI green, release PR for 0.1.0 merged, wheel on PyPI (needs the repository transfer first).
   - [x] Repository transferred to `SCGIS-Wales/groovyscope` and remote re-pointed (2026-10-17)
   - [x] `v0.1.0` published to PyPI through `workflow.yml` (2026-10-17, trusted publishing + attestations)
-- [ ] **Stage 1: engine compile + index + LSP navigation** — branch `feat/engine-navigation` (in progress since 2026-10-17).
+- [ ] **Stage 1: engine compile + index + LSP navigation** — branch `feat/engine-navigation`, PR open (2026-10-17).
+  Delivered on the branch: `config`, `workspace`, `compile` (three-pass strategy, filtered parent class loader,
+  trust gate), `index`, `semantics` (confidence per answer), `services`, full LSP wiring (definition,
+  typeDefinition, references, hover, documentSymbol, workspaceSymbol, completion, signatureHelp,
+  prepareRename/rename, diagnostics, incremental sync), seven fixture projects, security specs, 132 Spock
+  specs at 90% line coverage, Python hands the effective config to the engine. Remaining for this stage:
+  none; incremental per-file invalidation moves to Stage 2 with the daemon.
   `workspace/`, `compile/` (CompilationUnit to CANONICALIZATION, incremental, Grape/ASTTest off, trust gate),
   `index/`, `semantics/` (STC metadata, UNKNOWN never guessed), real LSP capabilities (definition,
   typeDefinition, references, hover, documentSymbol, workspaceSymbol, completion, signatureHelp,
