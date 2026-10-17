@@ -28,22 +28,23 @@ groovyscope kiro init --global    # adds groovyscope to ~/.kiro without removing
 groovyscope doctor                # ok lines are good; info lines are optional extras
 ```
 
-Once per Groovy project (Kiro CLI reads language servers only from the project's own `.kiro/`):
+Then open any Groovy project:
 
 ```bash
 cd your-groovy-project
-groovyscope kiro init             # writes .kiro/settings/lsp.json only, since the global setup has the rest
-groovyscope init                  # a starting .groovyscope.yaml from the project's layout and build files
-groovyscope trust                 # if you trust this repository: lets `classpath` run its build tool
-groovyscope classpath             # asks Gradle or Maven for the dependencies, so library classes resolve
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
-> /mcp                            # expect: groovyscope running 21 tools
+> /mcp                            # expect: groovyscope running 23 tools
 ```
 
-`init`, `trust` and `classpath` are optional. Without a classpath the engine still answers from the project's
-own sources; imports of library classes then surface as one `GS100` "missing dependencies" warning per file
-instead of a wall of unresolved-class errors.
+Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
+refreshes the Kiro files after an upgrade, writes the project's LSP entry, unpacks the benchmark corpus, and
+tells the agent what still needs your decision (trusting the repository and exporting its classpath, which run
+the build). The agent opens with that status and a menu of the most useful prompts; say yes and it runs
+`groovyscope trust` and `groovyscope classpath` for you. `groovyscope checkup` prints the same report in a
+terminal. Without a classpath the engine still answers from the project's own sources; imports of library
+classes then surface as one `GS100` "missing dependencies" warning per file instead of a wall of
+unresolved-class errors. [docs/prompts.md](docs/prompts.md) lists the prompts and how to read the answers.
 
 `kiro init --global` merges into `~/.kiro/settings/mcp.json`, `~/.kiro/agents/groovy.json` and
 `~/.kiro/steering/`: other MCP servers and agent settings stay as they are, every changed file is backed up to
@@ -85,13 +86,16 @@ them returns a whole file.
 
 | Command | What it does |
 |---|---|
+| `groovyscope checkup [--fix] [--agent] [--json]` | Everything to do after an install or upgrade, one line per item with the exact fix: Kiro files older than the package, project LSP entry, trust, classpath, hidden MCP servers, agent format, JDK, engine JAR, daemon. `--fix` applies the safe repairs; `--agent` is what the groovy agent's start hook runs |
 | `groovyscope doctor [--bundle report.zip]` | Checks Python, configuration and trust, JDK (vendor and version), the engine JAR (SHA-256), Kiro files, the Kiro agent's format and runtime profiles; `--bundle` writes a zip for bug reports |
 | `groovyscope logs [-n N] [-f] [--kiro]` | The engine daemon's log for this workspace, or groovyscope's lines from Kiro CLI's logs |
 | `groovyscope trust [--revoke] [--list]` | Trust this workspace, so its `.groovyscope.yaml` may set `workspace.trust`, `jdk.home` and rule sets, and `classpath` may run its build tool ([security](docs/security.md)) |
 | `groovyscope init [--dry-run]` | Writes a starting `.groovyscope.yaml` (source roots, Groovy version) from the project's layout and build files; existing settings win |
 | `groovyscope classpath [--tool gradle\|maven] [--timeout N]` | Asks the project's Gradle (init script) or Maven build for its compile and test classpath and writes it to `workspace.classpathFile`; trusted workspaces only, since it runs the build scripts |
 | `groovyscope kiro init \| repair [--global] [--full] [--agent-format auto\|v2\|universal\|v3] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project. The agent keeps its format (V2, universal or V3) and its `tools: ["*"]`, so every MCP server you have stays usable |
-| `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif]` | All findings; `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
+| `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif] [--import-sarif FILE]` | All findings, plus the build's SARIF findings (SpotBugs; `reports.sarif` or the default output when present); `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
+| `groovyscope review [PATHS] \| --changed [--base main] [--staged]` | Findings grouped by the practices checklist; with `--changed`, the branch reviewed as a merge request: blocking, should fix, nits on the changed lines, impact of changed declarations, risky constructs added, uncovered methods, verdict ([docs/ci.md](docs/ci.md)) |
+| `groovyscope coverage [PATHS]` | Classes and methods no test executed, from the build's JaCoCo XML report (`reports.jacoco`), most missed lines first |
 | `groovyscope fix [PATHS] [--code X] [--apply]` | Safe fixes; reports them unless `--apply` |
 | `groovyscope explain CODE` | Why a code (GS001, RP010, NullChecker, a CodeNarc rule) matters and how to fix it |
 | `groovyscope format [PATHS] [--apply]` | Bundled formatter (whitespace hygiene, safe CodeNarc-driven fixes) |
@@ -103,6 +107,7 @@ them returns a whole file.
 | `groovyscope lsp --stdio` / `groovyscope mcp` | What Kiro runs: LSP and MCP over the warm per-workspace daemon |
 | `groovyscope daemon start \| stop \| restart \| status` | Manages the daemon (idle exit after `daemon.idleTimeoutMinutes`; `restart` applies a changed configuration) |
 | `groovyscope jdk install [--vendor temurin\|corretto]` | Opt-in, checksum-verified JDK download into groovyscope's cache |
+| `groovyscope benchmark path [--to DIR] [--refresh]` | Where the bundled benchmark corpus (CodeNarc 4.0.0 `src/main`) is unpacked; `--to` puts it elsewhere. It unpacks itself on `kiro init --global` and at agent start |
 | `groovyscope fetch` / `groovyscope version` | Engine JAR fetch for packages without one; versions |
 
 Most commands take `--json`. Every command takes `--debug`, `-v`/`--verbose` and `--log-file PATH`
@@ -143,13 +148,15 @@ closed-world), and parallel calls are queued safely on the one engine session.
 | `hover(path, line, col)` | What an editor shows on hover: signature, documentation, runtime-profile parameter details, why a finding on that line matters |
 | `document_symbols(path, depth?, kinds?, name?, limit?, cursor?)` | The outline of a file: classes and members with their first and last line and the file's line count, filtered by kind or name and paged, instead of reading it |
 | `read_symbol(path, symbol, line?, max_chars?)` | The source of one class, method or field with line numbers (`name`, `Class.name` or a class name; `line` picks an overload), with the comments and annotations above it. Replaces reading line ranges |
-| `find_code(kind, paths?, name?, type?, pattern?, modifiers?, empty_body?, rethrows?, min_lines?, min_parameters?, limit?, cursor?)` | Structural search over the compiled trees, instead of grep. Kinds: `catch`, `throw`, `call`, `new`, `return-null`, `string-literal`, `annotation`, `def`, `empty-block`, `field`, `method`; each match names its enclosing declaration |
+| `find_code(kind, paths?, name?, type?, pattern?, modifiers?, empty_body?, rethrows?, min_lines?, min_parameters?, limit?, cursor?)` | Structural search over the compiled trees, instead of grep. Kinds: `catch`, `throw`, `call`, `new`, `return-null`, `string-literal`, `annotation`, `def`, `empty-block`, `field`, `method`; each match names its enclosing declaration. A catch match says how it handles the exception (`handling`: swallowed, rethrows, logged, returns-default, other), the variable name, the type caught, the CodeNarc code for `explain`, and `implicitType` when the header names no type |
 | `find_duplicates(paths?, min_lines?, limit?, cursor?)` | Repeated code: groups of blocks with the same structure (identifiers and literals ignored), largest first, `EXACT` or `SIMILAR`, with every location |
 | `find_references(path, line, col, include_declaration?, limit?, cursor?)` | Every reference with a confidence, plus counts per confidence |
 | `call_graph(symbol, direction?, depth?)` | Callers of (`in`) or calls made by (`out`) a declaration |
 | `impact_of(symbol, change?)` | Direct and transitive callers, overrides, tests, dynamic sites, risk and suggested checks |
-| `check(paths?, profile?, include?, codes?, max_priority?, limit?, cursor?)` | Compile, lint, type-check and practice findings, worst first, with counts per code (`byCode`) and a `fixable` flag; `codes` keeps only those codes, `max_priority` 1 errors, 2 and warnings, 3 and info. Files whose imports cannot resolve are summarised once under `missingDependencies` |
+| `check(paths?, profile?, include?, codes?, max_priority?, limit?, cursor?)` | Compile, lint, type-check and practice findings, worst first, with counts per code (`byCode`) and a `fixable` flag; `codes` keeps only those codes, `max_priority` 1 errors, 2 and warnings, 3 and info. Files whose imports cannot resolve are summarised once under `missingDependencies`. The build's SARIF findings (SpotBugs) are merged in and counted under `imported` |
 | `review(paths?, top?, max_priority?)` | The same findings grouped by the review checklist, with counts per code and the profiles governing the paths |
+| `review_changes(base?, staged?, top?)` | The branch reviewed as a merge request: changed files and lines from git, findings on the changed lines grouped `blocking`, `shouldFix` and `nits`, pre-existing findings as counts, `impact` of changed declarations, `risky` constructs added, `uncovered` methods in the change, and a one-sentence `verdict` |
+| `coverage_gaps(paths?, limit?, cursor?)` | Classes and methods no test executed, from the JaCoCo XML report, most missed lines first, with the overall line coverage |
 | `fix(paths?, codes?, apply?)` | Safe fixes; a dry run unless `apply` |
 | `rename(path, line, col, new_name, apply?)` | Rename everywhere it is used, refused when a use is matched by name only; a dry run unless `apply` |
 | `explain(code)` | What a code means (GS001 to GS012, GS100, RP codes, a Groovy 6 checker, a CodeNarc rule), why it matters and the fix |
@@ -167,8 +174,9 @@ environment variable, for example `GROOVYSCOPE_DAEMON__HEAP=2g`. Worth knowing: 
 (written by `groovyscope classpath`, its entries join `workspace.classpath`), `lint.rules` (per-rule
 overrides such as `{CompileStatic: off, LineLength: {priority: 3}}`), `lint.publishMaxPriority` (only
 priority 1 and 2 lint findings reach the editor and the agent as diagnostics; 3 stays available through
-`check` and `review`), `practices.severity` (per GS or RP code, `GS100: off` included) and
-`duplicates.minLines` / `duplicates.minStatements` for `find_duplicates`. Runtime profiles live in
+`check` and `review`), `practices.severity` (per GS or RP code, `GS100: off` included),
+`duplicates.minLines` / `duplicates.minStatements` for `find_duplicates`, and `reports.sarif` /
+`reports.jacoco` for the build's SpotBugs and JaCoCo reports. Runtime profiles live in
 `~/.groovyscope/profiles/` or `<workspace>/.groovyscope/profiles/` and stay out of the repository if you want
 them private; see [docs/profiles.md](docs/profiles.md).
 
@@ -188,7 +196,8 @@ python/   groovyscope package (CLI, config, Kiro writers, tests)   -> PyPI wheel
 config/   CodeNarc rulesets, practice catalogue, example runtime profile, formatter and groovyc configuration
           (mirrored inside the package)
 kiro/     Templates written by `groovyscope kiro init` (mirrored inside the package)
-docs/     Install, Kiro, practices, profiles, rules, architecture, security, troubleshooting, benchmark, roadmap
+docs/     Install, Kiro, prompts, CI, practices, profiles, rules, architecture, security, troubleshooting,
+          benchmark, roadmap
 ```
 
 ## Contributing

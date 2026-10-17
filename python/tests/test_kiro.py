@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from groovyscope import kiro_agent
+from groovyscope import __version__, kiro_agent
 from groovyscope.kiro import (
     GLOBAL_FILES,
     KIRO_FILES,
@@ -14,6 +14,7 @@ from groovyscope.kiro import (
     apply_changes,
     backup_path,
     has_global_setup,
+    kiro_files_version,
     kiro_home,
     load_template,
     merge_content,
@@ -21,6 +22,7 @@ from groovyscope.kiro import (
     present_files,
     unified_diff,
     write_atomically,
+    written_by,
 )
 
 
@@ -307,3 +309,28 @@ def test_hidden_servers_and_server_listing(tmp_path: Path) -> None:
     assert kiro_agent.hidden_servers({"tools": ["read", "@groovyscope", "@jira/search"]}, servers) == ["gitlab"]
     assert kiro_agent.hidden_servers({"tools": ["*"]}, servers) == []
     assert kiro_agent.hidden_servers({"permissions": {}}, servers) == []
+
+
+def test_steering_is_stamped_with_the_package_version(tmp_path: Path) -> None:
+    text = load_template("steering/groovyscope.md")
+    assert "{{version}}" not in text and f"written by groovyscope {__version__}" in text
+    assert written_by(text) == __version__ and written_by("plain") is None
+    home = tmp_path / "kh"
+    assert kiro_files_version(home) is None
+    apply_changes(home, plan_changes(home, global_scope=True))
+    assert kiro_files_version(home) == __version__
+
+
+def test_agent_hooks_merge_as_a_union_and_reach_v3_agents() -> None:
+    template = load_template("agents/groovy.json")
+    ours = json.loads(template)
+    assert ours["hooks"]["agentSpawn"][0]["command"] == "groovyscope checkup --agent"
+    mine = {"name": "groovy", "tools": ["*"], "hooks": {"agentSpawn": [{"command": "echo hi"}]}}
+    merged = json.loads(kiro_agent.merge_agent(json.dumps(mine), template, requested="v2", run=None)["text"])
+    assert [h["command"] for h in merged["hooks"]["agentSpawn"]] == ["echo hi", "groovyscope checkup --agent"]
+    v3 = {"name": "groovy", "permissions": {"rules": []}, "hooks": {"userPromptSubmit": [{"command": "x"}]}}
+    merged_v3 = json.loads(kiro_agent.merge_agent(json.dumps(v3), template, requested="auto", run=None)["text"])
+    assert merged_v3["hooks"]["userPromptSubmit"] == [{"command": "x"}]
+    assert merged_v3["hooks"]["agentSpawn"][0]["command"] == "groovyscope checkup --agent"
+    assert merged_v3["welcomeMessage"].startswith("Groovy agent ready")
+    assert "tools" not in merged_v3

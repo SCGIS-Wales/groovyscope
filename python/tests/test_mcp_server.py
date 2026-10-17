@@ -211,6 +211,8 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "workspace_status",
         "explain",
         "review",
+        "review_changes",
+        "coverage_gaps",
         "fix",
         "profile_status",
         "hover",
@@ -504,6 +506,11 @@ def test_search_tools(tools: dict[str, Any], engine: dict[str, Any]) -> None:
                 "detail": "catch (Exception e)",
                 "snippet": "} catch (Exception e) {",
                 "enclosing": "A.run",
+                "handling": "logged",
+                "catches": "Exception",
+                "variable": "e",
+                "code": "CatchException",
+                "implicitType": None,
             }
         ],
         "count": 1,
@@ -516,7 +523,13 @@ def test_search_tools(tools: dict[str, Any], engine: dict[str, Any]) -> None:
         "detail": "catch (Exception e)",
         "snippet": "} catch (Exception e) {",
         "in": "A.run",
+        "handling": "logged",
+        "catches": "Exception",
+        "variable": "e",
+        "code": "CatchException",
     }
+    assert found["byHandling"] == {"logged": 1}
+    assert list(found["meaning"]) == ["logged"]
     assert engine["calls"][-1][1] == {
         "root": "/ws",
         "uris": [],
@@ -592,3 +605,219 @@ def test_check_filters_counts_and_missing_dependencies(tools: dict[str, Any], en
     assert [f["code"] for f in tools["check"](codes=["LineLength"])["items"]] == ["LineLength", "LineLength"]
     reviewed = tools["review"](paths=["src/A.groovy"], max_priority=1)
     assert reviewed["byCode"] == {"GS006": 1} and reviewed["missingDependencies"]["files"] == 1
+
+
+def test_review_changes_composes_findings_impact_and_risky_sites(
+    tools: dict[str, Any], engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = "file:///ws/src/A.groovy"
+    engine["responses"]["groovyscope/check"] = {
+        "diagnostics": {
+            uri: [
+                {
+                    "range": {"start": {"line": 3, "character": 0}},
+                    "severity": 2,
+                    "source": "codenarc",
+                    "code": "NoDef",
+                    "message": "m",
+                },
+                {
+                    "range": {"start": {"line": 20, "character": 0}},
+                    "severity": 2,
+                    "source": "codenarc",
+                    "code": "NoDef",
+                    "message": "m",
+                },
+                {
+                    "range": {"start": {"line": 0, "character": 0}},
+                    "severity": 2,
+                    "source": "groovyscope",
+                    "code": "GS100",
+                    "message": "deps",
+                },
+            ]
+        },
+        "summary": {"errors": 0, "warnings": 2, "information": 0, "files": 1},
+    }
+    engine["responses"]["groovyscope/documentSymbols"] = {
+        "symbols": [
+            {
+                "name": "A",
+                "kind": "class",
+                "location": loc("src/A.groovy", 0),
+                "endLine": 30,
+                "children": [{"name": "run", "kind": "method", "location": loc("src/A.groovy", 2), "endLine": 6}],
+            }
+        ],
+        "lines": 31,
+    }
+    engine["responses"]["groovyscope/impact"] = [
+        {
+            "symbol": symbol("run"),
+            "riskLevel": "medium",
+            "riskScore": 30,
+            "counts": {"direct": 2},
+            "tests": [
+                {"caller": symbol("t"), "callee": symbol("run"), "site": loc("src/T.groovy"), "confidence": "STATIC"}
+            ],
+            "dynamicUnknowns": [],
+            "directCallers": [],
+            "transitiveCallers": [],
+            "overrides": [],
+            "suggestedChecks": [],
+        }
+    ]
+    engine["responses"]["groovyscope/findCode"] = {
+        "matches": [
+            {
+                "uri": uri,
+                "line": 3,
+                "endLine": 4,
+                "detail": "return null",
+                "snippet": "return null",
+                "enclosing": "A.run",
+            }
+        ],
+        "count": 1,
+    }
+    change = {
+        "base": "main",
+        "mode": "branch",
+        "files": [{"path": "src/A.groovy", "status": "modified", "ranges": [[3, 5]]}],
+    }
+    monkeypatch.setattr(mcp_server.changes, "changed_files", lambda *_a, **_k: change)
+    result = tools["review_changes"]()
+    assert result["verdict"] == "approve with comments: 1 warning(s) to fix, 3 risky construct(s) added"
+    assert result["counts"] == {"blocking": 0, "shouldFix": 1, "nits": 0}
+    assert result["shouldFix"][0]["line"] == 4
+    assert result["elsewhere"] == {"count": 1, "byCode": {"NoDef": 1}}
+    assert result["missingDependencies"]["files"] == 1
+    assert [i["symbol"] for i in result["impact"]] == ["A", "A.run"]
+    assert result["impact"][1]["tests"] == 1 and result["impact"][1]["callers"] == {"direct": 2}
+    assert result["riskyCount"] == 3 and {r["kind"] for r in result["risky"]} == {"catch", "def", "return-null"}
+    impact_calls = [p for m, p in engine["calls"] if m == "groovyscope/impact"]
+    assert [c["symbol"] for c in impact_calls] == ["A", "A#run"]
+    monkeypatch.setattr(
+        mcp_server.changes, "changed_files", lambda *_a, **_k: {"base": "main", "mode": "branch", "files": []}
+    )
+    assert tools["review_changes"]()["verdict"].startswith("nothing to review")
+
+    def refuse(*_a: object, **_k: object) -> object:
+        msg = "git is not installed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(mcp_server.changes, "changed_files", refuse)
+    assert tools["review_changes"]() == {"error": "git is not installed"}
+    assert mcp_server.TOOL_INFO["review_changes"][1] is True
+    assert len(mcp_server.TOOL_INFO) == 23
+
+
+SARIF_LOG = {
+    "version": "2.1.0",
+    "runs": [
+        {
+            "tool": {"driver": {"name": "SpotBugs"}},
+            "results": [
+                {
+                    "ruleId": "NP_NULL",
+                    "level": "error",
+                    "message": {"text": "null"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": "src/A.groovy"},
+                                "region": {"startLine": 4},
+                            }
+                        }
+                    ],
+                },
+                {
+                    "ruleId": "DM_X",
+                    "level": "warning",
+                    "message": {"text": "x"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": "src/B.groovy"},
+                                "region": {"startLine": 9},
+                            }
+                        }
+                    ],
+                },
+            ],
+        }
+    ],
+}
+
+JACOCO_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<report name="demo">
+  <package name="">
+    <class name="A" sourcefilename="A.groovy">
+      <method name="run" desc="()V" line="4"><counter type="LINE" missed="3" covered="0"/></method>
+      <counter type="LINE" missed="3" covered="2"/>
+    </class>
+  </package>
+  <counter type="LINE" missed="3" covered="2"/>
+</report>
+"""
+
+
+def write_reports(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "A.groovy").write_text("class A {}\n", encoding="utf-8")
+    sarif = tmp_path / "build" / "reports" / "spotbugs" / "spotbugs.sarif.json"
+    sarif.parent.mkdir(parents=True)
+    sarif.write_text(json.dumps(SARIF_LOG), encoding="utf-8")
+    jacoco = tmp_path / "build" / "reports" / "jacoco" / "test" / "jacocoTestReport.xml"
+    jacoco.parent.mkdir(parents=True)
+    jacoco.write_text(JACOCO_XML, encoding="utf-8")
+
+
+def test_check_and_review_merge_the_builds_sarif(
+    local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+) -> None:
+    write_reports(tmp_path)
+    engine["responses"]["groovyscope/check"] = {"diagnostics": {}, "summary": {"files": 1}}
+    found = local_tools["check"]()
+    assert found["imported"] == {"spotbugs": 2}
+    assert [f["code"] for f in found["items"]] == ["NP_NULL", "DM_X"]
+    assert found["items"][0]["source"] == "spotbugs" and found["items"][0]["severity"] == "error"
+    only_a = local_tools["check"](paths=["src/A.groovy"])
+    assert [f["code"] for f in only_a["items"]] == ["NP_NULL"]
+    assert local_tools["check"](codes=["DM_X"])["byCode"] == {"DM_X": 1}
+    review = local_tools["review"]()
+    assert review["imported"] == {"spotbugs": 2} and review["groups"][0]["total"] == 2
+
+
+def test_coverage_gaps_reads_jacoco(local_tools: dict[str, Any], tmp_path: Path) -> None:
+    missing = local_tools["coverage_gaps"]()
+    assert missing["error"].startswith("no JaCoCo report at build/reports/jacoco/test/jacocoTestReport.xml")
+    write_reports(tmp_path)
+    found = local_tools["coverage_gaps"]()
+    assert found["coverage"] == {"lines": 5, "covered": 2, "missed": 3, "percent": 40}
+    assert found["count"] == 2 and found["uncoveredMethods"] == 1
+    assert found["items"][0]["name"] == "A" and found["items"][1]["name"] == "A.run"
+    assert found["report"] == "build/reports/jacoco/test/jacocoTestReport.xml"
+    assert local_tools["coverage_gaps"](paths=["other"])["count"] == 0
+    (tmp_path / "build" / "reports" / "jacoco" / "test" / "jacocoTestReport.xml").write_text("<x/>", encoding="utf-8")
+    assert "not a JaCoCo report" in local_tools["coverage_gaps"]()["error"]
+
+
+def test_review_changes_lists_uncovered_methods_in_the_change(
+    local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_reports(tmp_path)
+    engine["responses"]["groovyscope/check"] = {"diagnostics": {}, "summary": {}}
+    engine["responses"]["groovyscope/documentSymbols"] = {"symbols": [], "lines": 10}
+    engine["responses"]["groovyscope/findCode"] = {"matches": [], "count": 0}
+    change = {
+        "base": "main",
+        "mode": "branch",
+        "files": [{"path": "src/A.groovy", "status": "modified", "ranges": [[3, 6]]}],
+    }
+    monkeypatch.setattr(mcp_server.changes, "changed_files", lambda *_a, **_k: change)
+    result = local_tools["review_changes"]()
+    assert result["uncoveredCount"] == 1 and result["uncovered"][0]["name"] == "A.run"
+    assert result["counts"]["blocking"] == 1 and result["blocking"][0]["code"] == "NP_NULL"
+    assert result["imported"] == {"spotbugs": 1}
+    assert result["verdict"].startswith("request changes")

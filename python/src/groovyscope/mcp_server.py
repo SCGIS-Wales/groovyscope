@@ -16,7 +16,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import daemon, diagnostics, mcp_search, practices, rpc
+from groovyscope import changes, daemon, diagnostics, mcp_search, practices, reports, rpc
 from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
@@ -188,6 +188,26 @@ def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str,
     }
 
 
+def imported_findings(
+    root: Path, report_settings: Mapping[str, Any], paths: Sequence[str] | None
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Findings from the build's SARIF logs (SpotBugs and other tools), limited to PATHS when given, plus an
+    ``imported`` summary (counts per tool and the files that could not be read)."""
+    findings, notes = reports.merge_sarif(root, report_settings.get("sarif") or [])
+    wanted = [p.rstrip("/") for p in paths or []]
+    if wanted:
+        findings = [f for f in findings if any(f["path"] == w or f["path"].startswith(w + "/") for w in wanted)]
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[str(finding["source"])] = counts.get(str(finding["source"]), 0) + 1
+    summary: dict[str, Any] = {}
+    if counts:
+        summary["imported"] = counts
+    if notes:
+        summary["importNotes"] = notes
+    return (findings, summary)
+
+
 def pager(output: Mapping[str, Any]) -> tuple[Paged, int]:
     """A paging function honouring output.maxResults / output.maxBytes, plus the result cap it applies."""
     max_results = int(output.get("maxResults", 50))
@@ -342,9 +362,17 @@ def position_params(root: Path, path: str, line: int, col: int) -> dict[str, Any
 
 
 def quality_tools(
-    root: Path, call: Call, paged: Paged, cap: int, environ: Mapping[str, str], *, clip_at: int = MESSAGE_CHARS
+    root: Path,
+    call: Call,
+    paged: Paged,
+    cap: int,
+    environ: Mapping[str, str],
+    *,
+    clip_at: int = MESSAGE_CHARS,
+    report_settings: Mapping[str, Any] | None = None,
 ) -> dict[str, Callable[..., Any]]:
-    """check, format, find_dynamic_code and workspace_status."""
+    """check, format, find_dynamic_code, coverage_gaps and workspace_status."""
+    settings = report_settings or {}
 
     def check(
         *,
@@ -372,11 +400,13 @@ def quality_tools(
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
-        findings, extra = summarise(findings, codes, max_priority)
+        imported, imported_summary = imported_findings(root, settings, paths)
+        findings, extra = summarise([*findings, *imported], codes, max_priority)
         findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
         result = paged(findings, limit, cursor)
         result["summary"] = raw.get("summary", {})
         result.update(extra)
+        result.update(imported_summary)
         return result
 
     def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
@@ -430,11 +460,45 @@ def quality_tools(
         "format": format_files,
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
+        **coverage_tools(root, paged, settings),
     }
 
 
-def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHARS) -> dict[str, Callable[..., Any]]:
+def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:
+    """coverage_gaps: the build's JaCoCo report as the list of what tests never executed."""
+
+    def coverage_gaps(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
+        """Classes and methods with lines no test executed, from the build's JaCoCo XML report (reports.jacoco),
+        most missed lines first, under PATHS when given; plus the overall line coverage. Run the build's test task
+        with jacocoTestReport first. Use it to decide which tests to write."""
+        report = reports.jacoco_file(root, settings.get("jacoco"))
+        if report is None:
+            expected = settings.get("jacoco") or reports.DEFAULT_JACOCO
+            return {"error": f"no JaCoCo report at {expected}; run the build's tests with jacocoTestReport first"}
+        try:
+            gaps = reports.filter_gaps(reports.read_jacoco(report, root), paths or [])
+            summary = reports.coverage_summary(report)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        result = paged([dict(g) for g in gaps], limit, cursor)
+        result["count"] = len(gaps)
+        result["report"] = relative_path(report.as_uri(), root)
+        result["coverage"] = summary
+        result["uncoveredMethods"] = sum(1 for g in gaps if g["kind"] == "method" and g["status"] == "uncovered")
+        return result
+
+    return {"coverage_gaps": coverage_gaps}
+
+
+def practice_tools(
+    root: Path,
+    call: Call,
+    cap: int,
+    clip_at: int = MESSAGE_CHARS,
+    report_settings: Mapping[str, Any] | None = None,
+) -> dict[str, Callable[..., Any]]:
     """explain, review, fix and profile_status."""
+    settings = report_settings or {}
 
     def explain(code: str) -> dict[str, Any]:
         """What a diagnostic code means (GS001-GS012, a Groovy 6 checker, a CodeNarc rule), why it matters, the fix."""
@@ -453,9 +517,15 @@ def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHAR
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
-        findings, extra = summarise(findings, None, max_priority)
+        imported, imported_summary = imported_findings(root, settings, paths)
+        findings, extra = summarise([*findings, *imported], None, max_priority)
         groups = practices.review(findings, max(1, min(top, cap)))
-        result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap], **extra}
+        result: dict[str, Any] = {
+            "summary": raw.get("summary", {}),
+            "groups": groups[:cap],
+            **extra,
+            **imported_summary,
+        }
         governed = governed_files(paths or [])
         if governed:
             result["profiles"] = governed
@@ -533,21 +603,161 @@ def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHAR
     }
 
 
+def flat_outline(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every declaration of a document outline as ``{name, kind, lines, in}`` with 1-based inclusive lines."""
+    flat: list[dict[str, Any]] = []
+
+    def walk(item: Mapping[str, Any], container: str | None) -> None:
+        location = item.get("location") or {}
+        start = int((location.get("range") or {}).get("start", {}).get("line", 0)) + 1
+        end = int(item.get("endLine", start - 1)) + 1
+        kind = str(item.get("kind") or "").lower()
+        if kind.isdigit():
+            kind = LSP_SYMBOL_KINDS.get(int(kind), kind)
+        entry = {"name": item.get("name"), "kind": kind, "lines": [start, max(start, end)]}
+        if container:
+            entry["in"] = container
+        flat.append(entry)
+        for child in item.get("children") or []:
+            walk(child, str(item.get("name")))
+
+    for item in raw.get("symbols", []):
+        walk(item, None)
+    return flat
+
+
+def review_tools(
+    root: Path,
+    call: Call,
+    cap: int,
+    clip_at: int,
+    *,
+    others: Mapping[str, Callable[..., Any]],
+    report_settings: Mapping[str, Any] | None = None,
+) -> dict[str, Callable[..., Any]]:
+    """review_changes: the merge request review, composed from git, the build's reports and the other tools."""
+    settings = report_settings or {}
+
+    def review_changes(base: str = "main", staged: bool = False, top: int = 8) -> dict[str, Any]:
+        """Review what this branch changed against BASE (or the index with STAGED) as a merge request reviewer:
+        the changed Groovy, Gradle and Jenkinsfile files, every finding on their changed lines grouped blocking,
+        shouldFix and nits, pre-existing findings elsewhere in those files as counts, the impact of changed
+        declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), and a
+        one-sentence verdict. Nothing is run but git."""
+        try:
+            change = changes.changed_files(root, base, staged=staged)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        existing = [f for f in change["files"] if f["status"] != "deleted"]
+        shown = [
+            {"path": f["path"], "status": f["status"], "changedLines": sum(e - s + 1 for s, e in f["ranges"])}
+            for f in change["files"]
+        ]
+        result: dict[str, Any] = {"base": base, "mode": change["mode"], "files": shown[:cap]}
+        if not existing:
+            result["verdict"] = f"nothing to review: no Groovy, Gradle or Jenkinsfile changes against {base}"
+            return result
+        ranges = changes.ranges_by_path(change)
+        paths = [f["path"] for f in existing]
+        raw = call("groovyscope/check", {"root": str(root), "uris": [to_uri(root, p) for p in paths], "include": []})
+        findings = [
+            compact_diagnostic(uri, item, root, clip_at)
+            for uri, items in raw.get("diagnostics", {}).items()
+            for item in items
+        ]
+        imported, imported_summary = imported_findings(root, settings, paths)
+        findings, extra = summarise([*findings, *imported])
+        inside, elsewhere = changes.split_findings(findings, ranges)
+        buckets = changes.bucket(inside)
+        limit = max(1, min(top, cap))
+        impact: list[dict[str, Any]] = []
+        for file in existing[:cap]:
+            outline = flat_outline(
+                call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
+            )
+            for declaration in changes.touched_declarations(outline, file["ranges"], limit=limit):
+                if len(impact) >= limit:
+                    break
+                container, _, member = declaration["symbol"].rpartition(".")
+                target = (
+                    f"{container}#{member}"
+                    if container and declaration["kind"] not in {"class", "interface", "trait", "enum", "record"}
+                    else declaration["symbol"]
+                )
+                report = others["impact_of"](target, "signature")
+                if not report.get("found"):
+                    continue
+                first = report["reports"][0]
+                impact.append(
+                    {
+                        **declaration,
+                        "path": file["path"],
+                        "riskLevel": first.get("riskLevel"),
+                        "riskScore": first.get("riskScore"),
+                        "callers": first.get("counts", {}),
+                        "tests": len(first.get("tests", [])),
+                        "dynamicSites": len(first.get("dynamicUnknowns", [])),
+                    }
+                )
+        risky: list[dict[str, Any]] = []
+        for kind in changes.RISKY_KINDS:
+            matches = others["find_code"](kind, paths=paths).get("items", [])
+            risky += [{"kind": kind, **m} for m in changes.risky_in_change(matches, ranges)]
+        elsewhere_counts: dict[str, int] = {}
+        for finding in elsewhere:
+            elsewhere_counts[str(finding.get("code"))] = elsewhere_counts.get(str(finding.get("code")), 0) + 1
+        coverage = others["coverage_gaps"](paths)
+        uncovered = (
+            [g for g in coverage.get("items", []) if g["kind"] == "method" and in_change(g, ranges)]
+            if "error" not in coverage
+            else []
+        )
+        result.update(
+            {
+                "verdict": changes.verdict(buckets, risky, impact),
+                "blocking": buckets["blocking"][:limit],
+                "shouldFix": buckets["shouldFix"][:limit],
+                "nits": buckets["nits"][:limit],
+                "counts": {name: len(items) for name, items in buckets.items()},
+                "elsewhere": {
+                    "count": len(elsewhere),
+                    "byCode": dict(sorted(elsewhere_counts.items(), key=lambda kv: -kv[1])[:limit]),
+                },
+                "impact": impact,
+                "risky": risky[:limit],
+                "riskyCount": len(risky),
+                "uncovered": uncovered[:limit],
+                "uncoveredCount": len(uncovered),
+                **extra,
+                **imported_summary,
+            }
+        )
+        return result
+
+    def in_change(gap: Mapping[str, Any], ranges: Mapping[str, Sequence[Sequence[int]]]) -> bool:
+        return changes.in_ranges(int(gap.get("line", 0)), ranges.get(str(gap.get("path")), ()))
+
+    return {"review_changes": review_changes}
+
+
 def build_tools(
     root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]
 ) -> dict[str, Callable[..., Any]]:
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
     clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
-    return {
+    report_settings = output.get("reports") if isinstance(output.get("reports"), Mapping) else {}
+    tools: dict[str, Callable[..., Any]] = {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, paged, cap),
         **mcp_search.search_tools(
             root, call, paged, cap, settings=output, max_chars=int(output.get("maxBytes", 16000))
         ),
-        **quality_tools(root, call, paged, cap, environ, clip_at=clip_at),
-        **practice_tools(root, call, cap, clip_at),
+        **quality_tools(root, call, paged, cap, environ, clip_at=clip_at, report_settings=report_settings),
+        **practice_tools(root, call, cap, clip_at, report_settings),
     }
+    tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
+    return tools
 
 
 # name: (title, read only). Every tool is closed-world (only this workspace) and idempotent.
@@ -573,6 +783,8 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "find_code": ("Structural code search", True),
     "find_duplicates": ("Find duplicated code", True),
     "workspace_overview": ("Workspace overview", True),
+    "review_changes": ("Review the branch as a merge request", True),
+    "coverage_gaps": ("Uncovered classes and methods", True),
 }
 
 

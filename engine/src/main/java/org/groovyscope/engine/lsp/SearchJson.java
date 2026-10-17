@@ -68,6 +68,7 @@ final class SearchJson {
             json.put("detail", match.detail());
             json.put("snippet", match.snippet());
             json.put("enclosing", match.enclosing());
+            json.putAll(match.facts());
             list.add(json);
         }
         Map<String, Object> response = new LinkedHashMap<>();

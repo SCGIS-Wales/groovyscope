@@ -163,6 +163,56 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   5. After 0.9.0: `groovyscope kiro repair --global` on each machine (adds `tools: ["*"]`), and
      `groovyscope profile install` to bring the private profile to the second machine.
 
+- [ ] **Stage 11: proactive agent, readable findings, MR reviewer, understanding and naming** — branch
+  `feat/proactive-agent` (0.10.0), then `feat/understanding-naming` (0.11.0). Approved 2026-10-17 from the
+  owner's test of 0.9.0 on Kiro CLI 2.29.1: the setup after every install is tedious, findings such as
+  `catch (Exception ignored)` do not say whether they are defects, and the agent should act as the merge
+  request reviewer and quality improver.
+  0.10.0 (branch `feat/proactive-agent`, 2026-10-17; Python 284 tests at 96%, engine specs green):
+  - A. Benchmark corpus: CodeNarc 4.0.0 `src/main` bundled in the wheel (Apache 2.0, NOTICE kept) and unpacked
+    to `~/.groovyscope/benchmark/codenarc/` by `kiro init|repair --global` and by the agent start hook; no
+    command to run (`groovyscope benchmark path [DIR]` only prints or moves it).
+  - B. Zero post-install steps: `groovyscope checkup` (Kiro files older than the package via a version
+    stamp, project LSP entry, trust, classpath and GS100 count, hidden servers, agent format, daemon) with
+    exact fixes; the agent's `hooks.agentSpawn` runs `checkup --agent`, applies the safe repairs itself (Kiro
+    files, corpus) and injects the rest; steering opens with a status line, offers `trust` and `classpath`,
+    and shows the quality menu; the welcome message lists it. Never fails the agent start.
+  - C. Catch findings that explain themselves: `handling` (swallowed, logged, returns-default, rethrows),
+    the variable name shown apart, the matching code so `explain` applies; steering requires defect, gap or
+    by design per group with the fix.
+  - D. MR reviewer: `review_changes(base)` and `groovyscope review --changed`: changed files and hunks from
+    git, review, impact of changed public declarations, risky sites inside the changed lines, grouped
+    blocking, should fix, by design, with a verdict.
+  - E. CI parity: `check --import-sarif` merges SpotBugs findings; `coverage_gaps` reads the JaCoCo XML;
+    `docs/ci.md` with the GitLab jobs (SARIF as `sast`, `review --changed` as the MR gate).
+  - F. `docs/prompts.md` cookbook (twelve prompts: tools called, how to read the answer, defect or not, the
+    fix, cost) and glossary; `/context show` to confirm steering; README, kiro.md and steering updates.
+  Delivered as planned, with these decisions: the corpus is a 740 KB deterministic zip of `src/main` only
+  (`scripts/bundle_benchmark.py`), unpacked to `~/.groovyscope/benchmark/codenarc/`; the steering file is
+  stamped `written by groovyscope <version>` so `checkup` detects files from an older release; the start hook
+  is `hooks.agentSpawn` with a 20 s budget and never fails the session; `checkup --agent` runs no `kiro-cli`
+  subprocess; SARIF files are read only from `reports.sarif`, `--import-sarif` and the build's default
+  SpotBugs output; the 23rd tool is `coverage_gaps`. Left for the owner's machine: the hook output on a
+  Kiro 2.29.1 start, one `review_changes` prompt on a real branch, one `coverage_gaps` prompt after
+  `./gradlew test jacocoTestReport`.
+  0.11.0:
+  - G. `explain_code`: what a class, method or file does from its AST and call graph (responsibilities,
+    inputs and outputs, calls and callers, mutated state, exceptions, external calls); nothing guessed from
+    names.
+  - H. `relationship_graph` (classes, inheritance, composition, calls, data flow, confidence per edge) and
+    `groovyscope graph --format drawio|mermaid|json`: a layered layout sized to an A4 page, calm palette,
+    no overlapping text or blocks.
+  - I. Naming: GS020 to GS026 (booleans without is/has/can/should, getters that mutate, verbs and nouns
+    swapped, generic names, abbreviations, type prefixes, names contradicting the type, inconsistent
+    vocabulary) plus `check_naming` data for the agent's semantic judgement; `naming.vocabulary` in the
+    configuration; renames only through `rename`: dry run first, static references only, recompile after
+    the write and roll back on new errors.
+  - J. Every new tool optimised for MCP and Kiro CLI (compact, paged, no file bodies), exceptions
+    contained with a message that names the cause, and the LSP, MCP and CLI traffic through the daemon
+    covered by tests.
+  Done when: CI green on each PR, the owner's Kiro 2.29.1 checks recorded (hook output on start, one
+  `review_changes`, one `explain_code`, one draw.io export opened, one naming pass), releases published.
+
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
 Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.
@@ -230,3 +280,8 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   instructions written on `docs/stage-10-agent-capabilities` (PR #46); `classpath`, GS100, `find_duplicates`,
   `find_code` and `read_symbol` verified on a CodeNarc 4.0.0 checkout (numbers in the stage entry). Kiro CLI
   checks and the two budgeted prompts still need the owner's machine.
+- 2026-10-17: 0.9.0 released (PR #45 merged by the owner). Owner's test on Kiro CLI 2.29.1 with Corretto 25:
+  `kiro repair --global` added `tools: ["*"]`, `/mcp` showed groovyscope with 21 tools next to six other
+  servers, `/tools` listed every groovyscope tool as trusted, `classpath` wrote 213 entries in 19 s, and the
+  catch prompt called `find_code` with the right arguments on the first try. Stage 11 approved from that
+  feedback; started on `feat/proactive-agent`.

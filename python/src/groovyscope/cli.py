@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 import urllib.parse
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,8 @@ import click
 
 from groovyscope import (
     __version__,
+    benchmark,
+    checkup,
     diagnostics,
     kiro_agent,
     mcp_server,
@@ -25,6 +27,7 @@ from groovyscope import (
     profiles,
     provision,
     relay,
+    reports,
     rpc,
     trust,
     workspace_init,
@@ -128,6 +131,72 @@ def main(
     LOG.debug("groovyscope %s on Python %s, root %s", __version__, sys.version.split()[0], ctx.obj["root"])
 
 
+@main.command("checkup")
+@click.option(
+    "--agent",
+    "for_agent",
+    is_flag=True,
+    help="The compact block the Kiro agent's start hook injects: applies the safe repairs, never fails.",
+)
+@click.option("--fix", is_flag=True, help="Apply the safe repairs (Kiro files, project LSP entry, benchmark corpus).")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable report.")
+@click.pass_obj
+def checkup_command(obj: dict[str, Any], *, for_agent: bool, fix: bool, as_json: bool) -> None:
+    """Everything to do after an install or upgrade, as one report with the exact fix per item."""
+    environ = dict(os.environ)
+    try:
+        report = checkup.build(
+            obj["root"],
+            obj["config_path"],
+            environ,
+            Path.home(),
+            fix=fix or for_agent,
+            run=None if for_agent else _KIRO(),
+            config_hash=config_hash_or_none(obj),
+        )
+    except Exception as exc:
+        if for_agent:
+            click.echo(f"groovyscope checkup could not run: {exc}")
+            return
+        raise
+    if for_agent:
+        click.echo(checkup.render_agent(report))
+        return
+    if as_json:
+        click.echo(compact_json(report))
+        return
+    for line in checkup.render(report):
+        click.echo(line)
+    if any(item["level"] == "fail" for item in report["items"]):
+        sys.exit(1)
+
+
+def config_hash_or_none(obj: dict[str, Any]) -> str | None:
+    """The hash of the configuration this process would hand to the engine, or None when it cannot be loaded."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError):
+        return None
+    hand_over_config(obj, effective)
+    return config_hash()
+
+
+@main.group("benchmark")
+def benchmark_group() -> None:
+    """The bundled benchmark corpus (CodeNarc src/main), the fixed workspace of docs/benchmark.md."""
+
+
+@benchmark_group.command("path")
+@click.option("--to", "target", type=click.Path(path_type=Path, file_okay=False), default=None, help="Unpack here.")
+@click.option("--refresh", is_flag=True, help="Restore the bundled files even when the corpus is up to date.")
+def benchmark_path(target: Path | None, refresh: bool) -> None:
+    """Print where the corpus is (unpacking it first when needed); --to DIR unpacks it into DIR instead."""
+    destination = unpack_benchmark(dict(os.environ), refresh=refresh, target=target)
+    if destination is None:
+        sys.exit(1)
+    click.echo(str(destination))
+
+
 @main.command()
 def version() -> None:
     """Print the package and bundled engine versions."""
@@ -220,18 +289,9 @@ def kiro() -> None:
 def profile_guidance_for(obj: dict[str, Any], *, global_scope: bool = False) -> str:
     """Steering text from the active runtime profiles (in a project, only those that apply to it); empty when
     there are none or the config is invalid."""
-    try:
-        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
-    except (ValueError, OSError):
-        return ""
-    found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
-    if global_scope:
-        # The global steering applies to every project, so only profiles kept outside this repository count.
-        root = obj["root"].resolve()
-        outside = [p for p in found["profiles"] if not Path(p["path"]).resolve().is_relative_to(root)]
-        found = {**found, "profiles": outside}
-        return profiles.guidance(found, None)
-    return profiles.guidance(found, obj["root"])
+    return checkup.profile_guidance(
+        obj["root"], obj["config_path"], dict(os.environ), Path.home(), global_scope=global_scope
+    )
 
 
 def run_kiro_merge(
@@ -278,6 +338,8 @@ def run_kiro_merge(
         if written and backup and any(c["before"] is not None and c["action"] == "update" for c in changes):
             click.echo(f"originals kept as <file>{BACKUP_SUFFIX}")
     if global_scope:
+        if not dry_run:
+            unpack_benchmark(dict(os.environ))
         click.echo(
             "next: in each Groovy project run `groovyscope kiro init` once; Kiro CLI reads LSP servers only from "
             "the project's .kiro/settings/lsp.json"
@@ -285,6 +347,26 @@ def run_kiro_merge(
         return
     click.echo(f"note: {KIRO_INIT_WARNING}", err=True)
     click.echo("next: restart Kiro CLI, then run /code status (expect: groovyscope (groovy) - initialized)")
+
+
+def unpack_benchmark(environ: dict[str, str], *, refresh: bool = False, target: Path | None = None) -> Path | None:
+    """Unpack the bundled benchmark corpus (CodeNarc src/main) into the user's home, or ``target``; one line of
+    output, never an exception."""
+    destination = target or benchmark.corpus_root(Path.home(), environ)
+    try:
+        result = benchmark.ensure(destination, refresh=refresh)
+    except (OSError, ValueError) as exc:
+        click.echo(f"benchmark corpus: could not unpack into {destination}: {exc}", err=True)
+        return None
+    if result is None:
+        click.echo("benchmark corpus: this package bundles none", err=True)
+        return None
+    if result["action"] != "up-to-date":
+        click.echo(
+            f"benchmark corpus {result['action']} at {result['path']} (CodeNarc {result['version']}, "
+            f"{result['files']} files)"
+        )
+    return Path(result["path"])
 
 
 GLOBAL_HELP = "Write the MCP server, groovy agent and steering to the Kiro home (~/.kiro, or $KIRO_HOME)."
@@ -553,12 +635,45 @@ def uri_to_path(uri: str) -> Path:
 
 
 def engine_call(socket_file: Path, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    result = engine_result(socket_file, method, params)
+    return dict(result) if isinstance(result, dict) else {}
+
+
+def engine_result(socket_file: Path, method: str, params: dict[str, Any]) -> Any:
+    """One engine request, whatever shape it answers with (a list for impact reports); exits on failure."""
     try:
-        result = _RPC(socket_file, method, params, RPC_TIMEOUT_SECONDS)
+        return _RPC(socket_file, method, params, RPC_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"groovyscope: {method} failed: {exc}", err=True)
         sys.exit(1)
-    return dict(result) if isinstance(result, dict) else {}
+
+
+def imported_rows(
+    root: Path, effective: Mapping[str, Any], explicit: Sequence[Path], paths: Sequence[Path]
+) -> list[dict[str, Any]]:
+    """SARIF findings as CLI rows (the build's reports plus EXPLICIT files), limited to PATHS when given; files
+    that cannot be read are reported on stderr and skipped."""
+    found, notes = reports.merge_sarif(root, reports.reports_settings(effective)["sarif"], explicit=list(explicit))
+    for note in notes:
+        click.echo(f"groovyscope: {note}", err=True)
+    wanted = [shown_path(root / p, root).rstrip("/") for p in paths]
+    rows = []
+    for finding in found:
+        if wanted and not any(finding["path"] == w or finding["path"].startswith(w + "/") for w in wanted):
+            continue
+        rows.append(
+            {
+                "path": finding["path"],
+                "line": finding["line"],
+                "column": finding["col"],
+                "severity": finding["severity"],
+                "level": practices.LEVELS.get(str(finding["severity"]), 3),
+                "source": finding["source"],
+                "code": finding["code"],
+                "message": finding["message"],
+            }
+        )
+    return rows
 
 
 def finding_rows(diagnostics: dict[str, list[dict[str, Any]]], root: Path) -> list[dict[str, Any]]:
@@ -623,6 +738,13 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
     show_default=True,
     help="short: file:line:col: severity: message [code]; sarif: SARIF 2.1.0 for code scanning.",
 )
+@click.option(
+    "--import-sarif",
+    "sarif_paths",
+    multiple=True,
+    type=click.Path(path_type=Path, dir_okay=False),
+    help="Merge findings from a SARIF log (SpotBugs...), in addition to reports.sarif and the build's default.",
+)
 @click.pass_obj
 def check(
     obj: dict[str, Any],
@@ -632,6 +754,7 @@ def check(
     include: str,
     as_json: bool,
     output_format: str,
+    sarif_paths: tuple[Path, ...],
 ) -> None:
     """Lint, compile, type-check and practice-check Groovy files (the whole workspace when no PATHS are given)."""
     socket_file, effective = daemon_socket_for(obj)
@@ -644,6 +767,7 @@ def check(
         params["profile"] = profile
     result = engine_call(socket_file, "groovyscope/check", params)
     rows = finding_rows(result.get("diagnostics", {}), obj["root"])
+    rows += imported_rows(obj["root"], effective, sarif_paths, paths)
     summary = result.get("summary", {})
     if as_json or output_format == "json":
         click.echo(compact_json({"findings": rows, "summary": summary}))
@@ -663,6 +787,134 @@ def check(
     fail_on = int(effective["lint"]["failOnPriority"])
     if any(row["level"] <= fail_on for row in rows):
         sys.exit(1)
+
+
+@main.command("review")
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--changed", is_flag=True, help="Review what this branch changed against --base, as a merge request.")
+@click.option("--base", default="main", show_default=True, help="Base branch for --changed.")
+@click.option("--staged", is_flag=True, help="With --changed: review the index instead of the branch.")
+@click.option("--top", default=8, show_default=True, help="Findings shown per group.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def review_command(
+    obj: dict[str, Any], *, paths: tuple[Path, ...], changed: bool, base: str, staged: bool, top: int, as_json: bool
+) -> None:
+    """Review PATHS (or the whole workspace) against the practices checklist, or with --changed review the
+    branch's changed Groovy files as a merge request reviewer: blocking, should fix, by design, impact, verdict."""
+    socket_file, effective = daemon_socket_for(obj)
+    settings = tool_settings(effective)
+    tools = mcp_server.build_tools(
+        obj["root"], lambda method, params: engine_result(socket_file, method, params), settings, dict(os.environ)
+    )
+    if changed:
+        result = tools["review_changes"](base, staged, top)
+    else:
+        relative = [shown_path(obj["root"] / p, obj["root"]) for p in paths]
+        result = tools["review"](relative or None, top)
+    if as_json:
+        click.echo(compact_json(result))
+    else:
+        for line in render_review(result):
+            click.echo(line)
+    if (
+        result.get("error")
+        or result.get("counts", {}).get("blocking")
+        or any(group.get("worst", 9) <= 1 for group in result.get("groups", []))
+    ):
+        sys.exit(1)
+
+
+def tool_settings(effective: Mapping[str, Any]) -> dict[str, Any]:
+    """What the MCP tools read beyond the output section: duplicate thresholds and the build's reports."""
+    return {
+        **effective["output"],
+        "duplicates": effective.get("duplicates", {}),
+        "reports": reports.reports_settings(effective),
+    }
+
+
+def render_review(result: dict[str, Any]) -> list[str]:
+    """The review as text: verdict first, then the groups a reviewer reads in order."""
+    if result.get("error"):
+        return [f"groovyscope: {result['error']}"]
+    lines: list[str] = []
+    if "verdict" in result:
+        lines.append(f"verdict: {result['verdict']}")
+        shown = ", ".join(f"{f['path']} ({f['status']}, {f['changedLines']} lines)" for f in result.get("files", []))
+        lines.append(f"changed: {shown or 'nothing reviewable'}")
+        for name, title in (("blocking", "blocking"), ("shouldFix", "should fix"), ("nits", "nits")):
+            items = result.get(name, [])
+            if items:
+                lines.append(f"{title} ({result['counts'][name]}):")
+                lines += [f"  {f['path']}:{f['line']}: [{f.get('code')}] {f.get('message')}" for f in items]
+        for report in result.get("impact", []):
+            lines.append(
+                f"impact: {report['symbol']} ({report['kind']}, {report['path']}) risk {report['riskLevel']}, "
+                f"callers {report['callers']}, tests {report['tests']}"
+            )
+        for site in result.get("risky", []):
+            lines.append(f"added {site['kind']}: {site['path']}:{site['line']} {site.get('detail') or ''}".rstrip())
+        elsewhere = result.get("elsewhere", {})
+        if elsewhere.get("count"):
+            lines.append(f"pre-existing in these files: {elsewhere['count']} ({elsewhere.get('byCode')})")
+        for gap in result.get("uncovered", []):
+            lines.append(f"uncovered: {gap['name']} ({gap['path']}:{gap['line']}, {gap['missed']} lines)")
+        missing = result.get("missingDependencies")
+        if missing:
+            lines.append(f"missing dependencies in {missing['files']} file(s): {missing['fix']}")
+        if result.get("imported"):
+            lines.append(f"imported from the build's reports: {result['imported']}")
+        return lines
+    summary = result.get("summary", {})
+    lines.append(
+        f"{summary.get('errors', 0)} error(s), {summary.get('warnings', 0)} warning(s), "
+        f"{summary.get('information', 0)} info in {summary.get('files', 0)} file(s)"
+    )
+    for group in result.get("groups", []):
+        lines.append(f"{group['title']} ({group['total']}): {group['check']}")
+        lines += [f"  {f['path']}:{f['line']}: [{f.get('code')}] {f.get('message')}" for f in group.get("findings", [])]
+    return lines
+
+
+@main.command("coverage")
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def coverage_command(obj: dict[str, Any], *, paths: tuple[Path, ...], as_json: bool) -> None:
+    """Classes and methods no test executed, from the build's JaCoCo report (reports.jacoco), most missed first."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError) as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    configured = reports.reports_settings(effective)["jacoco"]
+    report = reports.jacoco_file(obj["root"], configured)
+    if report is None:
+        click.echo(
+            f"groovyscope: no JaCoCo report at {configured or reports.DEFAULT_JACOCO}; run the build's tests with "
+            "jacocoTestReport first",
+            err=True,
+        )
+        sys.exit(1)
+    try:
+        gaps = reports.filter_gaps(
+            reports.read_jacoco(report, obj["root"]), [shown_path(obj["root"] / p, obj["root"]) for p in paths]
+        )
+        summary = reports.coverage_summary(report)
+    except ValueError as exc:
+        click.echo(f"groovyscope: {exc}", err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(compact_json({"report": shown_path(report, obj["root"]), "coverage": summary, "gaps": gaps}))
+        return
+    click.echo(f"line coverage {summary['percent']}% ({summary['covered']} of {summary['lines']} lines)")
+    for gap in gaps:
+        click.echo(
+            f"{gap['path']}:{gap['line']}: {gap['status']} {gap['kind']} {gap['name']} ({gap['missed']} lines missed)"
+        )
+    if not gaps:
+        click.echo("no uncovered lines")
 
 
 @main.command("format")
@@ -901,7 +1153,7 @@ def mcp(obj: dict[str, Any]) -> None:
             msg = "the engine daemon could not be restarted; run `groovyscope doctor`"
             raise ConnectionError(msg) from exc
 
-    settings = {**effective["output"], "duplicates": effective.get("duplicates", {})}
+    settings = tool_settings(effective)
     sys.exit(_MCP_SERVE(obj["root"], socket_file, settings, dict(os.environ), reconnect))
 
 

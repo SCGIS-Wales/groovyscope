@@ -46,6 +46,22 @@ from that list for name resolution runs no code from them; global AST transforma
 classpath still load only with `workspace.trust`, which itself needs the trust record. `groovyscope init`
 reads build files as text and runs nothing.
 
+## What runs at agent start
+
+The groovy agent's start hook runs `groovyscope checkup --agent` in the project folder. It writes only files
+groovyscope owns or merges: the Kiro files in `~/.kiro` (backups kept), the project's `.kiro/settings/lsp.json`,
+and the benchmark corpus under `~/.groovyscope/benchmark/`. It never grants trust, never runs a build, never
+starts or stops a daemon, and never reads source code; the two actions that run repository code (`trust`,
+`classpath`) are only proposed, and the agent runs them after you say yes. The command runs no `kiro-cli`
+subprocess in agent mode and finishes within Kiro's hook budget or is cut off without effect.
+
+## Reports are data
+
+`check`, `review` and `review_changes` read the build's SARIF logs, and `coverage_gaps` reads the JaCoCo XML
+report, as data: JSON and XML parsed with the standard library (no external entities), bounded in size, with
+file paths resolved only inside the workspace. `review_changes` runs git plumbing (`merge-base`, `diff`) and
+nothing else.
+
 ## Containment
 
 - The engine reads, checks, fixes and formats only files under the workspace root (symlinks resolved); requests

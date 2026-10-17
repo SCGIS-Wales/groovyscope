@@ -218,3 +218,176 @@ def test_explain(runner: CliRunner, tmp_path: Path, engine: dict[str, Any]) -> N
     engine["response"] = None
     missing = runner.invoke(cli.main, ["--root", str(tmp_path), "explain", "Nope"])
     assert missing.exit_code == 1 and "nothing known about Nope" in missing.output
+
+
+def test_review_changed_renders_a_merge_request_review(
+    runner: CliRunner, tmp_path: Path, engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = (tmp_path / "src" / "A.groovy").as_uri()
+    responses = {
+        "groovyscope/check": {
+            "diagnostics": {
+                uri: [
+                    diagnostic(3, 1, "groovyscope", "GS006", "Eval on input"),
+                    diagnostic(30, 2, "codenarc", "NoDef", "def"),
+                ]
+            },
+            "summary": {"errors": 1, "warnings": 1, "information": 0, "files": 1},
+        },
+        "groovyscope/documentSymbols": {
+            "symbols": [
+                {
+                    "name": "A",
+                    "kind": "class",
+                    "location": {"uri": uri, "range": {"start": {"line": 0}}},
+                    "endLine": 40,
+                    "children": [
+                        {
+                            "name": "run",
+                            "kind": "method",
+                            "location": {"uri": uri, "range": {"start": {"line": 2}}},
+                            "endLine": 6,
+                        }
+                    ],
+                }
+            ],
+            "lines": 41,
+        },
+        "groovyscope/impact": [
+            {
+                "symbol": {"name": "run", "kind": "method", "location": None},
+                "riskLevel": "high",
+                "riskScore": 80,
+                "counts": {"direct": 3},
+                "tests": [],
+                "dynamicUnknowns": [],
+                "directCallers": [],
+                "transitiveCallers": [],
+                "overrides": [],
+                "suggestedChecks": [],
+            }
+        ],
+        "groovyscope/findCode": {
+            "matches": [
+                {
+                    "uri": uri,
+                    "line": 3,
+                    "endLine": 5,
+                    "detail": "catch (Exception e)",
+                    "snippet": "x",
+                    "enclosing": "A.run",
+                    "handling": "swallowed",
+                }
+            ],
+            "count": 1,
+        },
+    }
+
+    calls: list[str] = []
+
+    def fake_rpc(_socket: Path, method: str, _params: dict[str, Any], _timeout: float) -> Any:
+        calls.append(method)
+        return responses.get(method, {})
+
+    monkeypatch.setattr(cli, "_RPC", fake_rpc)
+    monkeypatch.setattr(
+        cli.mcp_server.changes,
+        "changed_files",
+        lambda _root, base, staged=False: {
+            "base": base,
+            "mode": "staged" if staged else "branch",
+            "files": [{"path": "src/A.groovy", "status": "modified", "ranges": [[2, 8]]}],
+        },
+    )
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "--changed", "--base", "develop"])
+    assert result.exit_code == 1, result.output
+    assert result.output.startswith("verdict: request changes: 1 blocking finding(s)")
+    assert "blocking (1):\n  src/A.groovy:4: [GS006] Eval on input" in result.output
+    assert "impact: A#run (method, src/A.groovy) risk high" in result.output or "impact: A.run" in result.output
+    assert "added catch: src/A.groovy:4 catch (Exception e)" in result.output
+    assert "pre-existing in these files: 1" in result.output
+    assert calls[:2] == ["groovyscope/check", "groovyscope/documentSymbols"]
+    as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "--changed", "--staged", "--json"])
+    payload = json.loads(as_json.output)
+    assert payload["mode"] == "staged" and payload["counts"] == {"blocking": 1, "shouldFix": 0, "nits": 0}
+    assert [i["symbol"] for i in payload["impact"]] == ["A", "A.run"] and payload["riskyCount"] == 3
+    monkeypatch.setattr(
+        cli.mcp_server.changes, "changed_files", lambda *_a, **_k: (_ for _ in ()).throw(ValueError("no git"))
+    )
+    failed = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "--changed"])
+    assert failed.exit_code == 1 and "groovyscope: no git" in failed.output
+
+
+def test_review_without_changed_groups_by_checklist(runner: CliRunner, tmp_path: Path, engine: dict[str, Any]) -> None:
+    uri = (tmp_path / "B.groovy").as_uri()
+    engine["response"] = {
+        "diagnostics": {uri: [diagnostic(0, 2, "codenarc", "NoDef", "def used")]},
+        "summary": {"errors": 0, "warnings": 1, "information": 0, "files": 1},
+    }
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "B.groovy"])
+    assert result.exit_code == 0, result.output
+    assert "Explicit types (1)" in result.output and "B.groovy:1: [NoDef] def used" in result.output
+
+
+def test_check_imports_sarif_and_coverage_reads_jacoco(
+    runner: CliRunner, tmp_path: Path, engine: dict[str, Any]
+) -> None:
+    sarif = tmp_path / "spotbugs.sarif.json"
+    sarif.write_text(
+        json.dumps(
+            {
+                "version": "2.1.0",
+                "runs": [
+                    {
+                        "tool": {"driver": {"name": "SpotBugs"}},
+                        "results": [
+                            {
+                                "ruleId": "NP_NULL",
+                                "level": "error",
+                                "message": {"text": "null here"},
+                                "locations": [
+                                    {
+                                        "physicalLocation": {
+                                            "artifactLocation": {"uri": "src/A.groovy"},
+                                            "region": {"startLine": 7, "startColumn": 2},
+                                        }
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    engine["response"] = {"diagnostics": {}, "summary": {"errors": 0, "warnings": 0, "information": 0, "files": 1}}
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "check", "--import-sarif", str(sarif)])
+    assert result.exit_code == 1, result.output
+    assert "src/A.groovy:7:2: error [spotbugs/NP_NULL] null here" in result.output
+    elsewhere = runner.invoke(
+        cli.main, ["--root", str(tmp_path), "check", "src/B.groovy", "--import-sarif", str(sarif)]
+    )
+    assert elsewhere.exit_code == 0 and "NP_NULL" not in elsewhere.output
+    broken = runner.invoke(cli.main, ["--root", str(tmp_path), "check", "--import-sarif", str(tmp_path / "none.sarif")])
+    assert "none.sarif" in broken.output and broken.exit_code == 0
+    no_report = runner.invoke(cli.main, ["--root", str(tmp_path), "coverage"])
+    assert no_report.exit_code == 1 and "no JaCoCo report" in no_report.output
+    jacoco = tmp_path / "build" / "reports" / "jacoco" / "test" / "jacocoTestReport.xml"
+    jacoco.parent.mkdir(parents=True)
+    jacoco.write_text(
+        '<report name="d"><package name=""><class name="A" sourcefilename="A.groovy">'
+        '<method name="run" line="4"><counter type="LINE" missed="2" covered="0"/></method>'
+        '<counter type="LINE" missed="2" covered="2"/></class></package>'
+        '<counter type="LINE" missed="2" covered="2"/></report>',
+        encoding="utf-8",
+    )
+    coverage = runner.invoke(cli.main, ["--root", str(tmp_path), "coverage"])
+    assert coverage.exit_code == 0, coverage.output
+    assert coverage.output.startswith("line coverage 50% (2 of 4 lines)")
+    assert "A.groovy:4: uncovered method A.run (2 lines missed)" in coverage.output
+    as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "coverage", "--json"])
+    assert json.loads(as_json.output)["coverage"]["percent"] == 50
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "coverage", "other"]).output.endswith(
+        "no uncovered lines\n"
+    )

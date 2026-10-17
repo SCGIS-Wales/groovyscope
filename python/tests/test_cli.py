@@ -364,3 +364,36 @@ def test_kiro_init_global_merges_into_the_kiro_home(
     assert not (tmp_path / "kh" / "settings" / "lsp.json").exists()
     (tmp_path / ".groovyscope.yaml").write_text("profiles: {discover: maybe}\n", encoding="utf-8")
     assert cli.profile_guidance_for({"root": tmp_path, "config_path": None}) == ""
+
+
+def test_checkup_and_benchmark_commands(
+    runner: CliRunner, tmp_path: Path, isolated_home: Path, clean_env: dict[str, str]
+) -> None:
+    (tmp_path / "build.gradle").write_text("", encoding="utf-8")
+    report = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup"])
+    assert report.exit_code == 0, report.output
+    assert "fix: groovyscope kiro init --global" in report.output
+    agent = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--agent"])
+    assert agent.exit_code == 0, agent.output
+    assert agent.output.startswith("groovyscope ") and "repaired: Kiro files installed" in agent.output
+    assert (isolated_home / ".kiro" / "agents" / "groovy.json").is_file()
+    assert (isolated_home / ".groovyscope" / "benchmark" / "codenarc" / "README.md").is_file()
+    as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--json"])
+    assert json.loads(as_json.output)["repaired"] == []
+    path = runner.invoke(cli.main, ["benchmark", "path"])
+    assert path.exit_code == 0 and path.output.strip().endswith("benchmark/codenarc")
+    elsewhere = runner.invoke(cli.main, ["benchmark", "path", "--to", str(tmp_path / "corpus")])
+    assert elsewhere.exit_code == 0 and (tmp_path / "corpus" / "LICENSE.txt").is_file()
+    assert "benchmark corpus unpacked" in elsewhere.output
+
+
+def test_checkup_agent_mode_never_fails(runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_a: object, **_k: object) -> object:
+        msg = "no"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(cli.checkup, "build", boom)
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--agent"])
+    assert result.exit_code == 0 and result.output.strip() == "groovyscope checkup could not run: no"
+    plain = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup"])
+    assert plain.exit_code != 0

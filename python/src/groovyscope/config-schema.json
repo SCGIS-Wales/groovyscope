@@ -332,6 +332,26 @@
           "minimum": 1
         }
       }
+    },
+    "reports": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sarif": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "SARIF logs merged into check and review (SpotBugs and other tools); empty = the build's usual SpotBugs output when present."
+        },
+        "jacoco": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "JaCoCo XML report read by coverage_gaps."
+        }
+      }
     }
   }
 }

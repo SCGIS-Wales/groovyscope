@@ -46,6 +46,9 @@ profiles:
 duplicates:
   minLines: 6             # find_duplicates: smallest repeated block, in lines
   minStatements: 3        # ... and in statements
+reports:
+  sarif: []               # SARIF logs merged into check and review (SpotBugs, other SAST); empty = build/reports/spotbugs/*.sarif* when present
+  jacoco: "build/reports/jacoco/test/jacocoTestReport.xml"  # read by coverage_gaps and `groovyscope coverage`
 format:
   engine: "basic"         # basic (bundled: whitespace hygiene + safe CodeNarc-driven fixes) | greclipse (not bundled yet)
   indentSize: 4
