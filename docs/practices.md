@@ -6,7 +6,9 @@ This is the knowledge base groovyscope enforces. Every diagnostic groovyscope re
 
 groovyscope's own diagnostics use `GS` codes. The original research proposed them as `GS001`-`GS010`; the
 numbers are kept (`GS001` is `GS001`), and `GS011`/`GS012` were added for Spock `.with {}` and quoted SQL
-interpolation on Groovy 5.
+interpolation on Groovy 5. `GS100` is a diagnostic about the analysis itself rather than the code: with no
+classpath configured, the imports of library classes cannot resolve, and instead of one error per import and
+per use the file gets one warning naming the missing packages and the fix (`groovyscope classpath`).
 
 **Bottom line:** Statically compile every production class with `@CompileStatic`. On Groovy 6, add the type checking extensions `NullChecker(strict: true)`, `SqlInjectionChecker`, `ModifiesChecker` and `PurityChecker`. Enforce the remaining practices with CodeNarc 4.0.0. Use `groovyc --error-format short` as the machine readable diagnostic contract between the compiler, the LSP and the agent.\[1\]
 
@@ -614,6 +616,7 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Concurrency | concurrency rule set | CombinerChecker (6) | Immutability or `@Synchronized` |
 | Spock | SpockMissingAssert, SpockUseVerifyEach (4.1 spock rule set) | none | Replace `.with {}` with `with(obj) {}` |
 | Version gating | none | none | GS010: Groovy 6 construct under a 5.x target |
+| Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
 GS codes are groovyscope's own diagnostics (see the table in the README and `explain`); they are not an external standard.
 

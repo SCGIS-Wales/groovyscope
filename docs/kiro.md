@@ -22,7 +22,7 @@ project writes only `lsp.json`; `--full` writes everything into the project inst
 |---|---|---|
 | `.kiro/settings/lsp.json` | project | `languages.groovy` entry: command `groovyscope lsp --stdio`, extensions, Jenkinsfile patterns, timeouts |
 | `settings/mcp.json` | global, or project with `--full` | `mcpServers.groovyscope` entry: command `groovyscope mcp`, a two-minute tool timeout |
-| `agents/groovy.json` | global, or project with `--full` | A `groovy` agent with the `code` tool, the MCP server and tool approvals |
+| `agents/groovy.json` | global, or project with `--full` | A `groovy` agent with `tools: ["*"]` (the `code` tool, groovyscope and every other MCP server you have configured, GitLab or Jira included), pre-approvals for the read-only tools, and the shell commands that run without asking |
 | `steering/groovyscope.md` | global, or project with `--full` | Always-on policy: navigate through LSP/MCP, review and fix before finishing, the review checklist |
 | `steering/groovyscope-profiles.md` | same, only when a runtime profile has `guidance` (in a project: only a profile whose markers or files occur in it) | That guidance, per profile |
 
@@ -32,6 +32,12 @@ files belong to groovyscope and are replaced. Every changed file is backed up to
 printed first. `--dry-run` shows the diff and writes nothing; `--force` replaces files wholesale (still with
 backups unless `--no-backup`). `groovyscope kiro repair [--global]` re-merges after a manual edit or
 `/code init` removed an entry. The global agent also reads `~/.kiro/steering/**/*.md` by absolute path.
+
+The agent's `tools` is `["*"]` on purpose. Kiro only exposes an MCP server to an agent whose `tools` names it
+(`@server`) or allows everything, and an agent written by groovyscope 0.8.x or earlier listed only `code` and
+`@groovyscope`, which hid the other servers in `mcp.json`. `groovyscope doctor` names any server the agent's
+list still hides and `groovyscope kiro repair --global` fixes it. `allowedTools` is what runs without a
+prompt (read, grep, glob, `code` and the groovyscope tools); other servers' tools are available but ask.
 
 ## Agent file formats (V2, universal, V3)
 
@@ -59,6 +65,8 @@ and reported. `groovyscope doctor` shows the Kiro CLI version and the agent's fo
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
 > /code logs -l ERROR   # empty is good
+> /mcp                  # expect: groovyscope running 21 tools, next to your other servers
+> /tools                # the other servers' tools are listed too (available, prompting)
 ```
 
 If a custom agent lacks the `code` tool, Kiro reports "Code tool is not enabled for this agent"; add `"code"`
@@ -66,21 +74,30 @@ or `"@builtin"` to the agent's `tools`.
 
 ## What the `code` tool can ask today
 
-Go to definition, type definition, find references, hover, document symbols, workspace symbol search,
-completion, signature help, rename (with a prepare step that refuses dynamic targets), call hierarchy,
-semantic tokens, formatting, quick fixes and diagnostics (pushed and pulled, compile plus lint). The
-engine reads the effective `.groovyscope.yaml` from the `GROOVYSCOPE_CONFIG_JSON` variable that
-`groovyscope lsp` sets, so `workspace.sourceRoots`, `workspace.classpath`, `workspace.exclude` and
-`workspace.trust` apply.
+Go to definition, type definition, implementation, find references, document highlight, hover, document
+symbols, workspace symbol search, folding ranges, inlay type hints, completion, signature help, rename (with a
+prepare step that refuses dynamic targets), call hierarchy, semantic tokens, formatting of a file or a range,
+code actions (quick fixes, `source.fixAll.groovyscope`, `source.organizeImports`) and diagnostics (pushed and
+pulled: compile, type checkers, lint down to `lint.publishMaxPriority`, GS and RP checks, each marked `fixable`
+when `fix` can repair it). The README has the table. The engine reads the effective `.groovyscope.yaml` from
+the `GROOVYSCOPE_CONFIG_JSON` variable that `groovyscope lsp` sets, so `workspace.sourceRoots`,
+`workspace.classpath`, `workspace.classpathFile`, `workspace.exclude` and `workspace.trust` apply.
 
 ## What the MCP tools add
 
 The `code` tool stops at what LSP can express. The `groovyscope` MCP server (one process per Kiro session,
-sharing the workspace daemon with the LSP side) adds thirteen tools; the README lists their arguments.
+sharing the workspace daemon with the LSP side) adds twenty-one tools; the README lists their arguments.
 Typical turns in the `groovy` agent:
 
+- "What is in this repository?" → `workspace_overview()`, then `document_symbols(path)` for a file's outline
+  and `read_symbol(path, "Class.method")` for the one declaration that matters, instead of reading files
+- "List the catch blocks that catch Exception and do not rethrow" →
+  `find_code("catch", type="Exception", rethrows=false)`
+- "Find duplicated code under `src/main/groovy/report`" → `find_duplicates(paths=["src/main/groovy/report"])`
 - "What breaks if I change the signature of `Greeter.greet`?" → `impact_of("app.Greeter.greet", change="signature")`
-- "Review the files I touched and fix what is safe" → `review(paths=[...])`, then `fix(paths=[...], apply=true)`
+- "Review the files I touched and fix what is safe" → `review(paths=[...])`, then `fix(paths=[...], apply=true)`;
+  `check(codes=["CatchException"])` or `check(max_priority=1)` narrows a long list, and a
+  `missingDependencies` summary means `groovyscope classpath` has not been run
 - "Why is line 40 flagged?" → `explain("GS002")`
 - "Can I use `Set.of` in this plugin?" → `profile_status(path)`, which names the runtime's Groovy version and
   the constructs it has not proven
@@ -106,8 +123,9 @@ npx @modelcontextprotocol/inspector groovyscope mcp
   `--trust-tools`. For unattended runs (`kiro-cli chat --no-interactive`), add `"write"` to `allowedTools` in
   a copy of the agent; the shipped agent keeps `write` and `shell` behind a prompt.
 - Kiro CLI releases weekly. `agents/groovy.json` uses the agent format Kiro CLI 2.x loads (`tools`,
-  `allowedTools`, `toolsSettings`): read, search, `code` and the groovyscope MCP tools run without asking,
-  `write` and `shell` ask, except `./gradlew`, `groovyscope`, `git status` and `git diff`. Releases up to
+  `allowedTools`, `toolsSettings`): every tool and MCP server is available (`tools: ["*"]`); read, search,
+  `code` and the groovyscope MCP tools run without asking, `write`, `shell` and other servers' tools ask,
+  except `./gradlew`, `groovyscope`, `git status` and `git diff`. Releases up to
   0.6.x also wrote a `permissions` block, which makes Kiro CLI 2.32 treat the agent as V3-only and fall back
   to `kiro_default` ("agent groovy not found"); `groovyscope kiro repair` removes it. `kiro-cli agent list`
   must show `groovy` without "(v3 format)", and `kiro-cli agent upgrade .kiro/agents` converts the file to

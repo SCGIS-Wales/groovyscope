@@ -24,16 +24,20 @@ from groovyscope.render import page
 SERVER_NAME = "groovyscope"
 LOG = logging.getLogger("groovyscope.mcp")
 INSTRUCTIONS = (
-    "Groovy code intelligence for this workspace. Use these tools instead of grep, sed, head or tail to "
-    "locate Groovy symbols, and document_symbols or hover instead of reading whole files. Every answer carries a "
-    "confidence; DYNAMIC_UNKNOWN means matched by name only. Lists are paged: pass limit and the next_cursor you "
-    "were given rather than asking for everything. Rename through rename (a dry run first), never by text replace. "
-    "Paths are workspace-relative; lines and columns are 1-based. Before finishing a change, call review on the "
-    "changed files and fix what it reports (fix applies the safe mechanical fixes); explain says why a code matters. "
-    "When impact_of is asked about a change, report its transitive callers and tests too, not only direct callers. "
-    "Files governed by a runtime profile (RP codes) run on the Groovy version and libraries the profile names: call "
-    "profile_status before editing one, keep its descriptor parameters, test seams and protected methods intact, and "
-    "use only constructs the profile marks as proven."
+    "Groovy code intelligence for this workspace. Use these tools instead of grep, sed, head, tail or reading whole "
+    "files. Start with workspace_overview in an unfamiliar workspace, then document_symbols for a file's outline "
+    "with line ranges, then read_symbol for the one declaration you need. Use find_code (structural search: catch, "
+    "throw, call, new, return-null, string-literal, annotation, def, empty-block, field, method) instead of grep, "
+    "and find_duplicates to find repeated code. Every navigation answer carries a confidence; DYNAMIC_UNKNOWN means "
+    "matched by name only. Lists are paged: pass limit and the next_cursor you were given rather than asking for "
+    "everything. Rename through rename (a dry run first), never by text replace. Paths are workspace-relative; "
+    "lines and columns are 1-based. Before finishing a change, call review on the changed files and fix what it "
+    "reports (fix applies the safe mechanical fixes; check narrows by codes or max_priority); explain says why a "
+    "code matters. A missingDependencies summary (GS100) means no classpath is configured: suggest `groovyscope "
+    "classpath` rather than editing imports. When impact_of is asked about a change, report its transitive callers "
+    "and tests too, not only direct callers. Files governed by a runtime profile (RP codes) run on the Groovy "
+    "version and libraries the profile names: call profile_status before editing one, keep its descriptor "
+    "parameters, test seams and protected methods intact, and use only constructs the profile marks as proven."
 )
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "hint": 3}

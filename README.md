@@ -11,7 +11,8 @@ formatter) answers semantic questions about Groovy, Gradle and Jenkinsfile code.
 
 - an **LSP server** that Kiro CLI spawns from `.kiro/settings/lsp.json` and uses through its built-in `code`
   tool (definition, references, rename, diagnostics, hover, symbols);
-- an **MCP server** for the questions LSP cannot express: impact of a change, call graphs, lint, format and
+- an **MCP server** for the questions LSP cannot express: a map of the workspace, the source of one
+  declaration, structural code search, duplicated code, impact of a change, call graphs, lint, format and
   security findings, returned as compact JSON so the agent stops reaching for `grep`, `sed`, `head` and `tail`.
 
 Python owns the installer, CLI, configuration and MCP bridge. Every semantic answer comes from the JVM.
@@ -32,9 +33,17 @@ Once per Groovy project (Kiro CLI reads language servers only from the project's
 ```bash
 cd your-groovy-project
 groovyscope kiro init             # writes .kiro/settings/lsp.json only, since the global setup has the rest
+groovyscope init                  # a starting .groovyscope.yaml from the project's layout and build files
+groovyscope trust                 # if you trust this repository: lets `classpath` run its build tool
+groovyscope classpath             # asks Gradle or Maven for the dependencies, so library classes resolve
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
+> /mcp                            # expect: groovyscope running 21 tools
 ```
+
+`init`, `trust` and `classpath` are optional. Without a classpath the engine still answers from the project's
+own sources; imports of library classes then surface as one `GS100` "missing dependencies" warning per file
+instead of a wall of unresolved-class errors.
 
 `kiro init --global` merges into `~/.kiro/settings/mcp.json`, `~/.kiro/agents/groovy.json` and
 `~/.kiro/steering/`: other MCP servers and agent settings stay as they are, every changed file is backed up to
@@ -55,7 +64,8 @@ rather than guesses when a call site can only be matched by name. Findings come 
 - the compiler and Groovy 6's type checkers (NullChecker, SqlInjection, Regex, FormatString, Combiner, Purity);
 - CodeNarc 4 with a profile aligned with the [practices knowledge base](docs/practices.md);
 - groovyscope's own practice checks, GS001 to GS012 (integer division, Elvis on 0, GString logging, `Eval`,
-  `@Grab`, string `execute()`, XXE, Groovy 6-only syntax under a Groovy 5 target and more);
+  `@Grab`, string `execute()`, XXE, Groovy 6-only syntax under a Groovy 5 target and more) and GS100, one
+  warning per file whose imports cannot resolve because no classpath is configured;
 - optional [runtime profiles](docs/profiles.md) (RP codes) for plugin code that runs on a different Groovy and
   classpath than the local build: constructs not proven on the runtime, descriptor parameter mistakes, secret
   flows, contract drift against a recorded baseline, and an emulation compile with the runtime's own Groovy.
@@ -64,21 +74,30 @@ rather than guesses when a call site can only be matched by name. Findings come 
 then type-checks, `intdiv`, typed parameter reads and more) and reject any edit that would stop the file
 parsing. `explain` says why a finding matters and how to fix it.
 
+For reading code, the MCP server gives the agent a map of the workspace (`workspace_overview`), the outline of
+a file with line ranges (`document_symbols`), the source of one declaration with line numbers (`read_symbol`),
+a structural search over the compiled trees (`find_code`: catch blocks that swallow `Exception`, calls by name
+or receiver type, `return null`, string literals matching a pattern, annotations, `def` declarations, empty
+blocks, long methods) and duplicated code with identifiers and literals ignored (`find_duplicates`). None of
+them returns a whole file.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `groovyscope doctor [--bundle report.zip]` | Checks Python, configuration and trust, JDK (vendor and version), the engine JAR (SHA-256), Kiro files, the Kiro agent's format and runtime profiles; `--bundle` writes a zip for bug reports |
 | `groovyscope logs [-n N] [-f] [--kiro]` | The engine daemon's log for this workspace, or groovyscope's lines from Kiro CLI's logs |
-| `groovyscope trust [--revoke] [--list]` | Trust this workspace, so its `.groovyscope.yaml` may set `workspace.trust`, `jdk.home` and rule sets ([security](docs/security.md)) |
-| `groovyscope kiro init \| repair [--global] [--full] [--agent-format auto\|v2\|universal\|v3] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project. The agent keeps its format (V2, universal or V3) |
+| `groovyscope trust [--revoke] [--list]` | Trust this workspace, so its `.groovyscope.yaml` may set `workspace.trust`, `jdk.home` and rule sets, and `classpath` may run its build tool ([security](docs/security.md)) |
+| `groovyscope init [--dry-run]` | Writes a starting `.groovyscope.yaml` (source roots, Groovy version) from the project's layout and build files; existing settings win |
+| `groovyscope classpath [--tool gradle\|maven] [--timeout N]` | Asks the project's Gradle (init script) or Maven build for its compile and test classpath and writes it to `workspace.classpathFile`; trusted workspaces only, since it runs the build scripts |
+| `groovyscope kiro init \| repair [--global] [--full] [--agent-format auto\|v2\|universal\|v3] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project. The agent keeps its format (V2, universal or V3) and its `tools: ["*"]`, so every MCP server you have stays usable |
 | `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif]` | All findings; `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
 | `groovyscope fix [PATHS] [--code X] [--apply]` | Safe fixes; reports them unless `--apply` |
 | `groovyscope explain CODE` | Why a code (GS001, RP010, NullChecker, a CodeNarc rule) matters and how to fix it |
 | `groovyscope format [PATHS] [--apply]` | Bundled formatter (whitespace hygiene, safe CodeNarc-driven fixes) |
 | `groovyscope impact TARGET [--change signature\|rename\|delete\|behaviour]` | Direct and transitive callers, overrides, tests, name-only sites, risk and suggested checks |
 | `groovyscope callgraph TARGET [--direction in\|out] [--depth N]` | Callers of, or calls made by, a declaration with per-edge confidence |
-| `groovyscope profile list \| validate FILE \| status PATH` | Runtime profiles found for the workspace, schema validation, and what governs a file |
+| `groovyscope profile list \| install FILE \| validate FILE \| status PATH` | Runtime profiles found for the workspace, a validated copy into `~/.groovyscope/profiles/` (how a private profile reaches another machine), schema validation, and what governs a file |
 | `groovyscope baseline save \| check` | Records the contract surface of profile-governed files; `check` exits 1 when something recorded changed |
 | `groovyscope config validate [--show]` | Validates `.groovyscope.yaml` + `GROOVYSCOPE_*` overrides against the schema |
 | `groovyscope lsp --stdio` / `groovyscope mcp` | What Kiro runs: LSP and MCP over the warm per-workspace daemon |
@@ -88,6 +107,23 @@ parsing. `explain` says why a finding matters and how to fix it.
 
 Most commands take `--json`. Every command takes `--debug`, `-v`/`--verbose` and `--log-file PATH`
 ([debug logging](docs/troubleshooting.md#debug-logging)).
+
+## What the `code` tool gets (LSP)
+
+Kiro's built-in `code` tool talks LSP to `groovyscope lsp --stdio`. The server declares these capabilities:
+
+| Capability | What it does |
+|---|---|
+| definition, typeDefinition, implementation | Jump to a declaration, to the type of an expression, or to the workspace subclasses and implementations of a type and the overrides of a method |
+| references, documentHighlight | Every use with a confidence; the uses of the symbol under the cursor in the same file |
+| hover, signatureHelp, completion | Signature and documentation, parameter hints on `(` and `,`, members after `.` |
+| documentSymbol, workspaceSymbol, foldingRange | The outline of a file with ranges (served from the symbol cache before the first compile), name search across the workspace, folding regions |
+| inlayHint | The inferred type shown after a dynamically typed local (`def x = ...`) whose initialiser has a known type |
+| prepareRename, rename | A dry run that refuses when a use is matched by name only, then the edit |
+| diagnostics (push and pull) | Compile errors, type-checker findings, CodeNarc findings down to `lint.publishMaxPriority`, GS practice checks and RP profile checks, each with a `fixable` flag and a link to its explanation |
+| codeAction | Quick fixes, `source.fixAll.groovyscope` (every safe fix in the file) and `source.organizeImports` |
+| formatting, rangeFormatting | The bundled formatter on a whole file or a selection |
+| callHierarchy, semanticTokens | Incoming and outgoing calls from the call graph; token types and modifiers from the index |
 
 ## MCP tools
 
@@ -100,19 +136,23 @@ closed-world), and parallel calls are queued safely on the one engine session.
 
 | Tool | Answers |
 |---|---|
+| `workspace_overview()` | A map of the codebase: files and lines per package, the largest files and classes, test files and classes without a test. The first call in an unfamiliar workspace |
 | `find_symbol(query, kind?, limit?, cursor?)` | Declarations whose name contains the query |
 | `goto_definition(path, line, col)` | The declaration under a position, with its confidence |
 | `type_definition(path, line, col)` | The declaration of the type of the expression under a position |
 | `hover(path, line, col)` | What an editor shows on hover: signature, documentation, runtime-profile parameter details, why a finding on that line matters |
-| `document_symbols(path, depth?)` | The outline of a file (classes, members), instead of reading it |
+| `document_symbols(path, depth?, kinds?, name?, limit?, cursor?)` | The outline of a file: classes and members with their first and last line and the file's line count, filtered by kind or name and paged, instead of reading it |
+| `read_symbol(path, symbol, line?, max_chars?)` | The source of one class, method or field with line numbers (`name`, `Class.name` or a class name; `line` picks an overload), with the comments and annotations above it. Replaces reading line ranges |
+| `find_code(kind, paths?, name?, type?, pattern?, modifiers?, empty_body?, rethrows?, min_lines?, min_parameters?, limit?, cursor?)` | Structural search over the compiled trees, instead of grep. Kinds: `catch`, `throw`, `call`, `new`, `return-null`, `string-literal`, `annotation`, `def`, `empty-block`, `field`, `method`; each match names its enclosing declaration |
+| `find_duplicates(paths?, min_lines?, limit?, cursor?)` | Repeated code: groups of blocks with the same structure (identifiers and literals ignored), largest first, `EXACT` or `SIMILAR`, with every location |
 | `find_references(path, line, col, include_declaration?, limit?, cursor?)` | Every reference with a confidence, plus counts per confidence |
 | `call_graph(symbol, direction?, depth?)` | Callers of (`in`) or calls made by (`out`) a declaration |
 | `impact_of(symbol, change?)` | Direct and transitive callers, overrides, tests, dynamic sites, risk and suggested checks |
-| `check(paths?, profile?, include?, limit?, cursor?)` | Compile, lint, type-check and practice findings, worst first |
-| `review(paths?, top?)` | The same findings grouped by the review checklist, with the profiles governing the paths |
+| `check(paths?, profile?, include?, codes?, max_priority?, limit?, cursor?)` | Compile, lint, type-check and practice findings, worst first, with counts per code (`byCode`) and a `fixable` flag; `codes` keeps only those codes, `max_priority` 1 errors, 2 and warnings, 3 and info. Files whose imports cannot resolve are summarised once under `missingDependencies` |
+| `review(paths?, top?, max_priority?)` | The same findings grouped by the review checklist, with counts per code and the profiles governing the paths |
 | `fix(paths?, codes?, apply?)` | Safe fixes; a dry run unless `apply` |
 | `rename(path, line, col, new_name, apply?)` | Rename everywhere it is used, refused when a use is matched by name only; a dry run unless `apply` |
-| `explain(code)` | What a code means, why it matters and the fix |
+| `explain(code)` | What a code means (GS001 to GS012, GS100, RP codes, a Groovy 6 checker, a CodeNarc rule), why it matters and the fix |
 | `profile_status(path)` | Target Groovy, compiling service, construct status on the runtime, descriptor parameters, test seams and protected code of a governed file |
 | `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |
 | `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing`, `metaClass` writes, `@Grab`, `Eval`, `execute()` |
@@ -120,9 +160,15 @@ closed-world), and parallel calls are queued safely on the one engine session.
 
 ## Configuration
 
-Nothing is required. To change a default, copy [config/defaults.yaml](config/defaults.yaml) to
+Nothing is required. `groovyscope init` writes a starting `.groovyscope.yaml` from the project's layout and
+build files. To change any other default, copy [config/defaults.yaml](config/defaults.yaml) to
 `.groovyscope.yaml` in your workspace and keep only what you change. Any key can be overridden with an
-environment variable, for example `GROOVYSCOPE_DAEMON__HEAP=2g`. Runtime profiles live in
+environment variable, for example `GROOVYSCOPE_DAEMON__HEAP=2g`. Worth knowing: `workspace.classpathFile`
+(written by `groovyscope classpath`, its entries join `workspace.classpath`), `lint.rules` (per-rule
+overrides such as `{CompileStatic: off, LineLength: {priority: 3}}`), `lint.publishMaxPriority` (only
+priority 1 and 2 lint findings reach the editor and the agent as diagnostics; 3 stays available through
+`check` and `review`), `practices.severity` (per GS or RP code, `GS100: off` included) and
+`duplicates.minLines` / `duplicates.minStatements` for `find_duplicates`. Runtime profiles live in
 `~/.groovyscope/profiles/` or `<workspace>/.groovyscope/profiles/` and stay out of the repository if you want
 them private; see [docs/profiles.md](docs/profiles.md).
 
@@ -130,7 +176,9 @@ them private; see [docs/profiles.md](docs/profiles.md).
 
 `@Grab` and `@ASTTest` are disabled in the engine JVM and cannot be enabled through configuration. Global AST
 transforms from the workspace classpath load only with `workspace.trust: true`. The classpath comes from
-configuration, never from silent inference. See [docs/security.md](docs/security.md).
+configuration or from `groovyscope classpath`, which runs the project's build tool and is therefore refused
+until you `groovyscope trust` the workspace; it is never inferred silently. See
+[docs/security.md](docs/security.md).
 
 ## Repository layout
 
