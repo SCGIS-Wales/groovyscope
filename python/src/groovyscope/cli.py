@@ -14,7 +14,7 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, relay, rpc
+from groovyscope import __version__, mcp_server, relay, rpc
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope.config import dump_yaml, load_config
 from groovyscope.doctor import build_report, has_failures
@@ -25,7 +25,6 @@ from groovyscope.kiro import KIRO_INIT_WARNING, apply_changes, plan_changes, uni
 from groovyscope.launch import MIN_JDK_FOR_AUTO_CDS, build_engine_command
 from groovyscope.render import compact_json, table
 
-EXIT_NOT_IMPLEMENTED = 3
 LOG_ENV = "GROOVYSCOPE_LOG"
 CONFIG_ENV = "GROOVYSCOPE_CONFIG_JSON"
 LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
@@ -37,11 +36,6 @@ def configure_logging(environ: dict[str, str] | None = None) -> None:
     env = os.environ if environ is None else environ
     level_name = env.get(LOG_ENV, "warning").upper()
     logging.basicConfig(level=getattr(logging, level_name, logging.WARNING), stream=sys.stderr, format="%(message)s")
-
-
-def not_implemented(feature: str, stage: str) -> None:
-    click.echo(f"groovyscope: {feature} is not implemented yet (planned for {stage}); see docs/roadmap.md", err=True)
-    sys.exit(EXIT_NOT_IMPLEMENTED)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -128,7 +122,6 @@ def run_kiro_merge(root: Path, *, force: bool, backup: bool, dry_run: bool) -> N
         written = apply_changes(root, changes, backup=backup)
         click.echo(f"{len(written)} file(s) written" if written else "nothing to do")
     click.echo(f"note: {KIRO_INIT_WARNING}", err=True)
-    click.echo("note: the MCP server lands in a later stage; `groovyscope mcp` currently exits 3.", err=True)
     click.echo("next: restart Kiro CLI, then run /code status (expect: groovyscope (groovy) - initialized)")
 
 
@@ -240,6 +233,7 @@ def exec_process(path: str, argv: Sequence[str]) -> None:
 _EXEC: ExecFn = exec_process
 _RELAY: Callable[[Path], int] = relay.main
 _RPC: Callable[..., Any] = rpc.request
+_MCP_SERVE: Callable[..., int] = mcp_server.serve
 RPC_TIMEOUT_SECONDS = 600.0
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
 POSITION_PARTS = 3  # path:line:col
@@ -511,9 +505,11 @@ _RPC_LIST = _rpc_list
 
 
 @main.command()
-def mcp() -> None:
-    """Run the MCP server (planned)."""
-    not_implemented("the MCP server", "Stage 5")
+@click.pass_obj
+def mcp(obj: dict[str, Any]) -> None:
+    """Serve groovyscope's MCP tools on stdio (what .kiro/settings/mcp.json runs)."""
+    socket_file, effective = daemon_socket_for(obj)
+    sys.exit(_MCP_SERVE(obj["root"], socket_file, effective["output"], dict(os.environ)))
 
 
 @main.group()

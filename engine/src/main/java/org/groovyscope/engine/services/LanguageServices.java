@@ -228,6 +228,11 @@ public final class LanguageServices {
         return declarationOf(symbol).map(node -> callGraph().outgoing(node)).orElse(List.of());
     }
 
+    /** Constructs that defeat static analysis, in the given documents (all when empty). */
+    public List<org.groovyscope.engine.semantics.DynamicCodeFinder.Finding> dynamicCode(java.util.Collection<String> uris) {
+        return org.groovyscope.engine.semantics.DynamicCodeFinder.find(snapshot().index(), uris);
+    }
+
     /** Semantic tokens for a document, LSP-encoded. */
     public List<Integer> semanticTokens(String uri) {
         return SemanticTokensSupport.encode(snapshot(), uri);

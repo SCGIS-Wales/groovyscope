@@ -309,6 +309,91 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         });
     }
 
+    /** Declarations whose name contains {@code query}. Params: {@code query}, {@code root}. */
+    @JsonRequest("groovyscope/symbols")
+    public CompletableFuture<Map<String, Object>> symbols(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            String query = params.get("query") == null ? "" : params.get("query").toString();
+            List<Map<String, Object>> symbols = new java.util.ArrayList<>();
+            for (org.groovyscope.engine.model.Symbol symbol : current.workspaceSymbols(query)) {
+                symbols.add(ReportJson.symbol(symbol));
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("symbols", symbols);
+            response.put("count", symbols.size());
+            return response;
+        });
+    }
+
+    /** The declaration under a position with its confidence, or {@code null}. Params: {@code uri}, {@code line}, {@code character}, {@code root}. */
+    @JsonRequest("groovyscope/definition")
+    public CompletableFuture<Map<String, Object>> definition(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null) {
+                throw invalid("definition needs a uri with line and character");
+            }
+            return current.definition(params.get("uri").toString(), positionOf(params))
+                    .map(definition -> {
+                        Map<String, Object> response = new LinkedHashMap<>();
+                        response.put("symbol", ReportJson.symbol(definition.symbol()));
+                        response.put("confidence", definition.confidence().name());
+                        response.put("inWorkspace", definition.isInWorkspace());
+                        return response;
+                    })
+                    .orElse(null);
+        });
+    }
+
+    /** References to the symbol under a position, each with its confidence. */
+    @JsonRequest("groovyscope/references")
+    public CompletableFuture<Map<String, Object>> references(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null) {
+                throw invalid("references needs a uri with line and character");
+            }
+            boolean includeDeclaration = Boolean.TRUE.equals(params.get("includeDeclaration"));
+            List<Map<String, Object>> references = new java.util.ArrayList<>();
+            Map<String, Integer> counts = new LinkedHashMap<>();
+            for (org.groovyscope.engine.model.Reference reference : current.references(params.get("uri").toString(),
+                    positionOf(params), includeDeclaration)) {
+                Map<String, Object> json = ReportJson.location(reference.location());
+                json.put("confidence", reference.confidence().name());
+                references.add(json);
+                counts.merge(reference.confidence().name(), 1, Integer::sum);
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("references", references);
+            response.put("counts", counts);
+            return response;
+        });
+    }
+
+    /** Constructs that defeat static analysis. Params: {@code uris} (optional), {@code root}. */
+    @JsonRequest("groovyscope/dynamicCode")
+    public CompletableFuture<Map<String, Object>> dynamicCode(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            List<Map<String, Object>> findings = new java.util.ArrayList<>();
+            Map<String, Integer> counts = new LinkedHashMap<>();
+            for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : current.dynamicCode(stringList(params.get("uris")))) {
+                Map<String, Object> json = new LinkedHashMap<>();
+                json.put("kind", finding.kind());
+                json.put("symbol", finding.symbol());
+                json.put("detail", finding.detail());
+                json.put("location", ReportJson.location(finding.location()));
+                findings.add(json);
+                counts.merge(finding.kind(), 1, Integer::sum);
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("findings", findings);
+            response.put("counts", counts);
+            return response;
+        });
+    }
+
     private static org.groovyscope.engine.model.Position positionOf(Map<String, Object> params) {
         int line = params.get("line") instanceof Number number ? number.intValue() : 0;
         int character = params.get("character") instanceof Number number ? number.intValue() : 0;
