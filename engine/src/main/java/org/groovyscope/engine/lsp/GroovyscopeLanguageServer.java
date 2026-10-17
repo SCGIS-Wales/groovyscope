@@ -190,7 +190,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> check(Map<String, Object> params) {
         return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
             LanguageServices current = requireServices(params);
-            List<String> uris = stringList(params.get("uris"));
+            List<String> uris = targets(current, params);
             Object profile = params.get("profile");
             java.util.Set<String> include = new java.util.LinkedHashSet<>(stringList(params.get("include")));
             org.groovyscope.engine.model.CheckResult result = current.quality().check(uris,
@@ -215,12 +215,67 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         });
     }
 
+    /**
+     * Safe fixes for the given documents (all when empty) and codes (all fixable when empty), as edits. Nothing
+     * is written. Params: {@code uris}, {@code codes}, {@code root}.
+     */
+    @JsonRequest("groovyscope/fix")
+    public CompletableFuture<Map<String, Object>> fix(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            org.groovyscope.engine.services.QualityServices.FixResult result = current.quality().fix(
+                    targets(current, params), new java.util.LinkedHashSet<>(stringList(params.get("codes"))));
+            Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
+            for (Map.Entry<String, List<org.groovyscope.engine.model.TextEdit>> entry : result.edits().entrySet()) {
+                List<org.eclipse.lsp4j.TextEdit> list = new java.util.ArrayList<>();
+                for (org.groovyscope.engine.model.TextEdit edit : entry.getValue()) {
+                    list.add(Converters.toLsp(edit));
+                }
+                edits.put(entry.getKey(), list);
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("edits", edits);
+            response.put("applied", result.applied());
+            response.put("rejected", result.rejected());
+            return response;
+        });
+    }
+
+    /** Contract items of every profile-governed document, for {@code groovyscope baseline save}. Params: {@code root}. */
+    @JsonRequest("groovyscope/contracts")
+    public CompletableFuture<Map<String, Object>> contracts(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("files", requireServices(params).quality().contracts());
+            return response;
+        });
+    }
+
+    /** The runtime profile's view of one document. Params: {@code uri}, {@code root}. */
+    @JsonRequest("groovyscope/profile")
+    public CompletableFuture<Map<String, Object>> profile(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null) {
+                throw invalid("profile needs a uri");
+            }
+            return current.quality().profileStatus(params.get("uri").toString());
+        });
+    }
+
+    /** What a diagnostic code means and how to fix it, or {@code null}. Params: {@code code}. */
+    @JsonRequest("groovyscope/explain")
+    public CompletableFuture<Map<String, Object>> explain(Map<String, Object> params) {
+        return CompletableFuture.completedFuture(org.groovyscope.engine.practices.Explanations.explain(
+                params == null || params.get("code") == null ? null : params.get("code").toString()).orElse(null));
+    }
+
     /** Formatting edits for the given documents (all workspace documents when {@code uris} is empty). */
     @JsonRequest("groovyscope/format")
     public CompletableFuture<Map<String, Object>> format(Map<String, Object> params) {
         return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
             LanguageServices current = requireServices(params);
-            List<String> uris = stringList(params.get("uris"));
+            List<String> uris = targets(current, params);
             if (uris.isEmpty()) {
                 uris = new java.util.ArrayList<>(current.workspace().sources().keySet());
             }
@@ -378,7 +433,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             LanguageServices current = requireServices(params);
             List<Map<String, Object>> findings = new java.util.ArrayList<>();
             Map<String, Integer> counts = new LinkedHashMap<>();
-            for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : current.dynamicCode(stringList(params.get("uris")))) {
+            for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : current.dynamicCode(targets(current, params))) {
                 Map<String, Object> json = new LinkedHashMap<>();
                 json.put("kind", finding.kind());
                 json.put("symbol", finding.symbol());
@@ -418,7 +473,33 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                     org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.ServerNotInitialized,
                     "groovyscope engine has not been initialized (send initialize, or pass root)", null));
         }
+        current.syncWithDisk();
         return current;
+    }
+
+    /** The {@code uris} parameter with every directory replaced by the workspace sources under it. */
+    static List<String> targets(LanguageServices current, Map<String, Object> params) {
+        return expandDirectories(stringList(params.get("uris")), current.workspace().sources().keySet());
+    }
+
+    /**
+     * Directories expand to the known documents under them; a directory with none stays as it is, so the request
+     * matches nothing instead of falling back to the whole workspace.
+     */
+    static List<String> expandDirectories(List<String> uris, java.util.Collection<String> known) {
+        List<String> expanded = new java.util.ArrayList<>();
+        for (String uri : uris) {
+            Path path = org.groovyscope.engine.workspace.WorkspaceModel.toPath(uri);
+            if (path == null || !java.nio.file.Files.isDirectory(path)) {
+                expanded.add(uri);
+                continue;
+            }
+            String prefix = org.groovyscope.engine.workspace.WorkspaceModel.toUri(path);
+            String under = prefix.endsWith("/") ? prefix : prefix + "/";
+            List<String> inside = known.stream().filter(k -> k.startsWith(under)).sorted().toList();
+            expanded.addAll(inside.isEmpty() ? List.of(uri) : inside);
+        }
+        return expanded;
     }
 
     static List<String> stringList(Object value) {

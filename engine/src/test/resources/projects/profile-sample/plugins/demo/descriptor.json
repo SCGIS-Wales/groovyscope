@@ -1,0 +1,9 @@
+{
+  "template": "demo",
+  "cloud": "MOON",
+  "parameters": [
+    { "name": "TOPIC_NAME", "type": "string", "description": "Topic to create" },
+    { "name": "RETENTION_DAYS", "type": "string", "default": "7", "description": "Days to keep messages" },
+    { "name": "ENABLED", "type": "boolean", "default": true, "description": "Whether the topic is active" }
+  ]
+}

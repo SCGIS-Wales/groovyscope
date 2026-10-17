@@ -155,3 +155,66 @@ def test_engine_view_resolves_bundled_rulesets(tmp_path: Path) -> None:
     assert Path(view["lint"]["ruleset"]).is_file()
     assert view["lint"]["jenkinsRuleset"] == str(Path("~/my/jenkins.groovy").expanduser())
     assert view["root"] == str(tmp_path)
+
+
+def test_check_short_and_sarif_formats(runner: CliRunner, tmp_path: Path, engine: dict[str, Any]) -> None:
+    uri = (tmp_path / "src" / "A.groovy").as_uri()
+    engine["response"] = {
+        "diagnostics": {uri: [diagnostic(4, 2, "groovyscope", "GS001", "integer division")]},
+        "summary": {},
+    }
+    short = runner.invoke(cli.main, ["--root", str(tmp_path), "check", "--format", "short"])
+    assert "src/A.groovy:5:5: warning: integer division [GS001]" in short.output
+    assert engine["requests"][-1][1]["include"] == ["lint", "compile", "typecheck", "practices"]
+    sarif = runner.invoke(cli.main, ["--root", str(tmp_path), "check", "--format", "sarif"])
+    log = json.loads(sarif.output)
+    assert log["runs"][0]["results"][0]["ruleId"] == "GS001"
+    assert log["runs"][0]["tool"]["driver"]["rules"][0]["helpUri"].endswith("#23-numeric-pitfalls")
+
+
+def test_fix_reports_then_applies(runner: CliRunner, tmp_path: Path, engine: dict[str, Any]) -> None:
+    target = tmp_path / "src" / "A.groovy"
+    target.parent.mkdir(parents=True)
+    target.write_text("int x = a / b\n", encoding="utf-8")
+    engine["response"] = {
+        "edits": {
+            target.as_uri(): [
+                {
+                    "range": {"start": {"line": 0, "character": 8}, "end": {"line": 0, "character": 13}},
+                    "newText": "a.intdiv(b)",
+                }
+            ]
+        },
+        "applied": {target.as_uri(): ["GS001"]},
+        "rejected": {(tmp_path / "src" / "B.groovy").as_uri(): "the fixed text does not parse; nothing applied"},
+    }
+    dry = runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "src/A.groovy", "--code", "GS001"])
+    assert dry.exit_code == 1
+    assert "src/A.groovy: GS001" in dry.output and "src/B.groovy: skipped" in dry.output
+    assert engine["requests"][-1] == (
+        "groovyscope/fix",
+        {"root": str(tmp_path), "uris": [target.as_uri()], "codes": ["GS001"]},
+    )
+    assert target.read_text(encoding="utf-8") == "int x = a / b\n"
+    applied = runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "--apply", "--json"])
+    assert applied.exit_code == 0, applied.output
+    assert json.loads(applied.output)["files"][0]["applied"] is True
+    assert target.read_text(encoding="utf-8") == "int x = a.intdiv(b)\n"
+
+
+def test_explain(runner: CliRunner, tmp_path: Path, engine: dict[str, Any]) -> None:
+    engine["response"] = {
+        "code": "GS002",
+        "title": "Elvis",
+        "why": "0 is valid",
+        "fix": "compare with null",
+        "link": "https://x#y",
+    }
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "explain", "GS002"])
+    assert result.exit_code == 0
+    assert "GS002: Elvis" in result.output and "see: https://x#y" in result.output
+    as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "explain", "GS002", "--json"])
+    assert json.loads(as_json.output)["fix"] == "compare with null"
+    engine["response"] = None
+    missing = runner.invoke(cli.main, ["--root", str(tmp_path), "explain", "Nope"])
+    assert missing.exit_code == 1 and "nothing known about Nope" in missing.output

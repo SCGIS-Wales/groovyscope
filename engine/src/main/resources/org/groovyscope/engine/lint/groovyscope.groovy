@@ -5,16 +5,25 @@ ruleset {
     ruleset('rulesets/braces.xml')
     ruleset('rulesets/concurrency.xml')
     ruleset('rulesets/convention.xml') {
-        'CompileStatic' { priority = 2 }
-        'NoDef' { priority = 2; doNotApplyToFilesMatching = '.*/(vars|scripts)/.*\\.groovy' }
+        // Spock rewrites specifications, so they stay dynamic (docs/practices.md, section 12)
+        'CompileStatic' { priority = 2; doNotApplyToFilesMatching = '.*Spec\\.groovy' }
+        'NoDef' { priority = 2; doNotApplyToFilesMatching = '.*/(vars|scripts)/.*\\.groovy|.*Spec\\.groovy' }
         exclude 'TrailingComma'
         exclude 'ImplicitClosureParameter'
         exclude 'IfStatementCouldBeTernary'
         exclude 'CouldBeSwitchStatement'
+        exclude 'ImplicitReturnStatement'             // contradicts UnnecessaryReturnKeyword; neither is enforced
+        exclude 'StaticMethodsBeforeInstanceMethods'
+        exclude 'PublicMethodsBeforeNonPublicMethods'
     }
     ruleset('rulesets/design.xml') {
         exclude 'Instanceof'
         exclude 'NestedForLoop'
+        exclude 'ImplementationAsType'
+    }
+    ruleset('rulesets/dry.xml') {
+        exclude 'DuplicateNumberLiteral'
+        exclude 'DuplicateStringLiteral'
     }
     ruleset('rulesets/exceptions.xml')
     ruleset('rulesets/formatting.xml') {
@@ -30,7 +39,14 @@ ruleset {
     ruleset('rulesets/naming.xml') {
         exclude 'FactoryMethodName'
     }
-    ruleset('rulesets/security.xml')
+    ruleset('rulesets/security.xml') {
+        exclude 'JavaIoPackageAccess'
+    }
+    ruleset('rulesets/generic.xml') {
+        include 'IllegalClassReference'
+        // @Grab resolves dependencies at compile time; Eval runs its argument (docs/practices.md, section 7)
+        'IllegalClassReference' { priority = 1; classNames = 'groovy.lang.Grab, groovy.lang.Grapes, groovy.util.Eval' }
+    }
     ruleset('rulesets/serialization.xml')
     ruleset('rulesets/size.xml') {
         'MethodSize' { maxLines = 60 }
@@ -41,6 +57,7 @@ ruleset {
     }
     ruleset('rulesets/unnecessary.xml') {
         exclude 'UnnecessaryReturnKeyword'  // explicit returns preferred in typed code
+        exclude 'UnnecessaryGetter'
     }
     ruleset('rulesets/unused.xml')
     ruleset('rulesets/enhanced.xml')        // requires the compile classpath (the engine supplies it)

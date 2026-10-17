@@ -70,6 +70,10 @@ final class Converters {
                 severity(diagnostic.severity()), diagnostic.source());
         if (diagnostic.code() != null) {
             converted.setCode(diagnostic.code());
+            String link = org.groovyscope.engine.practices.Explanations.link(diagnostic.code(), diagnostic.source());
+            if (link != null) {
+                converted.setCodeDescription(new org.eclipse.lsp4j.DiagnosticCodeDescription(link));
+            }
         }
         return converted;
     }
@@ -177,7 +181,9 @@ final class Converters {
     }
 
     static org.eclipse.lsp4j.Hover hover(Hover hover) {
-        return new org.eclipse.lsp4j.Hover(new MarkupContent(MarkupKind.MARKDOWN, hover.markdown()), toLsp(hover.range()));
+        MarkupContent content = new MarkupContent(MarkupKind.MARKDOWN, hover.markdown());
+        return hover.range() == null ? new org.eclipse.lsp4j.Hover(content)
+                : new org.eclipse.lsp4j.Hover(content, toLsp(hover.range()));
     }
 
     static org.eclipse.lsp4j.SignatureHelp signatureHelp(SignatureHelp help) {

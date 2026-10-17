@@ -65,6 +65,13 @@ def test_kiro_check_states(tmp_path: Path) -> None:
     assert level == "warn" and "mcp.json" in message
     apply_changes(tmp_path, plan_changes(tmp_path))
     assert kiro_check(tmp_path)[0] == "ok"
+    home = tmp_path / "kh"
+    project = tmp_path / "project"
+    apply_changes(home, plan_changes(home, global_scope=True))
+    level, _, message = kiro_check(project, home)
+    assert level == "warn" and "run `groovyscope kiro init` in this project" in message
+    apply_changes(project, plan_changes(project, lsp_only=True))
+    assert kiro_check(project, home)[0] == "ok"
 
 
 def test_build_report_and_failures(
@@ -72,7 +79,7 @@ def test_build_report_and_failures(
 ) -> None:
     monkeypatch.setattr("groovyscope.doctor.locate_jar", lambda env: locate_jar(env, tmp_path / "no-bundle"))
     env = {**clean_env, "JAVA_HOME": str(fake_jdk)}
-    report = build_report(tmp_path, None, env)
+    report = build_report(tmp_path, None, env, home=tmp_path / "home")
     assert [name for _, name, _ in report] == [
         "groovyscope",
         "python",
@@ -80,6 +87,7 @@ def test_build_report_and_failures(
         "jdk",
         "engine jar",
         "kiro files",
+        "profiles",
         "daemon",
     ]
     assert has_failures(report)  # no JAR bundled

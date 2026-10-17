@@ -23,11 +23,22 @@ echo "fake java: $@"
 """
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Every test gets its own HOME and no KIRO_HOME, so the developer's ~/.kiro and runtime profiles stay unread."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("KIRO_HOME", raising=False)
+    return home
+
+
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
     """Environment without any GROOVYSCOPE_* or JAVA_HOME influence; PATH points at an empty dir.
 
-    The cache directory is redirected too, so a JAR or JDK fetched on the developer's machine stays invisible.
+    The cache directory and HOME are redirected too, so a JAR, JDK or runtime profile on the developer's machine
+    stays invisible.
     """
     for name in list(os.environ):
         if name.startswith("GROOVYSCOPE_") or name == "JAVA_HOME":
@@ -35,10 +46,11 @@ def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]
     cache = tmp_path / "cache"
     env = {
         "PATH": "/nonexistent-bin",
-        "HOME": os.environ.get("HOME", str(Path.home())),
+        "HOME": str(tmp_path / "home"),
         "GROOVYSCOPE_CACHE_DIR": str(cache),
     }
     monkeypatch.setenv("PATH", env["PATH"])
+    monkeypatch.setenv("HOME", env["HOME"])
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(cache))
     return env
 

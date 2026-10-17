@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SCGIS-Wales/groovyscope/profile-schema.json",
+  "title": "groovyscope runtime profile",
+  "description": "Describes a runtime that loads Groovy plugin modules: what governs a file, the Groovy it really runs on, what is proven on it, and the contract around its plugins. See docs/profiles.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "$defs": {
+    "strings": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "matchers": {
+      "type": "object",
+      "properties": {
+        "imports": { "$ref": "#/$defs/strings", "description": "Import prefixes, e.g. com.example.sdk." },
+        "classes": { "$ref": "#/$defs/strings", "description": "Class names, simple or qualified." },
+        "calls": { "$ref": "#/$defs/strings", "description": "Calls as Type.method or method." },
+        "constructors": { "$ref": "#/$defs/strings", "description": "Classes whose construction is matched." }
+      }
+    }
+  },
+  "properties": {
+    "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "description": { "type": "string" },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A Groovy file is governed when it matches any of these.",
+      "properties": {
+        "files": { "$ref": "#/$defs/strings", "description": "Workspace-relative globs." },
+        "imports": { "$ref": "#/$defs/strings", "description": "Import prefixes." },
+        "markers": { "$ref": "#/$defs/strings", "description": "File names that mark a plugin directory (searched upwards)." }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "groovy": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+){0,2}$", "description": "Groovy version the runtime runs." },
+        "groovy6Checkers": { "enum": ["on", "advisory", "off"], "description": "Groovy 6 type checker findings on governed files." },
+        "compiledBy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["files", "label"],
+            "properties": { "files": { "type": "string" }, "label": { "type": "string" } }
+          }
+        },
+        "emulationJars": { "$ref": "#/$defs/strings", "description": "Jars of the runtime's own Groovy, for the RP050 compile." }
+      }
+    },
+    "constructs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "imports": { "$ref": "#/$defs/strings" },
+          "classes": { "$ref": "#/$defs/strings" },
+          "calls": { "$ref": "#/$defs/strings" },
+          "constructors": { "$ref": "#/$defs/strings" },
+          "syntax": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(switch-arrow|multi-catch|extra-class|nested-class|record|sealed|as-coercion(:[A-Za-z0-9_.]+)?)$"
+            }
+          },
+          "files": { "$ref": "#/$defs/strings" },
+          "status": { "enum": ["blocked", "unproven", "discouraged", "proven-elsewhere", "proven"] },
+          "severity": { "enum": ["error", "warning", "info", "hint"] },
+          "evidence": { "type": "string" },
+          "replacement": { "type": "string" }
+        }
+      }
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": { "type": "string", "description": "Descriptor file name, found next to or above a governed file." },
+        "parameters": { "type": "string", "description": "Dotted path to the parameter list or map." },
+        "nameField": { "type": "string" },
+        "typeField": { "type": "string" },
+        "defaultField": { "type": "string" },
+        "descriptionField": { "type": "string" },
+        "accessors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["method"],
+            "properties": {
+              "method": { "type": "string" },
+              "nameArgument": { "type": "integer", "minimum": 0 },
+              "typeArgument": { "type": "integer", "minimum": -1 }
+            }
+          }
+        },
+        "typeMap": { "type": "object", "additionalProperties": { "$ref": "#/$defs/strings" } },
+        "rawMaps": { "$ref": "#/$defs/strings" },
+        "forbiddenValues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "values"],
+            "properties": {
+              "path": { "type": "string" },
+              "values": { "$ref": "#/$defs/strings" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "infrastructure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "variables": { "type": "string", "description": "Glob of Terraform files declaring the plugin's variables." },
+        "noDefaults": { "type": "boolean" },
+        "noValidation": { "type": "boolean" }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "names": { "$ref": "#/$defs/strings", "description": "Name fragments that mark a value as secret." },
+        "logs": { "type": "boolean" },
+        "exceptions": { "type": "boolean" },
+        "maps": { "$ref": "#/$defs/strings" },
+        "calls": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calls": { "$ref": "#/$defs/strings" },
+        "allowedIn": { "$ref": "#/$defs/strings", "description": "Methods that may make network calls." }
+      }
+    },
+    "sdk": {
+      "type": "array",
+      "items": {
+        "allOf": [{ "$ref": "#/$defs/matchers" }],
+        "type": "object",
+        "required": ["id", "suggest"],
+        "properties": {
+          "id": { "type": "string" },
+          "imports": true,
+          "classes": true,
+          "calls": true,
+          "constructors": true,
+          "suggest": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "codenarc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "disable": { "$ref": "#/$defs/strings" } }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exceptions": { "$ref": "#/$defs/strings" },
+        "frozenMethods": { "$ref": "#/$defs/strings" },
+        "outputCalls": { "$ref": "#/$defs/strings" },
+        "testSources": { "type": "string" }
+      }
+    },
+    "protected": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "methods": { "$ref": "#/$defs/strings" },
+        "begin": { "type": "string" },
+        "end": { "type": "string" }
+      }
+    },
+    "guidance": { "type": "string", "description": "Text for the agent's steering when this profile is active." }
+  }
+}

@@ -45,7 +45,7 @@ final class DiagnosticsPublisher {
         thread.setDaemon(true);
         return thread;
     });
-    private final Set<String> published = new HashSet<>();
+    private final Map<String, List<org.groovyscope.engine.model.Diagnostic>> lastPublished = new java.util.HashMap<>();
     private ScheduledFuture<?> pending;
 
     DiagnosticsPublisher(Supplier<LanguageServices> services, Supplier<LanguageClient> client) {
@@ -74,14 +74,22 @@ final class DiagnosticsPublisher {
         }
         try {
             Map<String, List<org.groovyscope.engine.model.Diagnostic>> all = current.quality().publishedDiagnostics();
+            Map<String, List<org.groovyscope.engine.model.Diagnostic>> changed = new java.util.LinkedHashMap<>();
             Set<String> gone;
             synchronized (this) {
-                gone = new HashSet<>(published);
+                gone = new HashSet<>(lastPublished.keySet());
                 gone.removeAll(all.keySet());
-                published.clear();
-                published.addAll(all.keySet());
+                for (Map.Entry<String, List<org.groovyscope.engine.model.Diagnostic>> entry : all.entrySet()) {
+                    // Only documents whose diagnostics changed are sent: after an edit in a large workspace that is
+                    // usually one or two files, not all of them.
+                    if (!entry.getValue().equals(lastPublished.get(entry.getKey()))) {
+                        changed.put(entry.getKey(), entry.getValue());
+                    }
+                }
+                lastPublished.keySet().removeAll(gone);
+                lastPublished.putAll(changed);
             }
-            for (Map.Entry<String, List<org.groovyscope.engine.model.Diagnostic>> entry : all.entrySet()) {
+            for (Map.Entry<String, List<org.groovyscope.engine.model.Diagnostic>> entry : changed.entrySet()) {
                 List<Diagnostic> converted = new ArrayList<>();
                 for (org.groovyscope.engine.model.Diagnostic diagnostic : entry.getValue()) {
                     converted.add(Converters.toLsp(diagnostic));

@@ -1,7 +1,10 @@
 # Defensive coding rules for Groovy 5.x and 6.x
 
-These are the policies groovyscope enforces (through lint, impact analysis and `find_dynamic_code`) and the
-steering file installs for Kiro agents. The CodeNarc profiles live in `config/codenarc/`.
+These are the policies groovyscope enforces (through lint, the type checkers, its GS practice checks, impact
+analysis and `find_dynamic_code`) and the steering file installs for Kiro agents. The full knowledge base,
+with the reasoning, examples and enforcement map for each practice, is [practices.md](practices.md); code
+under a runtime with its own Groovy and conventions is covered by [profiles.md](profiles.md). The CodeNarc
+profiles live in `config/codenarc/`.
 
 1. **Static by default.** Compile production code with `@CompileStatic` through the configuration script
    `config/groovyc/compile-static.groovy`. Allow `@CompileDynamic` only on builders and DSL entry points, with
@@ -34,6 +37,25 @@ Both profiles load cleanly against CodeNarc 4.0.0 (the engine's specs assert it)
 included; they need the compile classpath, which comes from `workspace.classpath` today and from the Gradle
 export task later. `groovyscope check` applies the Jenkins profile to `Jenkinsfile*` and `vars/` scripts
 automatically, or everywhere with `--profile jenkins`.
+
+## Running the same checks in the build
+
+Gradle 9 still defaults to an older CodeNarc, so pin 4.0.0 explicitly and point it at groovyscope's profile:
+
+```groovy
+codenarc {
+    toolVersion = '4.0.0'
+    config = resources.text.fromFile('config/codenarc/groovyscope.groovy')
+}
+dependencies {
+    codenarc 'org.codenarc:CodeNarc:4.0.0'
+    codenarc 'org.apache.groovy:groovy:5.1.3'
+}
+```
+
+For CI annotations, `groovyscope check --format sarif > groovyscope.sarif` produces SARIF 2.1.0 with the rule
+metadata of every finding, and `--format short` prints `file:line:col: severity: message [code]` like
+`groovyc --error-format short`.
 
 ## Formatter
 

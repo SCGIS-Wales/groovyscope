@@ -30,6 +30,15 @@ typecheck:
   nullChecker: "strict"   # off | lenient | strict (Groovy 6 NullChecker, on @CompileStatic/@TypeChecked code)
   sqlInjection: true      # Groovy 6 SqlInjectionChecker
   purity: false           # Groovy 6 PurityChecker and ModifiesChecker
+  regex: true             # Groovy 6 RegexChecker (invalid regex literals)
+  formatString: true      # Groovy 6 FormatStringChecker (String.format arguments)
+  combiner: true          # Groovy 6 CombinerChecker (associative injectParallel combiners)
+practices:
+  enabled: true           # groovyscope's GS diagnostics (docs/practices.md); per-code overrides below
+  severity: {}            # e.g. {GS002: info, RP030: off}; values: error | warning | info | off
+profiles:
+  paths: []              # runtime profile files or directories (YAML/JSON), see docs/profiles.md
+  discover: true         # also load <root>/.groovyscope/profiles/ and ~/.groovyscope/profiles/
 format:
   engine: "basic"         # basic (bundled: whitespace hygiene + safe CodeNarc-driven fixes) | greclipse (not bundled yet)
   indentSize: 4

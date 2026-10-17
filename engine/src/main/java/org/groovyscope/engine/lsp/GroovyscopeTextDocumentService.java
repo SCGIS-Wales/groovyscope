@@ -165,8 +165,16 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(
             DefinitionParams params) {
         return CompletableFutures.computeAsync(cancel -> {
-            Optional<Definition> definition = ready().definition(params.getTextDocument().getUri(),
-                    Converters.fromLsp(params.getPosition()));
+            LanguageServices current = ready();
+            String uri = params.getTextDocument().getUri();
+            org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
+            List<org.groovyscope.engine.model.Location> declarations = current.quality().parameterDeclarations(uri, position);
+            if (!declarations.isEmpty()) {
+                List<Location> locations = new ArrayList<>();
+                declarations.forEach(location -> locations.add(Converters.toLsp(location)));
+                return Either.forLeft(locations);
+            }
+            Optional<Definition> definition = current.definition(uri, position);
             return Either.forLeft(locations(definition));
         });
     }
@@ -197,8 +205,17 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public CompletableFuture<List<? extends Location>> references(ReferenceParams params) {
         return CompletableFutures.computeAsync(cancel -> {
             boolean includeDeclaration = params.getContext() != null && params.getContext().isIncludeDeclaration();
-            List<Reference> references = ready().references(params.getTextDocument().getUri(),
-                    Converters.fromLsp(params.getPosition()), includeDeclaration);
+            LanguageServices current = ready();
+            org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
+            List<org.groovyscope.engine.model.Location> parameterReferences = current.quality()
+                    .parameterReferences(params.getTextDocument().getUri(), position, includeDeclaration);
+            if (!parameterReferences.isEmpty()) {
+                List<Location> locations = new ArrayList<>();
+                parameterReferences.forEach(location -> locations.add(Converters.toLsp(location)));
+                return locations;
+            }
+            List<Reference> references = current.references(params.getTextDocument().getUri(), position,
+                    includeDeclaration);
             List<Location> locations = new ArrayList<>();
             for (Reference reference : references) {
                 locations.add(Converters.toLsp(reference.location()));
@@ -209,10 +226,47 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<Hover> hover(HoverParams params) {
-        return CompletableFutures.computeAsync(cancel -> ready()
-                .hover(params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))
-                .map(Converters::hover)
-                .orElse(null));
+        return CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = ready();
+            String uri = params.getTextDocument().getUri();
+            org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
+            java.util.Optional<org.groovyscope.engine.model.Hover> hover = current.hover(uri, position);
+            java.util.Optional<String> parameter = current.quality().parameterHover(uri, position);
+            if (parameter.isPresent()) {
+                hover = java.util.Optional.of(new org.groovyscope.engine.model.Hover(parameter.get(),
+                        hover.map(org.groovyscope.engine.model.Hover::range).orElse(null)));
+            }
+            String notes = findingNotes(current, uri, position.line());
+            if (notes.isEmpty()) {
+                return hover.map(Converters::hover).orElse(null);
+            }
+            String markdown = hover.map(h -> h.markdown() + "\n\n---\n\n").orElse("") + notes;
+            org.groovyscope.engine.model.Range range = hover.map(org.groovyscope.engine.model.Hover::range).orElse(null);
+            return Converters.hover(new org.groovyscope.engine.model.Hover(markdown, range));
+        });
+    }
+
+    /** Why and how to fix, for each practice or lint finding on a line (deduplicated by code). */
+    static String findingNotes(LanguageServices services, String uri, int line) {
+        java.util.Set<String> codes = new java.util.LinkedHashSet<>();
+        for (org.groovyscope.engine.practices.PracticeFinder.Practice practice : services.quality().practices(uri)) {
+            if (practice.diagnostic().range().start().line() == line) {
+                codes.add(practice.diagnostic().code());
+            }
+        }
+        String text = services.workspace().text(uri);
+        if (text != null) {
+            for (org.groovyscope.engine.model.Diagnostic diagnostic : services.quality().lint(uri, text, null)) {
+                if (diagnostic.range().start().line() == line) {
+                    codes.add(diagnostic.code());
+                }
+            }
+        }
+        List<String> notes = new ArrayList<>();
+        for (String code : codes) {
+            org.groovyscope.engine.practices.Explanations.hoverNote(code).ifPresent(notes::add);
+        }
+        return String.join("\n\n", notes);
     }
 
     @Override

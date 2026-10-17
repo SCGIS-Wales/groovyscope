@@ -25,6 +25,7 @@ import java.util.MissingResourceException;
 import java.util.ResourceBundle;
 import java.util.concurrent.ConcurrentHashMap;
 import org.codenarc.analyzer.StringSourceAnalyzer;
+import org.codenarc.source.SourceString;
 import org.codenarc.results.Results;
 import org.codenarc.rule.Rule;
 import org.codenarc.rule.Violation;
@@ -92,11 +93,23 @@ public final class CodeNarcAnalyzer {
         return path;
     }
 
+    /** The file path of a {@code file:} URI with forward slashes, or {@code null}. */
+    static String pathOf(String uri) {
+        java.nio.file.Path path = org.groovyscope.engine.workspace.WorkspaceModel.toPath(uri);
+        return path == null ? null : path.toString().replace('\\', '/');
+    }
+
     /** Lints one document's text with the given rule set. */
     public List<Diagnostic> analyze(String uri, String text, RuleSet ruleSet) {
         Results results;
         try {
-            results = new StringSourceAnalyzer(text).analyze(ruleSet);
+            StringSourceAnalyzer analyzer = new StringSourceAnalyzer(text);
+            // With a path, rules' applyToFilesMatching / doNotApplyToFilesMatching work as they do for files.
+            String path = pathOf(uri);
+            if (path != null) {
+                analyzer.setSource(new SourceString(text, path, path.substring(path.lastIndexOf('/') + 1)));
+            }
+            results = analyzer.analyze(ruleSet);
         } catch (RuntimeException e) {
             return List.of(new Diagnostic(uri, Range.of(0, 0, 0, 1), Severity.WARNING, SOURCE, "codenarc-failed",
                     "CodeNarc could not analyse this file: " + e.getMessage()));
