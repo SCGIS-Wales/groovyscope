@@ -1,6 +1,6 @@
 package app
 
-import lib.Util
+import core.Util
 
 class App {
     String run() {

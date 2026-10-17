@@ -66,7 +66,7 @@ class ProjectsSpec extends Specification {
 
         then:
         definition.symbol().detail() == 'static String shout(String text)'
-        definition.symbol().location().uri() == Fixtures.uri('gradle-multi', 'lib/src/main/groovy/lib/Util.groovy')
+        definition.symbol().location().uri() == Fixtures.uri('gradle-multi', 'core/src/main/groovy/core/Util.groovy')
         definition.confidence() == Confidence.STATIC
         services.workspaceSymbols('')*.name().containsAll(['App', 'Util', 'shout', 'run'])
     }
