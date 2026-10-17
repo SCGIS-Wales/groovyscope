@@ -165,8 +165,16 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(
             DefinitionParams params) {
         return CompletableFutures.computeAsync(cancel -> {
-            Optional<Definition> definition = ready().definition(params.getTextDocument().getUri(),
-                    Converters.fromLsp(params.getPosition()));
+            LanguageServices current = ready();
+            String uri = params.getTextDocument().getUri();
+            org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
+            List<org.groovyscope.engine.model.Location> declarations = current.quality().parameterDeclarations(uri, position);
+            if (!declarations.isEmpty()) {
+                List<Location> locations = new ArrayList<>();
+                declarations.forEach(location -> locations.add(Converters.toLsp(location)));
+                return Either.forLeft(locations);
+            }
+            Optional<Definition> definition = current.definition(uri, position);
             return Either.forLeft(locations(definition));
         });
     }
@@ -197,8 +205,17 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public CompletableFuture<List<? extends Location>> references(ReferenceParams params) {
         return CompletableFutures.computeAsync(cancel -> {
             boolean includeDeclaration = params.getContext() != null && params.getContext().isIncludeDeclaration();
-            List<Reference> references = ready().references(params.getTextDocument().getUri(),
-                    Converters.fromLsp(params.getPosition()), includeDeclaration);
+            LanguageServices current = ready();
+            org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
+            List<org.groovyscope.engine.model.Location> parameterReferences = current.quality()
+                    .parameterReferences(params.getTextDocument().getUri(), position, includeDeclaration);
+            if (!parameterReferences.isEmpty()) {
+                List<Location> locations = new ArrayList<>();
+                parameterReferences.forEach(location -> locations.add(Converters.toLsp(location)));
+                return locations;
+            }
+            List<Reference> references = current.references(params.getTextDocument().getUri(), position,
+                    includeDeclaration);
             List<Location> locations = new ArrayList<>();
             for (Reference reference : references) {
                 locations.add(Converters.toLsp(reference.location()));
@@ -214,6 +231,11 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
             String uri = params.getTextDocument().getUri();
             org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
             java.util.Optional<org.groovyscope.engine.model.Hover> hover = current.hover(uri, position);
+            java.util.Optional<String> parameter = current.quality().parameterHover(uri, position);
+            if (parameter.isPresent()) {
+                hover = java.util.Optional.of(new org.groovyscope.engine.model.Hover(parameter.get(),
+                        hover.map(org.groovyscope.engine.model.Hover::range).orElse(null)));
+            }
             String notes = findingNotes(current, uri, position.line());
             if (notes.isEmpty()) {
                 return hover.map(Converters::hover).orElse(null);

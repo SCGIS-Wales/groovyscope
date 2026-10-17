@@ -93,7 +93,7 @@ Your previous conversations and steering documents were not available to me as a
 | IntelliJ Groovy plugin | Proprietary integration | Active | Yes | Not reusable | Feature benchmark only\[29\] |
 | `tree-sitter-groovy` | MIT (community grammars) | Not verified in this research | Partial syntax only | C library with Python bindings | Optional fast fallback for broken files; **not** a semantic source |
 
-Sonar's Groovy plugin and Jenkins pipeline linters were not verified in this research and are out of scope for terminal agent use. If any Unity Deploy logic runs as Jenkins pipeline code, it executes on Jenkins' embedded CPS Groovy runtime, not on Groovy 5 or 6, so lint it with a separate profile (CodeNarc's Jenkins rules).
+Sonar's Groovy plugin and Jenkins pipeline linters were not verified in this research and are out of scope for terminal agent use. If any of your Groovy runs as Jenkins pipeline code, it executes on Jenkins' embedded CPS Groovy runtime, not on Groovy 5 or 6, so lint it with a separate profile (CodeNarc's Jenkins rules).
 
 ### 4. Groovy platform facts that drive the design
 
@@ -278,7 +278,7 @@ Use the prompt in the "Claude Code Build Prompt" section below. When it is done:
 ```bash
 uv tool install groovy-intel         # or: pipx install groovy-intel
 groovy-intel doctor                  # checks JDK 21, JAR checksum, socket dir, Kiro files
-cd ~/src/unity-deploy
+cd ~/src/your-groovy-project
 groovy-intel kiro init               # writes .kiro/settings/lsp.json, .kiro/settings/mcp.json,
                                      # .kiro/agents/groovy.json, .kiro/steering/groovy-intel.md,
                                      # .groovy-intel.yaml (merging, never clobbering)

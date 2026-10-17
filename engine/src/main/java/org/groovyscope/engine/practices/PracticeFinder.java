@@ -129,7 +129,7 @@ public final class PracticeFinder {
     }
 
     /** Severity for a code: the configured override, else the catalogue default; {@code null} when switched off. */
-    static Severity severity(String code, EngineConfig config) {
+    public static Severity severity(String code, EngineConfig config) {
         String configured = config.practices().severityOf(code);
         String value = configured != null ? configured
                 : PracticeCatalog.bundled().find(code).map(PracticeCatalog.Entry::severity).orElse("warning");
@@ -142,7 +142,7 @@ public final class PracticeFinder {
     }
 
     /** The statically known type of an expression, or {@code null} when it is dynamic or unknown. */
-    static ClassNode typeOf(Expression expression) {
+    public static ClassNode typeOf(Expression expression) {
         if (expression instanceof ConstantExpression constant) {
             return constant.getValue() == null ? null : constant.getType();
         }

@@ -241,6 +241,28 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         });
     }
 
+    /** Contract items of every profile-governed document, for {@code groovyscope baseline save}. Params: {@code root}. */
+    @JsonRequest("groovyscope/contracts")
+    public CompletableFuture<Map<String, Object>> contracts(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("files", requireServices(params).quality().contracts());
+            return response;
+        });
+    }
+
+    /** The runtime profile's view of one document. Params: {@code uri}, {@code root}. */
+    @JsonRequest("groovyscope/profile")
+    public CompletableFuture<Map<String, Object>> profile(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null) {
+                throw invalid("profile needs a uri");
+            }
+            return current.quality().profileStatus(params.get("uri").toString());
+        });
+    }
+
     /** What a diagnostic code means and how to fix it, or {@code null}. Params: {@code code}. */
     @JsonRequest("groovyscope/explain")
     public CompletableFuture<Map<String, Object>> explain(Map<String, Object> params) {

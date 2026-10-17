@@ -27,7 +27,7 @@ def test_catalog_is_complete_and_consistent() -> None:
     assert {f"GS{n:03d}" for n in range(1, 13)} <= set(codes)
     for entry in data["entries"]:
         assert entry["group"] in groups, entry["code"]
-        assert entry["kind"] in {"groovyscope", "checker", "codenarc"}
+        assert entry["kind"] in {"groovyscope", "checker", "codenarc", "profile"}
         assert entry["severity"] in {"error", "warning", "info"}
         assert entry["groovy"] in {"5", "6", "both"}
         assert entry["why"] and entry["fix"] and entry["section"]

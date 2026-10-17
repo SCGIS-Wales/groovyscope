@@ -1,0 +1,31 @@
+{
+  "name": "demo-runtime",
+  "activation": { "files": ["**/*Plugin.groovy"], "imports": ["com.example.sdk."], "markers": ["descriptor.json"] },
+  "target": {
+    "groovy": "5.1",
+    "groovy6Checkers": "advisory",
+    "compiledBy": [{ "files": "**/DemoPlugin.groovy", "label": "demo-service" }]
+  },
+  "constructs": [
+    { "id": "groovy-json", "imports": ["groovy.json."], "status": "blocked", "evidence": "groovy-json is not on the runtime classpath", "replacement": "Jackson ObjectMapper" },
+    { "id": "immutable-factories", "calls": ["Set.of", "List.of", "Map.of"], "status": "unproven", "evidence": "not observed on the runtime" },
+    { "id": "arrow-switch", "syntax": ["switch-arrow"], "status": "unproven" },
+    { "id": "nested-class", "syntax": ["nested-class"], "files": ["**/DemoPlugin.groovy"], "status": "proven-elsewhere", "evidence": "proven only in the other service" }
+  ],
+  "descriptor": {
+    "file": "descriptor.json",
+    "parameters": "parameters",
+    "accessors": [{ "method": "getResourceParameter", "nameArgument": 0, "typeArgument": 1 }],
+    "typeMap": { "String": ["string"], "Boolean": ["boolean"], "List": ["list"], "Map": ["map"] },
+    "rawMaps": ["params"],
+    "forbiddenValues": [{ "path": "cloud", "values": ["MOON"], "message": "use NONE" }]
+  },
+  "infrastructure": { "variables": "**/*.tf", "noDefaults": true, "noValidation": true },
+  "secrets": { "names": ["secret", "password", "token"], "maps": ["outputs", "params"] },
+  "network": { "calls": ["java.net.http.HttpClient.send", "HttpClient.sendAsync"], "allowedIn": ["httpWithRetry"] },
+  "sdk": [{ "id": "password-generator", "classes": ["java.security.SecureRandom"], "suggest": "use the library's PasswordGenerator" }],
+  "codenarc": { "disable": ["CompileStatic"] },
+  "contract": { "exceptions": ["IllegalStateException"], "frozenMethods": ["preProcessing"], "outputCalls": ["outputs"], "testSources": "**/src/test/**" },
+  "protected": { "methods": ["advance"] },
+  "guidance": "Treat a local green build as necessary, not sufficient."
+}

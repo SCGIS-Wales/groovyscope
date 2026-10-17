@@ -619,6 +619,14 @@ GS codes are groovyscope's own diagnostics (see the table in the README and `exp
 
 ---
 
+## 17. Runtime profiles
+
+Some Groovy runs somewhere other than where it is built: a remote loader with an older Groovy, a restricted
+classpath, hard external contracts. A runtime profile describes such a target, and groovyscope then reports
+`RP` codes for the files it governs: constructs the runtime blocks or has not proven, Groovy versions it does
+not run, parameter-descriptor contracts, secret flows, network calls outside designated methods, frozen
+contracts against a recorded baseline. Profiles are data you supply; see [profiles.md](profiles.md).
+
 ## Caveats
 - **Release notes not fully retrieved:**
   - the full Groovy 5.1 release notes;

@@ -41,9 +41,11 @@ import java.util.Set;
  *     uses Java classes of the same project resolves (they are never linted, formatted or reported on)
  * @param groovy the Groovy version the code targets and the versions it must stay compatible with
  * @param practices groovyscope's own practice diagnostics (GS codes, docs/practices.md)
+ * @param profiles runtime profiles (docs/profiles.md), in the order they are tried
  */
 public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-        Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices) {
+        Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
+        List<org.groovyscope.engine.profiles.Profile> profiles) {
 
     /** File extensions treated as Groovy sources. */
     public static final Set<String> EXTENSIONS = Set.of("groovy", "gvy", "gy", "gsh", "gradle");
@@ -165,7 +167,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             Format.DEFAULTS,
             true,
             Groovy.DEFAULTS,
-            Practices.DEFAULTS);
+            Practices.DEFAULTS,
+            List.of());
 
     public EngineConfig {
         sourceRoots = List.copyOf(sourceRoots);
@@ -176,6 +179,19 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         format = format == null ? Format.DEFAULTS : format;
         groovy = groovy == null ? Groovy.DEFAULTS : groovy;
         practices = practices == null ? Practices.DEFAULTS : practices;
+        profiles = List.copyOf(profiles == null ? List.of() : profiles);
+    }
+
+    /** This configuration with another Groovy target (used for files a runtime profile governs). */
+    public EngineConfig withGroovy(Groovy target) {
+        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, target,
+                practices, profiles);
+    }
+
+    /** All settings except runtime profiles. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices) {
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, List.of());
     }
 
     /** Everything except the Groovy target and practice settings, which keep their defaults. */
@@ -248,7 +264,20 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 new Groovy(string(groovy.get("version"), Groovy.DEFAULTS.version()),
                         strings(groovy.get("compat"), Groovy.DEFAULTS.compat())),
                 new Practices(bool(practices.get("enabled"), Practices.DEFAULTS.enabled()),
-                        stringMap(practices.get("severity"))));
+                        stringMap(practices.get("severity"))),
+                profiles(document.get("profiles")));
+    }
+
+    private static List<org.groovyscope.engine.profiles.Profile> profiles(JsonElement element) {
+        List<org.groovyscope.engine.profiles.Profile> profiles = new ArrayList<>();
+        if (element != null && element.isJsonArray()) {
+            for (JsonElement item : element.getAsJsonArray()) {
+                if (item.isJsonObject()) {
+                    profiles.add(org.groovyscope.engine.profiles.Profile.fromJson(item.getAsJsonObject()));
+                }
+            }
+        }
+        return profiles;
     }
 
     private static Map<String, String> stringMap(JsonElement element) {
