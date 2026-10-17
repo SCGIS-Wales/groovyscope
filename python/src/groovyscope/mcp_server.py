@@ -22,7 +22,10 @@ INSTRUCTIONS = (
     "locate Groovy symbols. Every answer carries a confidence; DYNAMIC_UNKNOWN means matched by name only. "
     "Paths are workspace-relative; lines and columns are 1-based. Before finishing a change, call review on the "
     "changed files and fix what it reports (fix applies the safe mechanical fixes); explain says why a code matters. "
-    "When impact_of is asked about a change, report its transitive callers and tests too, not only direct callers."
+    "When impact_of is asked about a change, report its transitive callers and tests too, not only direct callers. "
+    "Files governed by a runtime profile (RP codes) run on the Groovy version and libraries the profile names: call "
+    "profile_status before editing one, keep its descriptor parameters, test seams and protected methods intact, and "
+    "use only constructs the profile marks as proven."
 )
 Call = Callable[[str, dict[str, Any]], Any]
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
@@ -301,6 +304,17 @@ def quality_tools(
             "engine": status,
         }
 
+    return {
+        "check": check,
+        "format": format_files,
+        "find_dynamic_code": find_dynamic_code,
+        "workspace_status": workspace_status,
+    }
+
+
+def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+    """explain, review, fix and profile_status."""
+
     def explain(code: str) -> dict[str, Any]:
         """What a diagnostic code means (GS001-GS012, a Groovy 6 checker, a CodeNarc rule), why it matters, the fix."""
         answer = call("groovyscope/explain", {"root": str(root), "code": code})
@@ -316,7 +330,26 @@ def quality_tools(
             compact_diagnostic(uri, item, root) for uri, items in raw.get("diagnostics", {}).items() for item in items
         ]
         groups = practices.review(findings, max(1, min(top, cap)))
-        return {"summary": raw.get("summary", {}), "groups": groups[:cap]}
+        result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap]}
+        governed = governed_files(paths or [])
+        if governed:
+            result["profiles"] = governed
+        return result
+
+    def governed_files(paths: Sequence[str]) -> dict[str, str]:
+        """Profile name per governed path among PATHS (only explicit paths are looked up)."""
+        found: dict[str, str] = {}
+        for path in paths[:cap]:
+            status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
+            if isinstance(status, Mapping) and status.get("governed"):
+                found[path] = str(status.get("profile"))
+        return found
+
+    def profile_status(path: str) -> dict[str, Any]:
+        """The runtime profile governing PATH: target Groovy, compiling service, descriptor parameters, test seams,
+        protected methods, whether a contract baseline is recorded, and the profile's guidance."""
+        status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
+        return {"path": path, **(dict(status) if isinstance(status, Mapping) else {"governed": False})}
 
     def fix(paths: list[str] | None = None, codes: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
         """Safe fixes for PATHS (all when empty) and CODES (all fixable when empty). APPLY writes the files."""
@@ -342,15 +375,7 @@ def quality_tools(
         rejected = {relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()}
         return {"changed": len(files), "files": files[:cap], "rejected": rejected}
 
-    return {
-        "check": check,
-        "format": format_files,
-        "explain": explain,
-        "review": review,
-        "fix": fix,
-        "find_dynamic_code": find_dynamic_code,
-        "workspace_status": workspace_status,
-    }
+    return {"explain": explain, "review": review, "fix": fix, "profile_status": profile_status}
 
 
 def build_tools(
@@ -358,7 +383,11 @@ def build_tools(
 ) -> dict[str, Callable[..., Any]]:
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
-    return {**navigation_tools(root, call, paged, cap), **quality_tools(root, call, paged, cap, environ)}
+    return {
+        **navigation_tools(root, call, paged, cap),
+        **quality_tools(root, call, paged, cap, environ),
+        **practice_tools(root, call, cap),
+    }
 
 
 def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]) -> MCPServer:

@@ -1,0 +1,79 @@
+# Example runtime profile (see docs/profiles.md). Copy it to ~/.groovyscope/profiles/ or
+# <workspace>/.groovyscope/profiles/, rename it, and describe the runtime your plugins really run on.
+# Validate with: groovyscope profile validate <file>
+name: example-runtime
+description: Plugins loaded by a service that runs an older Groovy with a small SDK.
+
+# A Groovy file is governed when it matches any of these.
+activation:
+  files: ["**/*Plugin.groovy"]
+  imports: ["com.example.sdk."]
+  markers: ["descriptor.json"]          # a plugin directory has this file (searched upwards)
+
+target:
+  groovy: "5.1"                          # GS010 becomes RP002 against this version
+  groovy6Checkers: advisory              # on | advisory (warnings at most) | off
+  compiledBy:                            # names the service that compiles a file, in messages
+    - { files: "**/*ExecutionPlugin.groovy", label: "execution service" }
+    - { files: "**/*Plugin.groovy", label: "configuration service" }
+  emulationJars: []                      # jars of the runtime's own Groovy for the RP050 compile, e.g. groovy-5.1.2.jar
+
+# What is known about each construct on this runtime (RP001).
+constructs:
+  - id: groovy-json
+    imports: ["groovy.json."]
+    status: blocked                      # blocked | unproven | discouraged | proven-elsewhere | proven
+    evidence: groovy-json is not on the runtime classpath
+    replacement: Jackson ObjectMapper
+  - id: immutable-factories
+    calls: ["Set.of", "List.of", "Map.of"]
+    status: unproven
+  - id: arrow-switch
+    syntax: ["switch-arrow"]               # also: multi-catch, extra-class, nested-class, record, sealed, as-coercion:Set
+    status: unproven
+    replacement: classic switch with case/break
+
+# The plugin descriptor declares the parameters the runtime supplies (RP010-RP013, RP004).
+descriptor:
+  file: descriptor.json
+  parameters: parameters                 # dotted path to the list (or map) of parameters
+  accessors:
+    - { method: getParameter, nameArgument: 0, typeArgument: 1 }
+  typeMap: { String: [string], Boolean: [boolean], List: [list], Map: [map] }
+  rawMaps: [params]
+  forbiddenValues:
+    - { path: cloud, values: [MOON], message: "use NONE" }
+
+infrastructure:                           # RP014, RP015
+  variables: "**/*.tf"
+  noDefaults: true
+  noValidation: true
+
+secrets:                                  # RP022
+  names: [secret, password, token]
+  maps: [outputs, params]
+
+network:                                  # RP032
+  calls: ["HttpClient.send", "HttpClient.sendAsync"]
+  allowedIn: [httpWithRetry]
+
+sdk:                                      # RP030
+  - id: password-generator
+    classes: ["java.security.SecureRandom"]
+    suggest: use the SDK's password generator
+
+codenarc:
+  disable: [CompileStatic]
+
+contract:                                 # what `groovyscope baseline save` records (RP020, RP021)
+  exceptions: [PluginException]
+  frozenMethods: [preProcessing, postProcessing]
+  outputCalls: [outputs]
+  testSources: "**/src/test/**"
+
+protected:                                # fixes never edit these
+  methods: [advance]
+
+guidance: |
+  A local green build is necessary, not sufficient: the runtime compiles plugins with its own Groovy.
+  Keep parameter names, output keys and exception texts stable; downstream automation matches on them.

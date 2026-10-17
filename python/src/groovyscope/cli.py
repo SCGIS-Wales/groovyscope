@@ -14,7 +14,7 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, mcp_server, practices, provision, relay, rpc
+from groovyscope import __version__, mcp_server, practices, profiles, provision, relay, rpc
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config
@@ -22,12 +22,20 @@ from groovyscope.doctor import build_report, has_failures
 from groovyscope.edits import apply_edits, changed_line_count
 from groovyscope.jar import locate_jar, read_manifest
 from groovyscope.java import JdkInfo, discover_jdk
-from groovyscope.kiro import KIRO_INIT_WARNING, apply_changes, plan_changes, unified_diff
+from groovyscope.kiro import (
+    BACKUP_SUFFIX,
+    KIRO_INIT_WARNING,
+    apply_changes,
+    kiro_home,
+    plan_changes,
+    unified_diff,
+)
 from groovyscope.launch import MIN_JDK_FOR_AUTO_CDS, build_engine_command
 from groovyscope.render import compact_json, table
 
 LOG_ENV = "GROOVYSCOPE_LOG"
 CONFIG_ENV = "GROOVYSCOPE_CONFIG_JSON"
+BASELINE_PATH = Path(".groovyscope") / "contract-baseline.json"
 LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
 
 ExecFn = Callable[[str, Sequence[str]], Any]
@@ -104,15 +112,29 @@ def config_validate(obj: dict[str, Any], show: bool) -> None:
 
 @main.group()
 def kiro() -> None:
-    """Install or repair the Kiro CLI integration files in the workspace."""
+    """Install or repair the Kiro CLI integration files (workspace, or ~/.kiro with --global)."""
 
 
-def run_kiro_merge(root: Path, *, force: bool, backup: bool, dry_run: bool) -> None:
+def profile_guidance_for(obj: dict[str, Any]) -> str:
+    """Steering text from the active runtime profiles; empty when there are none or the config is invalid."""
     try:
-        changes = plan_changes(root, force=force)
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError):
+        return ""
+    return profiles.guidance(profiles.discover(obj["root"], effective.get("profiles", {}), Path.home()))
+
+
+def run_kiro_merge(
+    obj: dict[str, Any], *, force: bool, backup: bool, dry_run: bool, global_scope: bool = False
+) -> None:
+    base = kiro_home(dict(os.environ), Path.home()) if global_scope else obj["root"]
+    try:
+        changes = plan_changes(base, force=force, global_scope=global_scope, profile_guidance=profile_guidance_for(obj))
     except ValueError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
+    if global_scope:
+        click.echo(f"Kiro home: {base}")
     for change in changes:
         click.echo(f"{change['action']:9} {change['path']}")
         if change["action"] != "unchanged":
@@ -120,28 +142,35 @@ def run_kiro_merge(root: Path, *, force: bool, backup: bool, dry_run: bool) -> N
     if dry_run:
         click.echo("dry run: nothing written")
     else:
-        written = apply_changes(root, changes, backup=backup)
+        written = apply_changes(base, changes, backup=backup)
         click.echo(f"{len(written)} file(s) written" if written else "nothing to do")
+        if written and backup and any(c["before"] is not None and c["action"] == "update" for c in changes):
+            click.echo(f"originals kept as <file>{BACKUP_SUFFIX}")
     click.echo(f"note: {KIRO_INIT_WARNING}", err=True)
     click.echo("next: restart Kiro CLI, then run /code status (expect: groovyscope (groovy) - initialized)")
 
 
+GLOBAL_HELP = "Write to the Kiro home (~/.kiro, or $KIRO_HOME) so every workspace gets groovyscope."
+
+
 @kiro.command("init")
+@click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
 @click.option("--force", is_flag=True, help="Replace existing files instead of merging into them.")
 @click.option("--no-backup", is_flag=True, help="Do not write <file>.bak before overwriting.")
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
-def kiro_init(obj: dict[str, Any], force: bool, no_backup: bool, dry_run: bool) -> None:
+def kiro_init(obj: dict[str, Any], global_scope: bool, force: bool, no_backup: bool, dry_run: bool) -> None:
     """Write lsp.json, mcp.json, the groovy agent and the steering file (merging, never clobbering)."""
-    run_kiro_merge(obj["root"], force=force, backup=not no_backup, dry_run=dry_run)
+    run_kiro_merge(obj, force=force, backup=not no_backup, dry_run=dry_run, global_scope=global_scope)
 
 
 @kiro.command("repair")
+@click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
-def kiro_repair(obj: dict[str, Any], dry_run: bool) -> None:
+def kiro_repair(obj: dict[str, Any], global_scope: bool, dry_run: bool) -> None:
     """Re-merge groovyscope's entries after `/code init` or a manual edit removed them."""
-    run_kiro_merge(obj["root"], force=False, backup=True, dry_run=dry_run)
+    run_kiro_merge(obj, force=False, backup=True, dry_run=dry_run, global_scope=global_scope)
 
 
 def cds_archive_for(
@@ -201,8 +230,11 @@ def bundled_config(relative: str) -> Path:
     return Path(str(resources.files("groovyscope").joinpath("_templates/config").joinpath(relative)))
 
 
-def engine_view(obj: dict[str, Any], effective: dict[str, Any]) -> dict[str, Any]:
-    """The effective configuration with bundled defaults resolved to real paths, as the engine needs it."""
+def engine_view(
+    obj: dict[str, Any], effective: dict[str, Any], runtime_profiles: Sequence[dict[str, Any]] = ()
+) -> dict[str, Any]:
+    """The effective configuration with bundled defaults resolved to real paths and the runtime profiles
+    discovered for the workspace, as the engine needs it."""
     lint = dict(effective["lint"])
     lint["ruleset"] = (
         str(Path(lint["ruleset"]).expanduser())
@@ -214,12 +246,21 @@ def engine_view(obj: dict[str, Any], effective: dict[str, Any]) -> dict[str, Any
         if lint.get("jenkinsRuleset")
         else str(bundled_config("codenarc/jenkins.groovy"))
     )
-    return {**effective, "lint": lint, "root": str(obj["root"])}
+    return {**effective, "lint": lint, "root": str(obj["root"]), "profiles": list(runtime_profiles)}
+
+
+def discover_profiles(obj: dict[str, Any], effective: dict[str, Any]) -> profiles.Discovery:
+    """Runtime profiles for the workspace; problems are reported on stderr and the profile is skipped."""
+    found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
+    for problem in found["errors"]:
+        click.echo(f"groovyscope: profile skipped: {problem}", err=True)
+    return found
 
 
 def hand_over_config(obj: dict[str, Any], effective: dict[str, Any]) -> None:
     """The engine reads the validated, effective configuration from the environment (see EngineConfig)."""
-    os.environ[CONFIG_ENV] = json.dumps(engine_view(obj, effective), sort_keys=True)
+    runtime = profiles.engine_profiles(discover_profiles(obj, effective))
+    os.environ[CONFIG_ENV] = json.dumps(engine_view(obj, effective, runtime), sort_keys=True)
 
 
 def daemon_paths(root: Path) -> tuple[Path, Path, Path]:
@@ -666,6 +707,111 @@ def jdk_install(feature: int) -> None:
         sys.exit(1)
     click.echo(f"installed Temurin {installed['release']} at {installed['home']}")
     click.echo("groovyscope will use it when no other JDK meets jdk.minimum; `groovyscope doctor` shows which wins")
+
+
+@main.group("profile")
+def profile_group() -> None:
+    """Runtime profiles: which are active, whether a file is valid, what governs a file."""
+
+
+@profile_group.command("list")
+@click.pass_obj
+def profile_list(obj: dict[str, Any]) -> None:
+    """List the runtime profiles found for this workspace and where they came from; exit 1 on invalid ones."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError) as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
+    for line in profiles.describe(found):
+        click.echo(line)
+    if found["errors"]:
+        sys.exit(1)
+
+
+@profile_group.command("validate")
+@click.argument("files", nargs=-1, required=True, type=click.Path(path_type=Path, exists=True, dir_okay=False))
+def profile_validate(files: tuple[Path, ...]) -> None:
+    """Validate profile files against the profile schema."""
+    failed = False
+    for file in files:
+        try:
+            problems = profiles.validate_profile(profiles.read_profile(file))
+        except (OSError, ValueError) as exc:
+            problems = (str(exc),)
+        for problem in problems:
+            click.echo(f"{file}: {problem}", err=True)
+        failed = failed or bool(problems)
+        if not problems:
+            click.echo(f"{file}: ok")
+    if failed:
+        sys.exit(1)
+
+
+@profile_group.command("status")
+@click.argument("path", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def profile_status(obj: dict[str, Any], path: Path, as_json: bool) -> None:
+    """What the governing runtime profile says about one file."""
+    socket_file, _ = daemon_socket_for(obj)
+    status = engine_call(
+        socket_file, "groovyscope/profile", {"root": str(obj["root"]), "uri": to_uris(obj["root"], [path])[0]}
+    )
+    if as_json:
+        click.echo(compact_json(status))
+        return
+    if not status.get("governed"):
+        click.echo(f"{shown_path(path.resolve(), obj['root'])}: not governed by a runtime profile")
+        return
+    for key, value in status.items():
+        if key != "governed" and value not in ("", [], {}, None):
+            click.echo(f"{key}: {value}")
+
+
+@main.group()
+def baseline() -> None:
+    """Record and compare the contract surface of files governed by a runtime profile."""
+
+
+def contracts_now(obj: dict[str, Any]) -> dict[str, dict[str, str]]:
+    socket_file, _ = daemon_socket_for(obj)
+    files = engine_call(socket_file, "groovyscope/contracts", {"root": str(obj["root"])}).get("files", {})
+    return {str(path): {str(k): str(v) for k, v in items.items()} for path, items in files.items()}
+
+
+def baseline_file(root: Path) -> Path:
+    return root / BASELINE_PATH
+
+
+@baseline.command("save")
+@click.pass_obj
+def baseline_save(obj: dict[str, Any]) -> None:
+    """Record parameter names and types, output keys, frozen methods, exception texts and test seams."""
+    current = contracts_now(obj)
+    target = baseline_file(obj["root"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"files": current}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    items = sum(len(v) for v in current.values())
+    click.echo(f"{items} contract item(s) in {len(current)} file(s) recorded in {shown_path(target, obj['root'])}")
+
+
+@baseline.command("check")
+@click.pass_obj
+def baseline_check(obj: dict[str, Any]) -> None:
+    """Compare the contract surface with the recorded baseline; exit 1 on anything removed or changed."""
+    target = baseline_file(obj["root"])
+    if not target.is_file():
+        click.echo(f"groovyscope: no baseline at {shown_path(target, obj['root'])}; run `groovyscope baseline save`")
+        sys.exit(1)
+    recorded = json.loads(target.read_text(encoding="utf-8")).get("files", {})
+    drift = profiles.contract_drift(recorded, contracts_now(obj))
+    for line in drift:
+        click.echo(line)
+    click.echo(f"{len(drift)} contract change(s)" if drift else "contract unchanged")
+    if drift:
+        sys.exit(1)
 
 
 @main.group()

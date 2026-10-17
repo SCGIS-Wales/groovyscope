@@ -199,6 +199,7 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "explain",
         "review",
         "fix",
+        "profile_status",
     }
     result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
     structured = result[1] if isinstance(result, tuple) else result
@@ -289,7 +290,8 @@ def test_explain_review_and_fix(tools: dict[str, Any], engine: dict[str, Any], t
     assert [g["group"] for g in reviewed["groups"]] == ["security", "numbers", "style"]
     assert reviewed["groups"][0]["findings"][0]["code"] == "GS006"
     assert reviewed["groups"][1]["title"] == "Numbers and money"
-    assert engine["calls"][-1][1]["include"] == []
+    assert [c for c in engine["calls"] if c[0] == "groovyscope/check"][-1][1]["include"] == []
+    assert "profiles" not in reviewed
 
     target = tmp_path / "Fix.groovy"
     target.write_text("int x = a / b\n", encoding="utf-8")
@@ -312,3 +314,23 @@ def test_explain_review_and_fix(tools: dict[str, Any], engine: dict[str, Any], t
     tools["fix"](paths=[str(target)], codes=["GS001"], apply=True)
     assert target.read_text(encoding="utf-8") == "int x = a.intdiv(b)\n"
     assert engine["calls"][-1][1]["codes"] == ["GS001"]
+
+
+def test_profile_status_and_review_notes(tools: dict[str, Any], engine: dict[str, Any]) -> None:
+    engine["responses"]["groovyscope/profile"] = {"governed": True, "profile": "demo-runtime", "targetGroovy": "5.1"}
+    engine["responses"]["groovyscope/check"] = {"diagnostics": {}, "summary": {}}
+    status = tools["profile_status"]("plugins/demo/DemoPlugin.groovy")
+    assert status == {
+        "path": "plugins/demo/DemoPlugin.groovy",
+        "governed": True,
+        "profile": "demo-runtime",
+        "targetGroovy": "5.1",
+    }
+    assert engine["calls"][-1] == (
+        "groovyscope/profile",
+        {"root": "/ws", "uri": "file:///ws/plugins/demo/DemoPlugin.groovy"},
+    )
+    reviewed = tools["review"](paths=["plugins/demo/DemoPlugin.groovy"])
+    assert reviewed["profiles"] == {"plugins/demo/DemoPlugin.groovy": "demo-runtime"}
+    engine["responses"]["groovyscope/profile"] = None
+    assert tools["profile_status"]("src/A.groovy") == {"path": "src/A.groovy", "governed": False}

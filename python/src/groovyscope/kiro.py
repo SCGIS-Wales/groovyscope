@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any, TypedDict
@@ -18,12 +18,17 @@ KIRO_FILES: tuple[tuple[str, str], ...] = (
     ("agents/groovy.json", ".kiro/agents/groovy.json"),
     ("steering/groovyscope.md", ".kiro/steering/groovyscope.md"),
 )
+# The same files relative to the Kiro home (~/.kiro, or $KIRO_HOME) for `kiro init --global`.
+GLOBAL_FILES: tuple[tuple[str, str], ...] = tuple((name, path.removeprefix(".kiro/")) for name, path in KIRO_FILES)
+PROFILE_STEERING = "steering/groovyscope-profiles.md"
+STEERING_HEADER = "---\ninclusion: always\n---\n"
+KIRO_HOME_ENV = "KIRO_HOME"
 BACKUP_SUFFIX = ".bak"
 # Keys earlier groovyscope releases wrote that current Kiro CLI misreads, removed on merge only while they still
 # hold exactly what groovyscope wrote. A `permissions` block makes Kiro CLI 2.x treat the agent as V3-only and
 # ignore it ("agent groovy not found"); the agent now uses allowedTools and toolsSettings instead.
 RETIRED_KEYS: dict[str, dict[str, Any]] = {
-    ".kiro/agents/groovy.json": {
+    "agents/groovy.json": {
         "permissions": {
             "rules": [
                 {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},
@@ -65,7 +70,25 @@ def normalize_json(text: str) -> str:
     return json.dumps(json.loads(text), indent=2, ensure_ascii=False) + "\n"
 
 
-def merge_content(existing: str | None, template: str, *, is_json: bool, force: bool, path: str) -> str:
+def kiro_home(environ: Mapping[str, str], home: Path) -> Path:
+    """Where Kiro CLI keeps its global configuration: ``$KIRO_HOME`` when set, otherwise ``~/.kiro``."""
+    explicit = environ.get(KIRO_HOME_ENV, "")
+    return Path(explicit).expanduser() if explicit else home / ".kiro"
+
+
+def global_template(name: str, base: Path) -> str:
+    """A template adjusted for the Kiro home: the agent also reads the global steering files by absolute path."""
+    text = load_template(name)
+    if name != "agents/groovy.json":
+        return text
+    agent = json.loads(text)
+    agent["resources"] = [*agent.get("resources", []), f"file://{base.as_posix()}/steering/**/*.md"]
+    return json.dumps(agent, indent=2, ensure_ascii=False) + "\n"
+
+
+def merge_content(
+    existing: str | None, template: str, *, is_json: bool, force: bool, path: str, template_name: str = ""
+) -> str:
     """Our entries win, everything else in an existing JSON file is preserved. Markdown is replaced."""
     if existing is None or force or not is_json:
         return normalize_json(template) if is_json else template
@@ -77,31 +100,47 @@ def merge_content(existing: str | None, template: str, *, is_json: bool, force: 
     if not isinstance(current, dict):
         msg = f"{path} must contain a JSON object; rerun with --force to replace it"
         raise ValueError(msg)
-    for key, value in RETIRED_KEYS.get(path, {}).items():
+    for key, value in RETIRED_KEYS.get(template_name, {}).items():
         if current.get(key) == value:
             del current[key]
     merged = deep_merge(current, json.loads(template))
     return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
 
 
-def plan_changes(root: Path, *, force: bool = False) -> list[KiroChange]:
-    """Compute every write without touching the file system."""
-    changes: list[KiroChange] = []
-    for template_name, relative in KIRO_FILES:
-        destination = root / relative
-        existing = destination.read_text(encoding="utf-8") if destination.is_file() else None
-        after = merge_content(
-            existing, load_template(template_name), is_json=relative.endswith(".json"), force=force, path=relative
+def planned(base: Path, template_name: str, relative: str, template: str, *, force: bool) -> KiroChange:
+    destination = base / relative
+    existing = destination.read_text(encoding="utf-8") if destination.is_file() else None
+    after = merge_content(
+        existing,
+        template,
+        is_json=relative.endswith(".json"),
+        force=force,
+        path=relative,
+        template_name=template_name,
+    )
+    action = "create" if existing is None else "unchanged" if existing == after else "update"
+    return {"template": template_name, "path": relative, "action": action, "before": existing, "after": after}
+
+
+def plan_changes(
+    base: Path, *, force: bool = False, global_scope: bool = False, profile_guidance: str = ""
+) -> list[KiroChange]:
+    """Compute every write without touching the file system. ``base`` is the workspace root, or the Kiro home
+    with ``global_scope``. Runtime profile guidance, when there is any, goes to its own steering file."""
+    files = GLOBAL_FILES if global_scope else KIRO_FILES
+    changes = [
+        planned(
+            base,
+            name,
+            relative,
+            global_template(name, base) if global_scope else load_template(name),
+            force=force,
         )
-        if existing is None:
-            action = "create"
-        elif existing == after:
-            action = "unchanged"
-        else:
-            action = "update"
-        changes.append(
-            {"template": template_name, "path": relative, "action": action, "before": existing, "after": after}
-        )
+        for name, relative in files
+    ]
+    if profile_guidance:
+        relative = PROFILE_STEERING if global_scope else ".kiro/" + PROFILE_STEERING
+        changes.append(planned(base, PROFILE_STEERING, relative, STEERING_HEADER + profile_guidance, force=force))
     return changes
 
 

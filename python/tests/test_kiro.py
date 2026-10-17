@@ -6,9 +6,11 @@ from pathlib import Path
 import pytest
 
 from groovyscope.kiro import (
+    GLOBAL_FILES,
     KIRO_FILES,
     RETIRED_KEYS,
     apply_changes,
+    kiro_home,
     load_template,
     merge_content,
     plan_changes,
@@ -111,7 +113,7 @@ def test_agent_permissions_from_older_releases_are_retired(tmp_path: Path) -> No
     """Kiro CLI 2.x ignores an agent with a `permissions` block, so the one groovyscope used to write goes."""
     agent = tmp_path / ".kiro/agents/groovy.json"
     agent.parent.mkdir(parents=True)
-    legacy = RETIRED_KEYS[".kiro/agents/groovy.json"]["permissions"]
+    legacy = RETIRED_KEYS["agents/groovy.json"]["permissions"]
     agent.write_text(
         json.dumps({"name": "groovy", "tools": ["read"], "permissions": legacy, "mine": 1}), encoding="utf-8"
     )
@@ -125,3 +127,35 @@ def test_agent_permissions_from_older_releases_are_retired(tmp_path: Path) -> No
     agent.write_text(json.dumps({"name": "groovy", "permissions": custom}), encoding="utf-8")
     kept = json.loads({c["path"]: c for c in plan_changes(tmp_path)}[".kiro/agents/groovy.json"]["after"])
     assert kept["permissions"] == custom
+
+
+def test_global_scope_targets_the_kiro_home(tmp_path: Path) -> None:
+    assert kiro_home({}, tmp_path) == tmp_path / ".kiro"
+    assert kiro_home({"KIRO_HOME": str(tmp_path / "kh")}, tmp_path) == tmp_path / "kh"
+    base = tmp_path / ".kiro"
+    (base / "settings").mkdir(parents=True)
+    (base / "settings" / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"other": {"command": "other-mcp"}}}), encoding="utf-8"
+    )
+    changes = plan_changes(base, global_scope=True)
+    assert [c["path"] for c in changes] == [path for _, path in GLOBAL_FILES]
+    assert [c["action"] for c in changes] == ["create", "update", "create", "create"]
+    written = apply_changes(base, changes)
+    assert len(written) == 4
+    mcp = json.loads((base / "settings" / "mcp.json").read_text(encoding="utf-8"))
+    assert set(mcp["mcpServers"]) == {"other", "groovyscope"}
+    assert (base / "settings" / "mcp.json.bak").is_file()
+    agent = json.loads((base / "agents" / "groovy.json").read_text(encoding="utf-8"))
+    assert agent["resources"][-1] == f"file://{base.as_posix()}/steering/**/*.md"
+    assert [c["action"] for c in plan_changes(base, global_scope=True)] == ["unchanged"] * 4
+
+
+def test_profile_guidance_gets_its_own_steering_file(tmp_path: Path) -> None:
+    changes = plan_changes(tmp_path, profile_guidance="# Runtime profiles\n\nRule.\n")
+    extra = changes[-1]
+    assert extra["path"] == ".kiro/steering/groovyscope-profiles.md"
+    assert extra["after"] == "---\ninclusion: always\n---\n# Runtime profiles\n\nRule.\n"
+    assert plan_changes(tmp_path / "kh", global_scope=True, profile_guidance="x")[-1]["path"] == (
+        "steering/groovyscope-profiles.md"
+    )
+    assert len(plan_changes(tmp_path)) == 4

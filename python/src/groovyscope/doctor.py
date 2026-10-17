@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__, daemon
+from groovyscope import __version__, daemon, profiles
 from groovyscope.config import load_config
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover_jdk, jdk_status
@@ -76,7 +76,18 @@ def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
     return ("info", "daemon", f"not running; starts with the first `groovyscope lsp` session (log: {details['log']})")
 
 
-def build_report(root: Path, config_path: Path | None, environ: Mapping[str, str]) -> list[Check]:
+def profiles_check(root: Path, config: Mapping[str, Any] | None, home: Path) -> Check:
+    found = profiles.discover(root, (config or {}).get("profiles", {}), home)
+    if found["errors"]:
+        return ("warn", "profiles", "; ".join(found["errors"][:3]))
+    if not found["profiles"]:
+        return ("info", "profiles", "none (optional; see docs/profiles.md)")
+    return ("ok", "profiles", ", ".join(f"{p['name']} ({p['path']})" for p in found["profiles"]))
+
+
+def build_report(
+    root: Path, config_path: Path | None, environ: Mapping[str, str], home: Path | None = None
+) -> list[Check]:
     config_result, config = config_check(root, config_path, environ)
     jdk_result, _ = jdk_check(config, environ)
     return [
@@ -86,6 +97,7 @@ def build_report(root: Path, config_path: Path | None, environ: Mapping[str, str
         jdk_result,
         jar_check(environ),
         kiro_check(root),
+        profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
     ]
 

@@ -72,7 +72,7 @@ def test_build_report_and_failures(
 ) -> None:
     monkeypatch.setattr("groovyscope.doctor.locate_jar", lambda env: locate_jar(env, tmp_path / "no-bundle"))
     env = {**clean_env, "JAVA_HOME": str(fake_jdk)}
-    report = build_report(tmp_path, None, env)
+    report = build_report(tmp_path, None, env, home=tmp_path / "home")
     assert [name for _, name, _ in report] == [
         "groovyscope",
         "python",
@@ -80,6 +80,7 @@ def test_build_report_and_failures(
         "jdk",
         "engine jar",
         "kiro files",
+        "profiles",
         "daemon",
     ]
     assert has_failures(report)  # no JAR bundled

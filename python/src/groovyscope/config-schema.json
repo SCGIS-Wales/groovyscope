@@ -77,9 +77,17 @@
         "enabled": { "type": "boolean" },
         "severity": {
           "type": "object",
-          "propertyNames": { "pattern": "^GS[0-9]{3}$" },
+          "propertyNames": { "pattern": "^(GS|RP)[0-9]{3}$" },
           "additionalProperties": { "type": "string", "enum": ["error", "warning", "info", "off"] }
         }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "discover": { "type": "boolean" }
       }
     },
     "format": {
