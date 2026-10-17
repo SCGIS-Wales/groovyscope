@@ -18,7 +18,7 @@ Python owns the installer, CLI, configuration and MCP bridge. Every semantic ans
 
 ## Status
 
-Stage 4 of 7 (call graph and impact). The engine compiles the workspace with the Groovy compiler and
+Stage 5 of 7 (MCP server). The engine compiles the workspace with the Groovy compiler and
 serves go to definition, type definition, find references, hover, document and workspace symbols,
 completion, signature help, rename with a dry-run prepare step, call hierarchy, semantic tokens and
 diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename refuses
@@ -26,8 +26,9 @@ rather than guesses when a call site can only be matched by name. One JVM per wo
 sessions, with a symbol cache for cold starts. CodeNarc 4 runs in process with a defensive profile, Groovy
 6's checkers run on statically typed classes, lint findings arrive as diagnostics with quick fixes, a
 conservative formatter is bundled, and `impact` answers "what breaks if I change this?" with direct and
-transitive callers, overrides, tests and the dynamic call sites to review. The MCP server follows; see
-[docs/roadmap.md](docs/roadmap.md).
+transitive callers, overrides, tests and the dynamic call sites to review. `groovyscope mcp` exposes all
+of that to agents as nine compact MCP tools over the same warm daemon. Packaging extras and the credit
+benchmark follow; see [docs/roadmap.md](docs/roadmap.md).
 
 ## Install
 
@@ -66,7 +67,25 @@ kiro-cli --agent groovy
 | `groovyscope callgraph TARGET [--direction in\|out] [--depth N] [--json]` | Callers of, or calls made by, a declaration with per-edge confidence |
 | `groovyscope lsp --stdio` | Serves LSP on stdio through the warm daemon (what Kiro spawns); falls back to a direct JVM |
 | `groovyscope daemon start \| stop \| status` | Manages the per-workspace daemon (idle exit after `daemon.idleTimeoutMinutes`) |
-| `groovyscope mcp` | Planned (Stage 5); exits 3 today |
+| `groovyscope mcp` | Serves the MCP tools below on stdio through the warm daemon (what `.kiro/settings/mcp.json` runs) |
+
+## MCP tools
+
+`groovyscope mcp` registers one server, `groovyscope`, with these tools. Every answer is compact JSON: paths
+relative to the workspace root, 1-based `line`/`col`, a symbol kind, a confidence where one applies, at most
+`output.maxResults` items within `output.maxBytes`, and a `next_cursor` to page on. No tool returns file bodies.
+
+| Tool | Answers |
+|---|---|
+| `find_symbol(query, kind?, limit?, cursor?)` | Declarations whose name contains the query; `kind` narrows to class, method, field or variable |
+| `goto_definition(path, line, col)` | The declaration under a position, with `STATIC`, `INFERRED` or `DYNAMIC_UNKNOWN` confidence |
+| `find_references(path, line, col, include_declaration?, limit?, cursor?)` | Every reference with a confidence, plus counts per confidence |
+| `call_graph(symbol, direction?, depth?)` | Callers of (`in`) or calls made by (`out`) a declaration |
+| `impact_of(symbol, change?)` | Direct and transitive callers, overrides, tests, dynamic sites, risk and suggested checks |
+| `check(paths?, profile?, include?, limit?, cursor?)` | Lint, compile and type-check findings, worst first |
+| `format(paths?, apply?)` | Files the formatter would change and how many lines; `apply` writes them |
+| `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing` and friends, `metaClass` writes, `@Grab`, `Eval`, `execute()` |
+| `workspace_status()` | Daemon socket and state, engine version, root, file count and trust flag |
 
 ## Configuration
 

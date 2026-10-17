@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import socket
 from pathlib import Path
@@ -136,7 +137,5 @@ def notify_session(session: Session, method: str, params: Any = None) -> None:
 
 def close_session(session: Session) -> None:
     sock: socket.socket = session["sock"]
-    try:
+    with contextlib.suppress(OSError):
         sock.close()
-    except OSError:
-        pass

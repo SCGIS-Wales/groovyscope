@@ -142,10 +142,11 @@ def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str,
     }
 
 
-def build_tools(
-    root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]
-) -> dict[str, Callable[..., Any]]:
-    """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
+Paged = Callable[[Sequence[Any], int | None, int], dict[str, Any]]
+
+
+def pager(output: Mapping[str, Any]) -> tuple[Paged, int]:
+    """A paging function honouring output.maxResults / output.maxBytes, plus the result cap it applies."""
     max_results = int(output.get("maxResults", 50))
     max_bytes = int(output.get("maxBytes", 16000))
 
@@ -153,8 +154,14 @@ def build_tools(
         size = min(max_results, limit) if limit else max_results
         return page(list(items), max_results=size, max_bytes=max_bytes, cursor=cursor)
 
+    return paged, max_results
+
+
+def navigation_tools(root: Path, call: Call, paged: Paged, cap: int) -> dict[str, Callable[..., Any]]:
+    """find_symbol, goto_definition, find_references, call_graph and impact_of."""
+
     def find_symbol(query: str, kind: str | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
-        """Find declarations whose name contains QUERY (case-insensitive). KIND filters: class, method, field, variable."""
+        """Find declarations whose name contains QUERY (case-insensitive). KIND: class, method, field or variable."""
         raw = call("groovyscope/symbols", {"root": str(root), "query": query})
         symbols = [compact_symbol(item, root) for item in raw.get("symbols", [])]
         if kind:
@@ -171,7 +178,13 @@ def build_tools(
         return {"found": True, "symbol": compact_symbol(raw["symbol"], root), "confidence": raw.get("confidence")}
 
     def find_references(
-        path: str, line: int, col: int, limit: int | None = None, cursor: int = 0, include_declaration: bool = False
+        path: str,
+        line: int,
+        col: int,
+        *,
+        limit: int | None = None,
+        cursor: int = 0,
+        include_declaration: bool = False,
     ) -> dict[str, Any]:
         """Every place that refers to the symbol under PATH:LINE:COL (1-based), each with a confidence."""
         params = {
@@ -198,14 +211,28 @@ def build_tools(
         result = paged([compact_site(edge, root) for edge in raw.get("edges", [])], None, 0)
         result["direction"] = raw.get("direction")
         result["depth"] = raw.get("depth")
-        result["nodes"] = [compact_symbol(node, root) for node in raw.get("nodes", [])][:max_results]
+        result["nodes"] = [compact_symbol(node, root) for node in raw.get("nodes", [])][:cap]
         return result
 
     def impact_of(symbol: str, change: str = "signature") -> dict[str, Any]:
-        """What breaks if SYMBOL changes (CHANGE: signature, rename, delete, behaviour): callers, overrides, tests, dynamic sites, risk."""
+        """What breaks if SYMBOL changes (CHANGE: signature, rename, delete, behaviour): callers, tests, risk."""
         raw = call("groovyscope/impact", {"root": str(root), "symbol": symbol, "change": change})
-        reports = [compact_report(report, root, max_results) for report in raw or []]
+        reports = [compact_report(report, root, cap) for report in raw or []]
         return {"found": bool(reports), "reports": reports}
+
+    return {
+        "find_symbol": find_symbol,
+        "goto_definition": goto_definition,
+        "find_references": find_references,
+        "call_graph": call_graph,
+        "impact_of": impact_of,
+    }
+
+
+def quality_tools(
+    root: Path, call: Call, paged: Paged, cap: int, environ: Mapping[str, str]
+) -> dict[str, Callable[..., Any]]:
+    """check, format, find_dynamic_code and workspace_status."""
 
     def check(
         paths: list[str] | None = None,
@@ -232,7 +259,7 @@ def build_tools(
         return result
 
     def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
-        """Formatting edits for PATHS (whole workspace when empty). APPLY writes the files; otherwise only report counts."""
+        """Formatting edits for PATHS (whole workspace when empty). APPLY writes the files; otherwise only counts."""
         raw = call("groovyscope/format", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
         files = []
         for uri, edits in raw.get("edits", {}).items():
@@ -244,10 +271,10 @@ def build_tools(
             files.append(
                 {"path": relative_path(uri, root), "linesChanged": changed_line_count(before, after), "applied": apply}
             )
-        return {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:max_results]}
+        return {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
 
     def find_dynamic_code(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
-        """Constructs that defeat static analysis: untyped classes, def on public API, methodMissing, metaClass, @Grab, Eval."""
+        """Constructs that defeat static analysis: untyped classes, def on public API, methodMissing, metaClass."""
         raw = call("groovyscope/dynamicCode", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
         findings = [
             {
@@ -273,16 +300,19 @@ def build_tools(
         }
 
     return {
-        "find_symbol": find_symbol,
-        "goto_definition": goto_definition,
-        "find_references": find_references,
-        "call_graph": call_graph,
-        "impact_of": impact_of,
         "check": check,
         "format": format_files,
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
     }
+
+
+def build_tools(
+    root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]
+) -> dict[str, Callable[..., Any]]:
+    """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
+    paged, cap = pager(output)
+    return {**navigation_tools(root, call, paged, cap), **quality_tools(root, call, paged, cap, environ)}
 
 
 def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]) -> MCPServer:

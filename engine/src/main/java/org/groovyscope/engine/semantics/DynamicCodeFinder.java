@@ -24,6 +24,7 @@ import org.codehaus.groovy.ast.AnnotatedNode;
 import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ConstructorNode;
+import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.expr.ClassExpression;
@@ -51,8 +52,8 @@ public final class DynamicCodeFinder {
 
     static final Set<String> STATIC_ANNOTATIONS = Set.of("groovy.transform.CompileStatic", "groovy.transform.TypeChecked");
     static final Set<String> DYNAMIC_ANNOTATIONS = Set.of("groovy.transform.CompileDynamic");
-    static final Set<String> GRAB_ANNOTATIONS = Set.of("groovy.lang.Grab", "groovy.lang.Grapes", "groovy.lang.GrabConfig",
-            "groovy.lang.GrabResolver", "groovy.lang.GrabExclude");
+    /** Grape annotations by simple name: on an import they are left unresolved, so the package may be absent. */
+    static final Set<String> GRAB_ANNOTATIONS = Set.of("Grab", "Grapes", "GrabConfig", "GrabResolver", "GrabExclude");
     static final Set<String> DISPATCH_HOOKS = Set.of("methodMissing", "propertyMissing", "invokeMethod",
             "getProperty", "setProperty", "$static_methodMissing", "$static_propertyMissing");
     static final Set<String> EVAL_CLASSES = Set.of("groovy.util.Eval", "groovy.lang.GroovyShell", "groovy.lang.GroovyClassLoader",
@@ -77,6 +78,14 @@ public final class DynamicCodeFinder {
         Object node = entry.node();
         if (entry.isDeclaration() && node instanceof ClassNode classNode) {
             inspectClass(index, entry, classNode, out);
+        } else if (entry.isDeclaration() && node instanceof ImportNode importNode) {
+            for (AnnotationNode annotation : importNode.getAnnotations()) {
+                if (isGrab(annotation)) {
+                    out.add(new Finding("grab", location(entry), importNode.getClassName(),
+                            "@" + annotation.getClassNode().getNameWithoutPackage()
+                                    + " on an import resolves a dependency at compile time; disabled in the engine"));
+                }
+            }
         } else if (entry.isDeclaration() && node instanceof MethodNode method) {
             inspectMethod(index, entry, method, out);
         } else if (entry.role() == NodeEntry.Role.PROPERTY_NAME && entry.parent() instanceof PropertyExpression property
@@ -101,7 +110,7 @@ public final class DynamicCodeFinder {
                     "no @CompileStatic, @TypeChecked or @CompileDynamic: dynamic dispatch by default"));
         }
         for (AnnotationNode annotation : classNode.getAnnotations()) {
-            if (GRAB_ANNOTATIONS.contains(annotation.getClassNode().getName())) {
+            if (isGrab(annotation)) {
                 out.add(new Finding("grab", nameLocation(index, entry, classNode), classNode.getName(),
                         "@" + annotation.getClassNode().getNameWithoutPackage() + " resolves dependencies at compile time; disabled in the engine"));
             }
@@ -132,7 +141,7 @@ public final class DynamicCodeFinder {
             }
         }
         for (AnnotationNode annotation : method.getAnnotations()) {
-            if (GRAB_ANNOTATIONS.contains(annotation.getClassNode().getName())) {
+            if (isGrab(annotation)) {
                 out.add(new Finding("grab", nameLocation(index, entry, method), symbol,
                         "@" + annotation.getClassNode().getNameWithoutPackage() + " on a method"));
             }
@@ -162,6 +171,12 @@ public final class DynamicCodeFinder {
             out.add(new Finding("metaclass-mutation", location(entry), describe(entry),
                     name + " bypasses static dispatch"));
         }
+    }
+
+    static boolean isGrab(AnnotationNode annotation) {
+        ClassNode type = annotation.getClassNode();
+        return type != null && GRAB_ANNOTATIONS.contains(type.getNameWithoutPackage())
+                && (type.getPackageName() == null || "groovy.lang".equals(type.getPackageName()));
     }
 
     static boolean hasAnnotation(AnnotatedNode node, Set<String> names) {
