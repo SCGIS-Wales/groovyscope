@@ -9,7 +9,8 @@ jdk:
   minimum: 17             # Groovy 6 needs JDK 17+
   autoProvision: false    # true: download a checksum-verified Temurin JDK when none meets `minimum` (see `groovyscope jdk install`)
 workspace:
-  sourceRoots: ["src/main/groovy", "src/test/groovy", "vars"]
+  sourceRoots: ["src/main/groovy", "src/test/groovy", "src/main/java", "src/test/java", "vars"]
+  javaSources: true       # compile .java files under the roots too, so Groovy code resolves the project's Java classes
   classpath: []           # jars/dirs added to the analysis classpath; never inferred silently
   classpathFrom:
     gradleTask: null      # optional Gradle task that prints the classpath (Stage 1)

@@ -34,7 +34,8 @@
           "properties": { "gradleTask": { "type": ["string", "null"] } }
         },
         "exclude": { "type": "array", "items": { "type": "string" } },
-        "trust": { "type": "boolean" }
+        "trust": { "type": "boolean" },
+        "javaSources": { "type": "boolean" }
       }
     },
     "daemon": {

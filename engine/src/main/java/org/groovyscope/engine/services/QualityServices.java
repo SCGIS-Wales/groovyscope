@@ -91,6 +91,9 @@ public final class QualityServices {
 
     /** Lint one document; {@code profile} may be {@code null} to pick one from the path. */
     public List<Diagnostic> lint(String uri, String text, String profile) {
+        if (WorkspaceModel.isJavaUri(uri)) {
+            return List.of(); // Java sources join the compile only; CodeNarc rules target Groovy
+        }
         String chosen = profile == null || profile.isBlank() ? profileFor(uri) : profile;
         String key = chosen + ":" + hash(text);
         LintEntry cached = lintCache.get(uri);
@@ -151,7 +154,7 @@ public final class QualityServices {
             }
         }
         if (wanted.contains(INCLUDE_TYPECHECK)) {
-            Map<String, List<Diagnostic>> typed = typeChecker.analyze(sources, workspace.classpath(),
+            Map<String, List<Diagnostic>> typed = typeChecker.analyze(workspace.compileSources(), workspace.classpath(),
                     workspace.config().trust(), workspace.config().typecheck());
             for (String uri : targets) {
                 for (Diagnostic diagnostic : typed.getOrDefault(uri, List.of())) {
@@ -170,7 +173,7 @@ public final class QualityServices {
     /** The formatting edits for one document (empty when it is already formatted). */
     public List<TextEdit> format(String uri) {
         String text = workspace.text(uri);
-        if (text == null) {
+        if (text == null || WorkspaceModel.isJavaUri(uri)) {
             return List.of();
         }
         EngineConfig.Format settings = workspace.config().format();

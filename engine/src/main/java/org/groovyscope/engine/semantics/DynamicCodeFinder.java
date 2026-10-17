@@ -67,6 +67,9 @@ public final class DynamicCodeFinder {
         List<Finding> findings = new ArrayList<>();
         Iterable<String> targets = uris == null || uris.isEmpty() ? index.uris() : uris;
         for (String uri : targets) {
+            if (uri.endsWith(".java")) {
+                continue; // Java has no dynamic Groovy; its classes are compiled only for resolution
+            }
             for (NodeEntry entry : index.entries(uri)) {
                 inspect(index, entry, findings);
             }

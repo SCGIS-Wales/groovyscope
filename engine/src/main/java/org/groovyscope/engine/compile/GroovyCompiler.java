@@ -56,16 +56,26 @@ import org.groovyscope.engine.model.Range;
  * {@link WorkspaceParentClassLoader}); AST transformations found on that classpath are loaded only when the
  * workspace is trusted.
  *
- * <p>Resilience: Groovy abandons semantic analysis for the whole unit as soon as one file has an error, so
- * one broken file would leave every file unresolved. The compiler therefore retries without the files that
- * reported errors, then parses those files on their own (with variable scoping but without class resolution)
- * so they still contribute symbols and name-based navigation. Their diagnostics are kept.
+ * <p>Resilience: Groovy stops a unit at the end of the phase in which any file reports an error, so one broken
+ * file would keep every file from reaching {@link Phases#CANONICALIZATION}. The compiler therefore retries
+ * without the files that reported errors, then parses those files on their own (with variable scoping but
+ * without class resolution) so they still contribute symbols and name-based navigation.
+ *
+ * <p>Dropping a file can break the files that use its classes, and those break theirs: in a deep hierarchy the
+ * retries end up dropping most of the workspace. When the retries drop more files than the first attempt
+ * reported, the first attempt's trees are kept instead: that attempt saw every class at once, so every name
+ * that could resolve did, and only the genuinely broken files are partial. Diagnostics then come from the
+ * first attempt only, since later attempts mostly report the classes that the drops removed.
  */
 public final class GroovyCompiler {
 
     /** Reported as the diagnostic source. */
     public static final String SOURCE = "groovyc";
-    private static final int MAX_RETRIES = 3;
+    /**
+     * Each retry drops at least one file, and dropping a base class breaks its subclasses on the next round, so
+     * deep hierarchies need many rounds; after the first, rounds are cheap because few files remain.
+     */
+    private static final int MAX_RETRIES = 64;
 
     static {
         System.setProperty("groovy.grape.enable", "false");
@@ -85,15 +95,26 @@ public final class GroovyCompiler {
         }
         Map<String, ModuleNode> modules = new HashMap<>();
         Set<String> dropped = new LinkedHashSet<>();
+        Attempt first = null;
+        Attempt previous = null;
+        Attempt kept = null;
         int phase = 0;
         for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
             Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION);
+            if (first == null) {
+                first = result;
+            }
+            if (previous != null && previous != first) {
+                release(previous);
+            }
+            previous = result;
             phase = Math.max(phase, result.phaseReached);
             mergeDiagnostics(diagnostics, result.diagnostics);
             boolean resolved = !result.failed || result.phaseReached >= Phases.CANONICALIZATION;
             if (resolved || result.brokenUris.isEmpty() || attempt == MAX_RETRIES) {
                 if (resolved) {
                     modules.putAll(result.modules);
+                    kept = result;
                 } else {
                     dropped.addAll(remaining.keySet());
                 }
@@ -105,6 +126,18 @@ public final class GroovyCompiler {
                 dropped.add(broken);
             }
         }
+        if (first != null && cascaded(first, dropped)) {
+            if (previous != first) {
+                release(previous);
+            }
+            return keepFirstAttempt(sources, first);
+        }
+        if (previous != kept && previous != first) {
+            release(previous);
+        }
+        if (first != kept) {
+            release(first);
+        }
         for (String uri : dropped) {
             Attempt parsed = compileOnce(Map.of(uri, sources.get(uri)), classpath, trust, Phases.CONVERSION);
             ModuleNode module = parsed.modules.get(uri);
@@ -112,7 +145,39 @@ public final class GroovyCompiler {
                 modules.put(uri, module);
             }
         }
+        // Java files are compiled only so Groovy code can resolve them; Groovy's view of Java code is not
+        // something to report on (javac and the IDE own that), so their diagnostics are dropped.
+        diagnostics.keySet().removeIf(GroovyCompiler::isJava);
         return new CompilationResult(modules, sources, diagnostics, phase, dropped);
+    }
+
+    /** True when retrying dropped files that the first attempt did not report: the drops cascaded. */
+    static boolean cascaded(Attempt first, Set<String> dropped) {
+        return first.failed && !first.crashed && first.phaseReached >= Phases.SEMANTIC_ANALYSIS
+                && !first.brokenUris.containsAll(dropped);
+    }
+
+    private CompilationResult keepFirstAttempt(Map<String, String> sources, Attempt first) {
+        Map<String, ModuleNode> modules = new HashMap<>(first.modules);
+        for (Map.Entry<String, SourceUnit> unit : first.units.entrySet()) {
+            ModuleNode module = modules.get(unit.getKey());
+            if (module != null) {
+                scopeVariables(unit.getValue(), module);
+            }
+        }
+        // Only the first attempt's errors are real: later attempts report the classes their drops removed.
+        Map<String, List<Diagnostic>> diagnostics = new HashMap<>();
+        for (String uri : sources.keySet()) {
+            diagnostics.put(uri, new ArrayList<>());
+        }
+        mergeDiagnostics(diagnostics, first.diagnostics);
+        diagnostics.keySet().removeIf(GroovyCompiler::isJava);
+        Set<String> partial = new LinkedHashSet<>(first.brokenUris);
+        return new CompilationResult(modules, sources, diagnostics, first.phaseReached, partial);
+    }
+
+    static boolean isJava(String uri) {
+        return uri.endsWith(".java");
     }
 
     private static void mergeDiagnostics(Map<String, List<Diagnostic>> into, Map<String, List<Diagnostic>> from) {
@@ -159,9 +224,12 @@ public final class GroovyCompiler {
             String firstUri = sources.keySet().iterator().next();
             crash.put(firstUri, List.of(new Diagnostic(firstUri, Range.of(0, 0, 0, 1), Severity.ERROR, SOURCE,
                     "compiler-crash", "the Groovy compiler failed: " + e)));
-            return new Attempt(Map.of(), crash, Set.copyOf(sources.keySet()), unit.getPhase(), true);
-        } finally {
             closeQuietly(resolutionLoader);
+            return new Attempt(Map.of(), Map.of(), crash, Set.copyOf(sources.keySet()), unit.getPhase(), true, true,
+                    null);
+        } finally {
+            // Transformations have run; their loader is done. The resolution loader stays open: classpath types in
+            // the trees are decompiled lazily, so whoever keeps these trees keeps it (see release()).
             if (transformLoader != resolutionLoader) {
                 closeQuietly(transformLoader);
             }
@@ -183,7 +251,14 @@ public final class GroovyCompiler {
         for (SourceUnit source : units.values()) {
             collect(source.getErrorCollector(), sources.keySet(), diagnostics, broken);
         }
-        return new Attempt(modules, diagnostics, broken, unit.getPhase(), failed);
+        return new Attempt(modules, units, diagnostics, broken, unit.getPhase(), failed, false, resolutionLoader);
+    }
+
+    /** Closes the class loader of an attempt whose trees are discarded. */
+    private static void release(Attempt attempt) {
+        if (attempt != null && attempt.loader != null) {
+            closeQuietly(attempt.loader);
+        }
     }
 
     /** Links variable usages to their declarations without resolving classes; errors are ignored. */
@@ -191,8 +266,9 @@ public final class GroovyCompiler {
         for (ClassNode classNode : module.getClasses()) {
             try {
                 new VariableScopeVisitor(source).visitClass(classNode);
-            } catch (RuntimeException e) {
-                // Scoping is best effort on a file that did not fully compile.
+            } catch (RuntimeException | LinkageError e) {
+                // Scoping is best effort on a file that did not fully compile (or uses classes missing from the
+                // configured classpath).
             }
         }
     }
@@ -289,7 +365,8 @@ public final class GroovyCompiler {
         }
     }
 
-    private record Attempt(Map<String, ModuleNode> modules, Map<String, List<Diagnostic>> diagnostics,
-            Set<String> brokenUris, int phaseReached, boolean failed) {
+    record Attempt(Map<String, ModuleNode> modules, Map<String, SourceUnit> units,
+            Map<String, List<Diagnostic>> diagnostics, Set<String> brokenUris, int phaseReached, boolean failed,
+            boolean crashed, GroovyClassLoader loader) {
     }
 }

@@ -36,14 +36,18 @@ import java.util.Set;
  * @param lint CodeNarc settings
  * @param typecheck Groovy 6 type-checker settings
  * @param format formatter settings
+ * @param javaSources whether {@code .java} files under the source roots join the compile, so Groovy code that
+ *     uses Java classes of the same project resolves (they are never linted, formatted or reported on)
  */
 public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-        Lint lint, TypeCheck typecheck, Format format) {
+        Lint lint, TypeCheck typecheck, Format format, boolean javaSources) {
 
     /** File extensions treated as Groovy sources. */
     public static final Set<String> EXTENSIONS = Set.of("groovy", "gvy", "gy", "gsh", "gradle");
     /** Extension-less file names treated as Groovy sources. */
     public static final Set<String> FILE_NAMES = Set.of("Jenkinsfile");
+    /** Extension of Java sources compiled alongside Groovy in joint projects. */
+    public static final String JAVA_EXTENSION = "java";
 
     /**
      * CodeNarc settings.
@@ -82,13 +86,14 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
     }
 
     public static final EngineConfig DEFAULTS = new EngineConfig(
-            List.of("src/main/groovy", "src/test/groovy", "vars"),
+            List.of("src/main/groovy", "src/test/groovy", "src/main/java", "src/test/java", "vars"),
             List.of(),
             List.of("**/build/**", "**/.gradle/**", "**/target/**", "**/node_modules/**"),
             false,
             Lint.DEFAULTS,
             TypeCheck.DEFAULTS,
-            Format.DEFAULTS);
+            Format.DEFAULTS,
+            true);
 
     public EngineConfig {
         sourceRoots = List.copyOf(sourceRoots);
@@ -101,7 +106,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
 
     /** Convenience for callers that only care about workspace settings. */
     public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust) {
-        this(sourceRoots, classpath, exclude, trust, Lint.DEFAULTS, TypeCheck.DEFAULTS, Format.DEFAULTS);
+        this(sourceRoots, classpath, exclude, trust, Lint.DEFAULTS, TypeCheck.DEFAULTS, Format.DEFAULTS, true);
+    }
+
+    /** All settings except {@code javaSources}, which stays on. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+            Lint lint, TypeCheck typecheck, Format format) {
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, true);
     }
 
     /**
@@ -144,7 +155,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         string(format.get("engine"), Format.DEFAULTS.engine()),
                         integer(format.get("indentSize"), Format.DEFAULTS.indentSize()),
                         integer(format.get("maxBlankLines"), Format.DEFAULTS.maxBlankLines()),
-                        bool(format.get("removeSemicolons"), Format.DEFAULTS.removeSemicolons())));
+                        bool(format.get("removeSemicolons"), Format.DEFAULTS.removeSemicolons())),
+                bool(workspace.get("javaSources"), DEFAULTS.javaSources()));
+    }
+
+    /** True when the file name denotes a Java source ({@code Foo.java}). */
+    public static boolean isJavaFileName(String fileName) {
+        return fileName.endsWith("." + JAVA_EXTENSION) && fileName.length() > JAVA_EXTENSION.length() + 1;
     }
 
     /** True when the file name denotes a Groovy source. */

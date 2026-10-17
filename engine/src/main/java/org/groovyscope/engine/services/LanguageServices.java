@@ -275,7 +275,7 @@ public final class LanguageServices {
             // Captured before the sources are read: an edit that arrives while this compile runs leaves the
             // snapshot stale, so the next query recompiles instead of serving the pre-edit result.
             long target = changes.get();
-            Map<String, String> sources = workspace.sources();
+            Map<String, String> sources = workspace.compileSources();
             CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
             Map<String, ModuleNode> modules = new HashMap<>(result.modules());
             // A file that no longer parses keeps its last good AST so navigation degrades instead of vanishing.
@@ -313,7 +313,7 @@ public final class LanguageServices {
         List<Symbol> cached = cachedSymbols;
         if (cached == null) {
             try {
-                cached = store == null ? List.of() : store.load(workspace.sources());
+                cached = store == null ? List.of() : store.load(workspace.compileSources());
             } catch (IOException e) {
                 System.err.println("groovyscope-engine: symbol cache not read: " + e.getMessage());
                 cached = List.of();

@@ -15,6 +15,7 @@
  */
 package org.groovyscope.engine.compile
 
+import java.nio.file.Paths
 import org.codehaus.groovy.control.Phases
 import org.groovyscope.engine.config.EngineConfig
 import org.groovyscope.engine.model.Diagnostic
@@ -78,5 +79,47 @@ class GroovyCompilerSpec extends Specification {
         expect:
         GroovyCompiler.rangeOf(new org.codehaus.groovy.syntax.SyntaxException('x', 3, 5, 3, 2)).end().column() == 5
         GroovyCompiler.rangeOf(new org.codehaus.groovy.syntax.SyntaxException('x', -1, -1)).start().line() == 0
+    }
+    def 'when dropping broken files cascades, the first attempt keeps every file resolved'() {
+        given: 'Missing imports a class nobody has; Base uses Missing; a chain of subclasses extends Base'
+        Map<String, String> sources = [
+            'file:///w/Missing.groovy': 'import does.not.Exist\nclass Missing { Exist e }',
+            'file:///w/Base.groovy'   : 'class Base { Missing m; String name() { "base" } }',
+            'file:///w/Sub1.groovy'   : 'class Sub1 extends Base { }',
+            'file:///w/Sub2.groovy'   : 'class Sub2 extends Sub1 { }',
+            'file:///w/Sub3.groovy'   : 'class Sub3 extends Sub2 { String twice() { name() + name() } }',
+            'file:///w/User.groovy'   : 'class User { String run(Sub3 s) { def local = s.twice(); local } }',
+        ]
+
+        when:
+        def result = compiler.compile(sources, [], false)
+        def sub3 = result.modules()['file:///w/Sub3.groovy'].classes[0]
+        def user = result.modules()['file:///w/User.groovy'].classes[0]
+
+        then: 'only the genuinely broken file is reported, and only it is partial'
+        result.unresolvedUris() == ['file:///w/Missing.groovy'] as Set
+        result.diagnostics().findAll { k, v -> !v.empty }.keySet() == ['file:///w/Missing.groovy'] as Set
+        result.diagnostics()['file:///w/Missing.groovy']*.message().every { it.contains('does.not.Exist') }
+
+        and: 'the subclass chain resolves to the source classes, not to unresolved placeholders'
+        sub3.superClass.name == 'Sub2'
+        sub3.superClass.superClass.superClass.name == 'Base'
+        user.methods.find { it.name == 'run' }.parameters[0].type.name == 'Sub3'
+    }
+
+    def 'trees stay usable after compiling: classpath types are decompiled lazily'() {
+        given:
+        def jar = Paths.get(spock.lang.Specification.protectionDomain.codeSource.location.toURI())
+        Map<String, String> sources = ['file:///w/T.groovy': 'class T { spock.lang.Specification spec }']
+
+        when:
+        def result = compiler.compile(sources, [jar], false)
+        def specType = result.modules()['file:///w/T.groovy'].classes[0].getField('spec').type
+        def methods = specType.methods
+
+        then:
+        noExceptionThrown()
+        specType.name == 'spock.lang.Specification'
+        !methods.empty
     }
 }
