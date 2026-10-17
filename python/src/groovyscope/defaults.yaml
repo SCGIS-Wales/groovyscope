@@ -7,7 +7,7 @@ groovy:
 jdk:
   home: null              # explicit JDK home; null = discover (JAVA_HOME, /usr/libexec/java_home, PATH)
   minimum: 17             # Groovy 6 needs JDK 17+
-  autoProvision: false    # opt in to downloading a Temurin JDK (Stage 6); off by default
+  autoProvision: false    # true: download a checksum-verified Temurin JDK when none meets `minimum` (see `groovyscope jdk install`)
 workspace:
   sourceRoots: ["src/main/groovy", "src/test/groovy", "vars"]
   classpath: []           # jars/dirs added to the analysis classpath; never inferred silently
