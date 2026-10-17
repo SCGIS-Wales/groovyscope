@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
@@ -80,7 +81,10 @@ public final class LanguageServices {
     });
     private final AtomicBoolean backgroundRefreshQueued = new AtomicBoolean();
     private volatile Snapshot snapshot = Snapshot.empty();
-    private volatile boolean dirty = true;
+    /** Bumped on every workspace change; the snapshot is stale while it differs from {@link #compiled}. */
+    private final AtomicLong changes = new AtomicLong(1);
+    /** The {@link #changes} value the current snapshot reflects. */
+    private volatile long compiled;
     private volatile List<Symbol> cachedSymbols;
     private long version;
 
@@ -258,16 +262,19 @@ public final class LanguageServices {
 
     /** Marks the snapshot stale; the next query recompiles. */
     public void markDirty() {
-        dirty = true;
+        changes.incrementAndGet();
     }
 
     public boolean isDirty() {
-        return dirty;
+        return compiled != changes.get();
     }
 
     /** Recompiles the workspace now and returns the fresh snapshot. */
     public Snapshot refresh() {
         synchronized (lock) {
+            // Captured before the sources are read: an edit that arrives while this compile runs leaves the
+            // snapshot stale, so the next query recompiles instead of serving the pre-edit result.
+            long target = changes.get();
             Map<String, String> sources = workspace.sources();
             CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
             Map<String, ModuleNode> modules = new HashMap<>(result.modules());
@@ -281,7 +288,7 @@ public final class LanguageServices {
             Resolver resolver = new Resolver(index);
             version++;
             snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
-            dirty = false;
+            compiled = target;
             persistSymbols(snapshot, sources);
             return snapshot;
         }
@@ -335,8 +342,11 @@ public final class LanguageServices {
 
     /** The current snapshot, rebuilt first when stale. */
     public Snapshot snapshot() {
-        if (dirty) {
-            return refresh();
+        if (isDirty()) {
+            synchronized (lock) {
+                // Waiting for a compile already under way may be enough; rebuild only when it missed an edit.
+                return isDirty() ? refresh() : snapshot;
+            }
         }
         return snapshot;
     }

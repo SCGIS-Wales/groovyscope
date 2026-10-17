@@ -265,4 +265,25 @@ class LanguageServicesSpec extends Specification {
         services.workspace().close(uri(MAIN))
         services.markDirty()
     }
+    def 'an edit that arrives during a compile is not lost'() {
+        given: 'a fresh workspace with an open virtual document'
+        def fresh = Fixtures.services('basic-app')
+        String virtual = 'file:///virtual/Later.groovy'
+        fresh.workspace().open(virtual, 'class Later { }')
+        fresh.markDirty()
+
+        when: 'a compile starts in the background and the document changes before it finishes'
+        def background = new Thread({ fresh.refresh() })
+        background.start()
+        fresh.workspace().change(virtual, 'class Later { String added() { "x" } }')
+        fresh.markDirty()
+        background.join()
+
+        then: 'the next query sees the edit, either from that compile or from a fresh one'
+        fresh.snapshot().symbols().workspaceSymbols('added', 10)*.name() == ['added']
+        !fresh.isDirty()
+
+        cleanup:
+        fresh.workspace().close(virtual)
+    }
 }
