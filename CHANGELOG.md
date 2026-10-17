@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.9.0...v0.10.0) (2026-10-17)
+
+
+### Features
+
+* explain code, relationship graph with draw.io export, naming checks and verified rename ([#49](https://github.com/SCGIS-Wales/groovyscope/issues/49)) ([8e05c49](https://github.com/SCGIS-Wales/groovyscope/commit/8e05c49759d9452cf5ac4551c05e81730df59087))
+* proactive agent start, readable catch findings, merge request review, build reports and benchmark corpus ([#47](https://github.com/SCGIS-Wales/groovyscope/issues/47)) ([7a9f0d7](https://github.com/SCGIS-Wales/groovyscope/commit/7a9f0d7d8c6d831cd4dc2e4d37d322a57373ec35))
+
+
+### Documentation
+
+* record the stage 11 merges, the combined 0.10.0 release and the continuation prompt ([#50](https://github.com/SCGIS-Wales/groovyscope/issues/50)) ([6249196](https://github.com/SCGIS-Wales/groovyscope/commit/6249196976f7341011666fad1dc9aa316f9e93b9))
+
 ## [0.9.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.8.2...v0.9.0) (2026-10-17)
 
 
