@@ -76,9 +76,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 - [x] **Stage 7: docs polish, benchmark, upstream watch** — branch `feat/docs-benchmark` (2026-10-17).
   Docs brought up to date with everything shipped (README status, rules, architecture, AGENTS, install);
   `docs/benchmark.md` fixes the credit benchmark protocol (five tasks, two conditions, what to record,
-  answer key first). The benchmark itself has not been run: a full run costs ten to twenty Kiro credits,
-  which is the owner's call on a free account, so the results table is empty and `v1.0.0` waits for a
-  recorded run. Upstream watch recorded below.
+  answer key first). First run recorded on 2026-10-17 on CodeNarc 4.0.0 (10.73 credits, one pass); see
+  `docs/benchmark.md`. Upstream watch recorded below.
 
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
@@ -126,3 +125,9 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
 - 2026-10-17: Stage 7 merged (PR #22). v0.6.0 released: the release-please run dispatched `workflow.yml`
   and every job passed (build, attestations, PyPI, release assets, Homebrew tap job, which skipped with a
   notice because `HOMEBREW_TAP_TOKEN` is not set). Roadmap complete except the benchmark run.
+
+- 2026-10-17: Dependabot PRs #2-#7 merged (CycloneDX 3 report path fixed in the publish workflow). The Homebrew
+  tap now updates itself from PyPI (SCGIS-Wales/homebrew-tap#3). Benchmark preparation on CodeNarc found and
+  fixed: Java sources ignored and compile-retry cascades (#25), Kiro 2.x ignoring the groovy agent (#26),
+  `execute()` false positives (#27), the MCP session receiving every diagnostic (#28). Releases 0.6.1 and
+  0.6.2. First credit benchmark run recorded.
