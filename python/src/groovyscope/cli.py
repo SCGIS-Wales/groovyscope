@@ -27,7 +27,9 @@ from groovyscope import (
     relay,
     rpc,
     trust,
+    workspace_init,
 )
+from groovyscope import classpath as classpath_export
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config, load_config_with_notes
@@ -39,10 +41,13 @@ from groovyscope.kiro import (
     BACKUP_SUFFIX,
     KIRO_INIT_WARNING,
     apply_changes,
+    backup_path,
     has_global_setup,
     kiro_home,
     plan_changes,
+    text_diff,
     unified_diff,
+    write_atomically,
 )
 from groovyscope.launch import MIN_JDK_FOR_AUTO_CDS, build_engine_command
 from groovyscope.render import compact_json, table
@@ -430,7 +435,18 @@ def engine_view(
         if lint.get("jenkinsRuleset")
         else str(bundled_config("codenarc/jenkins.groovy"))
     )
-    return {**effective, "lint": lint, "root": str(obj["root"]), "profiles": list(runtime_profiles)}
+    workspace = dict(effective.get("workspace", {}))
+    listed = workspace.get("classpathFile")
+    if listed:
+        exported = classpath_export.read_file(Path(obj["root"]) / Path(listed).expanduser())
+        workspace["classpath"] = list(dict.fromkeys([*workspace.get("classpath", []), *exported]))
+    return {
+        **effective,
+        "lint": lint,
+        "workspace": workspace,
+        "root": str(obj["root"]),
+        "profiles": list(runtime_profiles),
+    }
 
 
 def discover_profiles(obj: dict[str, Any], effective: dict[str, Any]) -> profiles.Discovery:
@@ -934,6 +950,73 @@ def jdk_install(feature: int, vendor: str) -> None:
     click.echo("groovyscope will use it when no other JDK meets jdk.minimum; `groovyscope doctor` shows which wins")
 
 
+@main.command("classpath")
+@click.option("--tool", type=click.Choice(["gradle", "maven"]), default=None, help="Build tool (default: detected).")
+@click.option("--timeout", default=classpath_export.DEFAULT_TIMEOUT_SECONDS, show_default=True, help="Seconds.")
+@click.pass_obj
+def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int) -> None:
+    """Ask the project's Gradle or Maven build for its compile and test classpath and write it to
+    workspace.classpathFile, so dependencies resolve. Runs the build tool, so only in a trusted workspace."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError) as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    if not effective["workspace"].get("trust"):
+        click.echo(
+            "groovyscope: `classpath` runs the project's build tool, which executes its build scripts; "
+            "run `groovyscope trust` first if you trust this workspace",
+            err=True,
+        )
+        sys.exit(1)
+    environ = dict(os.environ)
+    if not environ.get("JAVA_HOME"):
+        jdk = discover(effective["jdk"].get("home"), environ, minimum=int(effective["jdk"]["minimum"]))["jdk"]
+        if jdk is not None:
+            environ["JAVA_HOME"] = jdk["home"]
+    click.echo("running the build tool to resolve the classpath (this can take a while)…", err=True)
+    try:
+        result = classpath_export.export(obj["root"], environ, tool=tool, timeout=timeout)
+    except ValueError as exc:
+        click.echo(f"groovyscope: {exc}", err=True)
+        sys.exit(1)
+    target = obj["root"] / Path(effective["workspace"].get("classpathFile") or classpath_export.DEFAULT_FILE)
+    classpath_export.write_file(target, result)
+    click.echo(
+        f"{len(result['paths'])} classpath entries from {result['tool']} written to {shown_path(target, obj['root'])}"
+    )
+    if result["missing"]:
+        click.echo(f"{len(result['missing'])} listed path(s) do not exist yet (not built?) and were left out", err=True)
+    socket_file = daemon_paths(obj["root"])[0]
+    if daemon_lifecycle.probe(socket_file) is not None:
+        daemon_lifecycle.stop(socket_file)
+        click.echo("the running daemon was stopped; the next request starts it with the new classpath")
+
+
+@main.command("init")
+@click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
+@click.pass_obj
+def init_command(obj: dict[str, Any], dry_run: bool) -> None:
+    """Write a starting .groovyscope.yaml from the workspace's layout and build files (existing settings win)."""
+    try:
+        target, current, after = workspace_init.plan(obj["root"])
+    except (ValueError, OSError) as exc:
+        click.echo(f"groovyscope: {exc}", err=True)
+        sys.exit(1)
+    if current == after:
+        click.echo(f"{shown_path(target, obj['root'])} already has these settings")
+    else:
+        click.echo(text_diff(current, after, shown_path(target, obj["root"])), nl=False)
+        if dry_run:
+            click.echo("dry run: nothing written")
+        else:
+            if current is not None:
+                write_atomically(backup_path(target), current)
+            write_atomically(target, after)
+            click.echo(f"wrote {shown_path(target, obj['root'])}")
+    click.echo("next: `groovyscope trust` (if you trust this workspace), then `groovyscope classpath`")
+
+
 @main.group("profile")
 def profile_group() -> None:
     """Runtime profiles: which are active, whether a file is valid, what governs a file."""
@@ -953,6 +1036,31 @@ def profile_list(obj: dict[str, Any]) -> None:
         click.echo(line)
     if found["errors"]:
         sys.exit(1)
+
+
+@profile_group.command("install")
+@click.argument("file", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option("--force", is_flag=True, help="Replace a profile file of the same name.")
+def profile_install(file: Path, force: bool) -> None:
+    """Validate a runtime profile and copy it to ~/.groovyscope/profiles/ (readable by you only), the way to bring
+    a private profile to another machine without putting it in a repository."""
+    try:
+        problems = profiles.validate_profile(profiles.read_profile(file))
+    except (OSError, ValueError) as exc:
+        problems = (str(exc),)
+    if problems:
+        for problem in problems:
+            click.echo(f"{file}: {problem}", err=True)
+        sys.exit(1)
+    folder = Path.home() / profiles.USER_DIR
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = folder / file.name
+    if target.exists() and not force:
+        click.echo(f"groovyscope: {target} exists; pass --force to replace it", err=True)
+        sys.exit(1)
+    write_atomically(target, file.read_text(encoding="utf-8"))
+    target.chmod(0o600)
+    click.echo(f"installed {target}; `groovyscope daemon restart` in open workspaces to apply it")
 
 
 @profile_group.command("validate")

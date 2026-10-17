@@ -1,0 +1,24 @@
+// groovyscope classpath export (`groovyscope classpath`). Gradle init script, used only when the user runs that
+// command in a trusted workspace. Adds a `groovyscopeClasspath` task to every project that prints the resolved
+// compile and test classpath and the compiled output folders, one path per line. Resolution is lenient: a
+// dependency that cannot be resolved is skipped instead of failing the export.
+allprojects { project ->
+    project.afterEvaluate {
+        project.tasks.register('groovyscopeClasspath') { task ->
+            task.notCompatibleWithConfigurationCache('reads configurations at execution time')
+            task.doLast {
+                Set<String> paths = new LinkedHashSet<>()
+                ['compileClasspath', 'testCompileClasspath'].each { String name ->
+                    def configuration = project.configurations.findByName(name)
+                    if (configuration != null && configuration.canBeResolved) {
+                        def view = configuration.incoming.artifactView { it.lenient(true) }
+                        view.files.each { File file -> paths << file.absolutePath }
+                    }
+                }
+                def sourceSets = project.extensions.findByName('sourceSets')
+                sourceSets?.each { set -> set.output.classesDirs.each { File dir -> paths << dir.absolutePath } }
+                paths.each { String path -> println "GROOVYSCOPE_CLASSPATH ${path}" }
+            }
+        }
+    }
+}
