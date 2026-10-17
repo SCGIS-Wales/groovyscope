@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.2.0...v0.3.0) (2026-10-17)
+
+
+### Features
+
+* warm engine daemon with stdio relay and symbol cache (stage 2) ([#11](https://github.com/SCGIS-Wales/groovyscope/issues/11)) ([d56858d](https://github.com/SCGIS-Wales/groovyscope/commit/d56858d24311233279627c793327dbddf8e7067e))
+
 ## [0.2.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.1.0...v0.2.0) (2026-10-17)
 
 
