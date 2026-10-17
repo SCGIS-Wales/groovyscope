@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.6.1...v0.6.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **mcp:** keep the engine session quiet and bounded ([#28](https://github.com/SCGIS-Wales/groovyscope/issues/28)) ([71d106f](https://github.com/SCGIS-Wales/groovyscope/commit/71d106f5ae5d77b7613d2c56ae9abda0dd324163))
+
 ## [0.6.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.6.0...v0.6.1) (2026-10-17)
 
 
