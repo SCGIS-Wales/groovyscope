@@ -1,0 +1,18 @@
+{
+  "name": "groovy",
+  "description": "Groovy 5/6 engineer that navigates code through LSP and groovyscope tools instead of text search",
+  "tools": ["read", "write", "shell", "code", "@groovyscope"],
+  "includeMcpJson": true,
+  "resources": [
+    "file://.kiro/steering/**/*.md",
+    "file://AGENTS.md"
+  ],
+  "permissions": {
+    "rules": [
+      { "capability": "mcp", "match": ["groovyscope/*"], "effect": "allow" },
+      { "capability": "shell", "match": ["./gradlew *", "groovyscope *", "git status", "git diff *"], "effect": "allow" },
+      { "capability": "shell", "match": ["grep *", "rg *", "sed *", "awk *", "head *", "tail *", "find * -name *.groovy*"], "effect": "ask" }
+    ]
+  },
+  "welcomeMessage": "Groovy agent ready. Code intelligence: LSP + groovyscope."
+}

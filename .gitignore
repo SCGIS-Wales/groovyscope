@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# groovyscope
+engine/.gradle/
+engine/build/
+engine/.kotlin/
+python/src/groovyscope/_jar/*.jar
+python/src/groovyscope/_jar/_manifest.json
+.kiro/
+*.bak

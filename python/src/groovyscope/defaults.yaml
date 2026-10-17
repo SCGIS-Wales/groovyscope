@@ -1,0 +1,39 @@
+# Default groovyscope configuration. Copy to .groovyscope.yaml in your workspace and override what you need.
+# Every key can also be overridden with an environment variable: GROOVYSCOPE_<SECTION>__<KEY>, for example
+# GROOVYSCOPE_DAEMON__HEAP=2g or GROOVYSCOPE_WORKSPACE__TRUST=true.
+groovy:
+  version: "6.0"          # Groovy language level the engine targets
+  compat: ["5.1"]         # additional Groovy versions the code must stay compatible with
+jdk:
+  home: null              # explicit JDK home; null = discover (JAVA_HOME, /usr/libexec/java_home, PATH)
+  minimum: 17             # Groovy 6 needs JDK 17+
+  autoProvision: false    # opt in to downloading a Temurin JDK (Stage 6); off by default
+workspace:
+  sourceRoots: ["src/main/groovy", "src/test/groovy", "vars"]
+  classpath: []           # jars/dirs added to the analysis classpath; never inferred silently
+  classpathFrom:
+    gradleTask: null      # optional Gradle task that prints the classpath (Stage 1)
+  exclude: ["**/build/**", "**/.gradle/**", "**/target/**", "**/node_modules/**"]
+  trust: false            # true allows global AST transforms from the workspace classpath to load
+daemon:
+  enabled: true           # Stage 2: warm JVM per workspace; until then the engine runs per session
+  idleTimeoutMinutes: 60
+  heap: "1g"
+  cds: true               # Class Data Sharing archive for faster starts
+lint:
+  ruleset: null           # path to a CodeNarc ruleset; null = bundled defensive profile
+  jenkinsRuleset: null    # path to a Jenkins pipeline ruleset; null = bundled profile
+  failOnPriority: 2       # check exits non-zero on violations with this priority or higher
+typecheck:
+  nullChecker: "strict"   # off | lenient | strict (Groovy 6 NullChecker)
+  sqlInjection: true      # Groovy 6 SqlInjectionChecker
+  purity: false           # Groovy 6 PurityChecker and ModifiesChecker
+format:
+  engine: "greclipse"
+  properties: null        # path to a Groovy Eclipse formatter properties file; null = bundled
+output:
+  maxResults: 50          # per response, with continuation tokens beyond that
+  maxBytes: 16000         # hard cap on the JSON body returned to an agent
+logging:
+  level: "warning"        # debug | info | warning | error
+  file: null              # null = stderr

@@ -1,0 +1,16 @@
+{
+  "languages": {
+    "groovy": {
+      "name": "groovyscope",
+      "command": "groovyscope",
+      "args": ["lsp", "--stdio"],
+      "file_extensions": ["groovy", "gvy", "gy", "gsh", "gradle"],
+      "file_patterns": ["Jenkinsfile", "Jenkinsfile.*"],
+      "project_patterns": [".groovyscope.yaml", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "pom.xml"],
+      "exclude_patterns": ["**/build/**", "**/.gradle/**", "**/target/**", "**/node_modules/**"],
+      "multi_workspace": false,
+      "initialization_options": { "configFile": ".groovyscope.yaml" },
+      "request_timeout_secs": 120
+    }
+  }
+}

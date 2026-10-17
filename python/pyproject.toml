@@ -1,0 +1,124 @@
+[build-system]
+requires = ["hatchling>=1.32"]
+build-backend = "hatchling.build"
+
+[project]
+name = "groovyscope"
+version = "0.1.0"
+description = "Groovy 5/6 code intelligence for AI coding agents: LSP and MCP front ends over one JVM engine"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.12"
+authors = [{ name = "SCGIS-Wales" }]
+keywords = ["groovy", "lsp", "mcp", "kiro", "code-intelligence", "codenarc"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Java",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Quality Assurance",
+  "Typing :: Typed",
+]
+dependencies = [
+  "click>=8.2,<9",
+  "pyyaml>=6.0,<7",
+  "jsonschema>=4.23,<5",
+]
+
+[project.urls]
+Homepage = "https://github.com/SCGIS-Wales/groovyscope"
+Documentation = "https://github.com/SCGIS-Wales/groovyscope/tree/main/docs"
+Changelog = "https://github.com/SCGIS-Wales/groovyscope/blob/main/CHANGELOG.md"
+Issues = "https://github.com/SCGIS-Wales/groovyscope/issues"
+
+[project.scripts]
+groovyscope = "groovyscope.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0,<10",
+  "pytest-cov>=7.0,<8",
+  "hypothesis>=6.140,<7",
+  "ruff>=0.14,<1",
+  "mypy>=1.19,<3",
+  "types-PyYAML>=6.0.12",
+  "types-jsonschema>=4.23",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/groovyscope"]
+artifacts = ["src/groovyscope/_jar/*.jar", "src/groovyscope/_jar/_manifest.json"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/groovyscope",
+  "tests",
+  "README.md",
+  "LICENSE",
+  "NOTICE",
+  "pyproject.toml",
+]
+artifacts = ["src/groovyscope/_jar/*.jar", "src/groovyscope/_jar/_manifest.json"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RET", "ARG", "PTH", "PL", "RUF", "ANN", "T20", "S",
+]
+ignore = [
+  "PLR0913",  # click commands legitimately take several parameters
+  "T201",     # the CLI prints by design
+  "S603",     # subprocess calls are deliberate (java); arguments are never shell-interpolated
+  "S607",     # `java` is resolved from JAVA_HOME or PATH on purpose
+  "ANN401",   # JSON-shaped values are legitimately Any
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN", "PLR2004", "ARG001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["groovyscope"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "integration: boots the real engine JAR (skipped unless it is available)",
+]
+
+[tool.coverage.run]
+source = ["groovyscope"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+exclude_also = [
+  "if __name__ == .__main__.:",
+]

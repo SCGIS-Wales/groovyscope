@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "groovyscope": {
+      "command": "groovyscope",
+      "args": ["mcp", "--config", ".groovyscope.yaml"],
+      "env": { "GROOVYSCOPE_LOG": "warning" },
+      "timeout": 120000
+    }
+  }
+}
