@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.10.0...v0.11.0) (2026-10-17)
+
+
+### Features
+
+* live configuration reload, classpath state, reliability fixes and merge request comment drafts ([#51](https://github.com/SCGIS-Wales/groovyscope/issues/51)) ([9fe85dc](https://github.com/SCGIS-Wales/groovyscope/commit/9fe85dc2302dec722565eb9a1a181ff7a691c869))
+
 ## [0.10.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.9.0...v0.10.0) (2026-10-17)
 
 
