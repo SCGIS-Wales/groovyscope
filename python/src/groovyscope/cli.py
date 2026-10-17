@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 import urllib.parse
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,7 @@ from groovyscope import (
     profiles,
     provision,
     relay,
+    reports,
     rpc,
     trust,
     workspace_init,
@@ -647,6 +648,34 @@ def engine_result(socket_file: Path, method: str, params: dict[str, Any]) -> Any
         sys.exit(1)
 
 
+def imported_rows(
+    root: Path, effective: Mapping[str, Any], explicit: Sequence[Path], paths: Sequence[Path]
+) -> list[dict[str, Any]]:
+    """SARIF findings as CLI rows (the build's reports plus EXPLICIT files), limited to PATHS when given; files
+    that cannot be read are reported on stderr and skipped."""
+    found, notes = reports.merge_sarif(root, reports.reports_settings(effective)["sarif"], explicit=list(explicit))
+    for note in notes:
+        click.echo(f"groovyscope: {note}", err=True)
+    wanted = [shown_path(root / p, root).rstrip("/") for p in paths]
+    rows = []
+    for finding in found:
+        if wanted and not any(finding["path"] == w or finding["path"].startswith(w + "/") for w in wanted):
+            continue
+        rows.append(
+            {
+                "path": finding["path"],
+                "line": finding["line"],
+                "column": finding["col"],
+                "severity": finding["severity"],
+                "level": practices.LEVELS.get(str(finding["severity"]), 3),
+                "source": finding["source"],
+                "code": finding["code"],
+                "message": finding["message"],
+            }
+        )
+    return rows
+
+
 def finding_rows(diagnostics: dict[str, list[dict[str, Any]]], root: Path) -> list[dict[str, Any]]:
     """Flatten engine diagnostics into sortable rows with workspace-relative paths and 1-based positions."""
     rows: list[dict[str, Any]] = []
@@ -709,6 +738,13 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
     show_default=True,
     help="short: file:line:col: severity: message [code]; sarif: SARIF 2.1.0 for code scanning.",
 )
+@click.option(
+    "--import-sarif",
+    "sarif_paths",
+    multiple=True,
+    type=click.Path(path_type=Path, dir_okay=False),
+    help="Merge findings from a SARIF log (SpotBugs...), in addition to reports.sarif and the build's default.",
+)
 @click.pass_obj
 def check(
     obj: dict[str, Any],
@@ -718,6 +754,7 @@ def check(
     include: str,
     as_json: bool,
     output_format: str,
+    sarif_paths: tuple[Path, ...],
 ) -> None:
     """Lint, compile, type-check and practice-check Groovy files (the whole workspace when no PATHS are given)."""
     socket_file, effective = daemon_socket_for(obj)
@@ -730,6 +767,7 @@ def check(
         params["profile"] = profile
     result = engine_call(socket_file, "groovyscope/check", params)
     rows = finding_rows(result.get("diagnostics", {}), obj["root"])
+    rows += imported_rows(obj["root"], effective, sarif_paths, paths)
     summary = result.get("summary", {})
     if as_json or output_format == "json":
         click.echo(compact_json({"findings": rows, "summary": summary}))
@@ -765,7 +803,7 @@ def review_command(
     """Review PATHS (or the whole workspace) against the practices checklist, or with --changed review the
     branch's changed Groovy files as a merge request reviewer: blocking, should fix, by design, impact, verdict."""
     socket_file, effective = daemon_socket_for(obj)
-    settings = {**effective["output"], "duplicates": effective.get("duplicates", {})}
+    settings = tool_settings(effective)
     tools = mcp_server.build_tools(
         obj["root"], lambda method, params: engine_result(socket_file, method, params), settings, dict(os.environ)
     )
@@ -785,6 +823,15 @@ def review_command(
         or any(group.get("worst", 9) <= 1 for group in result.get("groups", []))
     ):
         sys.exit(1)
+
+
+def tool_settings(effective: Mapping[str, Any]) -> dict[str, Any]:
+    """What the MCP tools read beyond the output section: duplicate thresholds and the build's reports."""
+    return {
+        **effective["output"],
+        "duplicates": effective.get("duplicates", {}),
+        "reports": reports.reports_settings(effective),
+    }
 
 
 def render_review(result: dict[str, Any]) -> list[str]:
@@ -811,9 +858,13 @@ def render_review(result: dict[str, Any]) -> list[str]:
         elsewhere = result.get("elsewhere", {})
         if elsewhere.get("count"):
             lines.append(f"pre-existing in these files: {elsewhere['count']} ({elsewhere.get('byCode')})")
+        for gap in result.get("uncovered", []):
+            lines.append(f"uncovered: {gap['name']} ({gap['path']}:{gap['line']}, {gap['missed']} lines)")
         missing = result.get("missingDependencies")
         if missing:
             lines.append(f"missing dependencies in {missing['files']} file(s): {missing['fix']}")
+        if result.get("imported"):
+            lines.append(f"imported from the build's reports: {result['imported']}")
         return lines
     summary = result.get("summary", {})
     lines.append(
@@ -824,6 +875,46 @@ def render_review(result: dict[str, Any]) -> list[str]:
         lines.append(f"{group['title']} ({group['total']}): {group['check']}")
         lines += [f"  {f['path']}:{f['line']}: [{f.get('code')}] {f.get('message')}" for f in group.get("findings", [])]
     return lines
+
+
+@main.command("coverage")
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def coverage_command(obj: dict[str, Any], *, paths: tuple[Path, ...], as_json: bool) -> None:
+    """Classes and methods no test executed, from the build's JaCoCo report (reports.jacoco), most missed first."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError) as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    configured = reports.reports_settings(effective)["jacoco"]
+    report = reports.jacoco_file(obj["root"], configured)
+    if report is None:
+        click.echo(
+            f"groovyscope: no JaCoCo report at {configured or reports.DEFAULT_JACOCO}; run the build's tests with "
+            "jacocoTestReport first",
+            err=True,
+        )
+        sys.exit(1)
+    try:
+        gaps = reports.filter_gaps(
+            reports.read_jacoco(report, obj["root"]), [shown_path(obj["root"] / p, obj["root"]) for p in paths]
+        )
+        summary = reports.coverage_summary(report)
+    except ValueError as exc:
+        click.echo(f"groovyscope: {exc}", err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(compact_json({"report": shown_path(report, obj["root"]), "coverage": summary, "gaps": gaps}))
+        return
+    click.echo(f"line coverage {summary['percent']}% ({summary['covered']} of {summary['lines']} lines)")
+    for gap in gaps:
+        click.echo(
+            f"{gap['path']}:{gap['line']}: {gap['status']} {gap['kind']} {gap['name']} ({gap['missed']} lines missed)"
+        )
+    if not gaps:
+        click.echo("no uncovered lines")
 
 
 @main.command("format")
@@ -1062,7 +1153,7 @@ def mcp(obj: dict[str, Any]) -> None:
             msg = "the engine daemon could not be restarted; run `groovyscope doctor`"
             raise ConnectionError(msg) from exc
 
-    settings = {**effective["output"], "duplicates": effective.get("duplicates", {})}
+    settings = tool_settings(effective)
     sys.exit(_MCP_SERVE(obj["root"], socket_file, settings, dict(os.environ), reconnect))
 
 

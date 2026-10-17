@@ -16,7 +16,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import changes, daemon, diagnostics, mcp_search, practices, rpc
+from groovyscope import changes, daemon, diagnostics, mcp_search, practices, reports, rpc
 from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
@@ -188,6 +188,26 @@ def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str,
     }
 
 
+def imported_findings(
+    root: Path, report_settings: Mapping[str, Any], paths: Sequence[str] | None
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Findings from the build's SARIF logs (SpotBugs and other tools), limited to PATHS when given, plus an
+    ``imported`` summary (counts per tool and the files that could not be read)."""
+    findings, notes = reports.merge_sarif(root, report_settings.get("sarif") or [])
+    wanted = [p.rstrip("/") for p in paths or []]
+    if wanted:
+        findings = [f for f in findings if any(f["path"] == w or f["path"].startswith(w + "/") for w in wanted)]
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[str(finding["source"])] = counts.get(str(finding["source"]), 0) + 1
+    summary: dict[str, Any] = {}
+    if counts:
+        summary["imported"] = counts
+    if notes:
+        summary["importNotes"] = notes
+    return (findings, summary)
+
+
 def pager(output: Mapping[str, Any]) -> tuple[Paged, int]:
     """A paging function honouring output.maxResults / output.maxBytes, plus the result cap it applies."""
     max_results = int(output.get("maxResults", 50))
@@ -342,9 +362,17 @@ def position_params(root: Path, path: str, line: int, col: int) -> dict[str, Any
 
 
 def quality_tools(
-    root: Path, call: Call, paged: Paged, cap: int, environ: Mapping[str, str], *, clip_at: int = MESSAGE_CHARS
+    root: Path,
+    call: Call,
+    paged: Paged,
+    cap: int,
+    environ: Mapping[str, str],
+    *,
+    clip_at: int = MESSAGE_CHARS,
+    report_settings: Mapping[str, Any] | None = None,
 ) -> dict[str, Callable[..., Any]]:
-    """check, format, find_dynamic_code and workspace_status."""
+    """check, format, find_dynamic_code, coverage_gaps and workspace_status."""
+    settings = report_settings or {}
 
     def check(
         *,
@@ -372,11 +400,13 @@ def quality_tools(
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
-        findings, extra = summarise(findings, codes, max_priority)
+        imported, imported_summary = imported_findings(root, settings, paths)
+        findings, extra = summarise([*findings, *imported], codes, max_priority)
         findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
         result = paged(findings, limit, cursor)
         result["summary"] = raw.get("summary", {})
         result.update(extra)
+        result.update(imported_summary)
         return result
 
     def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
@@ -430,11 +460,45 @@ def quality_tools(
         "format": format_files,
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
+        **coverage_tools(root, paged, settings),
     }
 
 
-def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHARS) -> dict[str, Callable[..., Any]]:
+def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:
+    """coverage_gaps: the build's JaCoCo report as the list of what tests never executed."""
+
+    def coverage_gaps(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
+        """Classes and methods with lines no test executed, from the build's JaCoCo XML report (reports.jacoco),
+        most missed lines first, under PATHS when given; plus the overall line coverage. Run the build's test task
+        with jacocoTestReport first. Use it to decide which tests to write."""
+        report = reports.jacoco_file(root, settings.get("jacoco"))
+        if report is None:
+            expected = settings.get("jacoco") or reports.DEFAULT_JACOCO
+            return {"error": f"no JaCoCo report at {expected}; run the build's tests with jacocoTestReport first"}
+        try:
+            gaps = reports.filter_gaps(reports.read_jacoco(report, root), paths or [])
+            summary = reports.coverage_summary(report)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        result = paged([dict(g) for g in gaps], limit, cursor)
+        result["count"] = len(gaps)
+        result["report"] = relative_path(report.as_uri(), root)
+        result["coverage"] = summary
+        result["uncoveredMethods"] = sum(1 for g in gaps if g["kind"] == "method" and g["status"] == "uncovered")
+        return result
+
+    return {"coverage_gaps": coverage_gaps}
+
+
+def practice_tools(
+    root: Path,
+    call: Call,
+    cap: int,
+    clip_at: int = MESSAGE_CHARS,
+    report_settings: Mapping[str, Any] | None = None,
+) -> dict[str, Callable[..., Any]]:
     """explain, review, fix and profile_status."""
+    settings = report_settings or {}
 
     def explain(code: str) -> dict[str, Any]:
         """What a diagnostic code means (GS001-GS012, a Groovy 6 checker, a CodeNarc rule), why it matters, the fix."""
@@ -453,9 +517,15 @@ def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHAR
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
-        findings, extra = summarise(findings, None, max_priority)
+        imported, imported_summary = imported_findings(root, settings, paths)
+        findings, extra = summarise([*findings, *imported], None, max_priority)
         groups = practices.review(findings, max(1, min(top, cap)))
-        result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap], **extra}
+        result: dict[str, Any] = {
+            "summary": raw.get("summary", {}),
+            "groups": groups[:cap],
+            **extra,
+            **imported_summary,
+        }
         governed = governed_files(paths or [])
         if governed:
             result["profiles"] = governed
@@ -557,9 +627,16 @@ def flat_outline(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def review_tools(
-    root: Path, call: Call, cap: int, clip_at: int, others: Mapping[str, Callable[..., Any]]
+    root: Path,
+    call: Call,
+    cap: int,
+    clip_at: int,
+    *,
+    others: Mapping[str, Callable[..., Any]],
+    report_settings: Mapping[str, Any] | None = None,
 ) -> dict[str, Callable[..., Any]]:
-    """review_changes: the merge request review, composed from git and the other tools."""
+    """review_changes: the merge request review, composed from git, the build's reports and the other tools."""
+    settings = report_settings or {}
 
     def review_changes(base: str = "main", staged: bool = False, top: int = 8) -> dict[str, Any]:
         """Review what this branch changed against BASE (or the index with STAGED) as a merge request reviewer:
@@ -588,7 +665,8 @@ def review_tools(
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
-        findings, extra = summarise(findings)
+        imported, imported_summary = imported_findings(root, settings, paths)
+        findings, extra = summarise([*findings, *imported])
         inside, elsewhere = changes.split_findings(findings, ranges)
         buckets = changes.bucket(inside)
         limit = max(1, min(top, cap))
@@ -628,6 +706,12 @@ def review_tools(
         elsewhere_counts: dict[str, int] = {}
         for finding in elsewhere:
             elsewhere_counts[str(finding.get("code"))] = elsewhere_counts.get(str(finding.get("code")), 0) + 1
+        coverage = others["coverage_gaps"](paths)
+        uncovered = (
+            [g for g in coverage.get("items", []) if g["kind"] == "method" and in_change(g, ranges)]
+            if "error" not in coverage
+            else []
+        )
         result.update(
             {
                 "verdict": changes.verdict(buckets, risky, impact),
@@ -642,10 +726,16 @@ def review_tools(
                 "impact": impact,
                 "risky": risky[:limit],
                 "riskyCount": len(risky),
+                "uncovered": uncovered[:limit],
+                "uncoveredCount": len(uncovered),
                 **extra,
+                **imported_summary,
             }
         )
         return result
+
+    def in_change(gap: Mapping[str, Any], ranges: Mapping[str, Sequence[Sequence[int]]]) -> bool:
+        return changes.in_ranges(int(gap.get("line", 0)), ranges.get(str(gap.get("path")), ()))
 
     return {"review_changes": review_changes}
 
@@ -656,16 +746,17 @@ def build_tools(
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
     clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
+    report_settings = output.get("reports") if isinstance(output.get("reports"), Mapping) else {}
     tools: dict[str, Callable[..., Any]] = {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, paged, cap),
         **mcp_search.search_tools(
             root, call, paged, cap, settings=output, max_chars=int(output.get("maxBytes", 16000))
         ),
-        **quality_tools(root, call, paged, cap, environ, clip_at=clip_at),
-        **practice_tools(root, call, cap, clip_at),
+        **quality_tools(root, call, paged, cap, environ, clip_at=clip_at, report_settings=report_settings),
+        **practice_tools(root, call, cap, clip_at, report_settings),
     }
-    tools.update(review_tools(root, call, cap, clip_at, tools))
+    tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
     return tools
 
 
@@ -693,6 +784,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "find_duplicates": ("Find duplicated code", True),
     "workspace_overview": ("Workspace overview", True),
     "review_changes": ("Review the branch as a merge request", True),
+    "coverage_gaps": ("Uncovered classes and methods", True),
 }
 
 

@@ -327,3 +327,67 @@ def test_review_without_changed_groups_by_checklist(runner: CliRunner, tmp_path:
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "B.groovy"])
     assert result.exit_code == 0, result.output
     assert "Explicit types (1)" in result.output and "B.groovy:1: [NoDef] def used" in result.output
+
+
+def test_check_imports_sarif_and_coverage_reads_jacoco(
+    runner: CliRunner, tmp_path: Path, engine: dict[str, Any]
+) -> None:
+    sarif = tmp_path / "spotbugs.sarif.json"
+    sarif.write_text(
+        json.dumps(
+            {
+                "version": "2.1.0",
+                "runs": [
+                    {
+                        "tool": {"driver": {"name": "SpotBugs"}},
+                        "results": [
+                            {
+                                "ruleId": "NP_NULL",
+                                "level": "error",
+                                "message": {"text": "null here"},
+                                "locations": [
+                                    {
+                                        "physicalLocation": {
+                                            "artifactLocation": {"uri": "src/A.groovy"},
+                                            "region": {"startLine": 7, "startColumn": 2},
+                                        }
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    engine["response"] = {"diagnostics": {}, "summary": {"errors": 0, "warnings": 0, "information": 0, "files": 1}}
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "check", "--import-sarif", str(sarif)])
+    assert result.exit_code == 1, result.output
+    assert "src/A.groovy:7:2: error [spotbugs/NP_NULL] null here" in result.output
+    elsewhere = runner.invoke(
+        cli.main, ["--root", str(tmp_path), "check", "src/B.groovy", "--import-sarif", str(sarif)]
+    )
+    assert elsewhere.exit_code == 0 and "NP_NULL" not in elsewhere.output
+    broken = runner.invoke(cli.main, ["--root", str(tmp_path), "check", "--import-sarif", str(tmp_path / "none.sarif")])
+    assert "none.sarif" in broken.output and broken.exit_code == 0
+    no_report = runner.invoke(cli.main, ["--root", str(tmp_path), "coverage"])
+    assert no_report.exit_code == 1 and "no JaCoCo report" in no_report.output
+    jacoco = tmp_path / "build" / "reports" / "jacoco" / "test" / "jacocoTestReport.xml"
+    jacoco.parent.mkdir(parents=True)
+    jacoco.write_text(
+        '<report name="d"><package name=""><class name="A" sourcefilename="A.groovy">'
+        '<method name="run" line="4"><counter type="LINE" missed="2" covered="0"/></method>'
+        '<counter type="LINE" missed="2" covered="2"/></class></package>'
+        '<counter type="LINE" missed="2" covered="2"/></report>',
+        encoding="utf-8",
+    )
+    coverage = runner.invoke(cli.main, ["--root", str(tmp_path), "coverage"])
+    assert coverage.exit_code == 0, coverage.output
+    assert coverage.output.startswith("line coverage 50% (2 of 4 lines)")
+    assert "A.groovy:4: uncovered method A.run (2 lines missed)" in coverage.output
+    as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "coverage", "--json"])
+    assert json.loads(as_json.output)["coverage"]["percent"] == 50
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "coverage", "other"]).output.endswith(
+        "no uncovered lines\n"
+    )
