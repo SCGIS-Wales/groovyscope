@@ -179,6 +179,13 @@ public final class GroovyCompiler {
         return new CompilationResult(modules, sources, diagnostics, first.phaseReached, partial);
     }
 
+    /** True when {@code text} parses as Groovy (syntax only; used to vet automatic fixes). */
+    public boolean parses(String uri, String text) {
+        Attempt parsed = compileOnce(Map.of(uri, text), List.of(), false, Phases.CONVERSION);
+        release(parsed);
+        return !parsed.failed && parsed.brokenUris.isEmpty();
+    }
+
     static boolean isJava(String uri) {
         return uri.endsWith(".java");
     }
