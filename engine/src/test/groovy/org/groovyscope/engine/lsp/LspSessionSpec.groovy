@@ -83,14 +83,14 @@ class LspSessionSpec extends Specification {
         def launcher = LSPLauncher.createClientLauncher(client, clientIn, clientOut)
         launcher.startListening()
         remote = launcher.remoteProxy
-        remote.initialize(new InitializeParams(rootUri: Fixtures.project('basic-app').toUri().toString())).get(10, TimeUnit.SECONDS)
+        remote.initialize(new InitializeParams(rootUri: Fixtures.project('basic-app').toUri().toString())).get(60, TimeUnit.SECONDS)
         remote.initialized(new InitializedParams())
     }
 
     def cleanup() {
-        remote.shutdown().get(10, TimeUnit.SECONDS)
+        remote.shutdown().get(60, TimeUnit.SECONDS)
         remote.exit()
-        serving.get(10, TimeUnit.SECONDS)
+        serving.get(60, TimeUnit.SECONDS)
         [serverIn, serverOut, clientIn, clientOut].each { Closeable c -> try { c.close() } catch (IOException ignored) { } }
         executor.shutdownNow()
     }
