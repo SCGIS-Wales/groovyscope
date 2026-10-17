@@ -215,6 +215,39 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         });
     }
 
+    /**
+     * Safe fixes for the given documents (all when empty) and codes (all fixable when empty), as edits. Nothing
+     * is written. Params: {@code uris}, {@code codes}, {@code root}.
+     */
+    @JsonRequest("groovyscope/fix")
+    public CompletableFuture<Map<String, Object>> fix(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            org.groovyscope.engine.services.QualityServices.FixResult result = current.quality().fix(
+                    stringList(params.get("uris")), new java.util.LinkedHashSet<>(stringList(params.get("codes"))));
+            Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
+            for (Map.Entry<String, List<org.groovyscope.engine.model.TextEdit>> entry : result.edits().entrySet()) {
+                List<org.eclipse.lsp4j.TextEdit> list = new java.util.ArrayList<>();
+                for (org.groovyscope.engine.model.TextEdit edit : entry.getValue()) {
+                    list.add(Converters.toLsp(edit));
+                }
+                edits.put(entry.getKey(), list);
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("edits", edits);
+            response.put("applied", result.applied());
+            response.put("rejected", result.rejected());
+            return response;
+        });
+    }
+
+    /** What a diagnostic code means and how to fix it, or {@code null}. Params: {@code code}. */
+    @JsonRequest("groovyscope/explain")
+    public CompletableFuture<Map<String, Object>> explain(Map<String, Object> params) {
+        return CompletableFuture.completedFuture(org.groovyscope.engine.practices.Explanations.explain(
+                params == null || params.get("code") == null ? null : params.get("code").toString()).orElse(null));
+    }
+
     /** Formatting edits for the given documents (all workspace documents when {@code uris} is empty). */
     @JsonRequest("groovyscope/format")
     public CompletableFuture<Map<String, Object>> format(Map<String, Object> params) {
