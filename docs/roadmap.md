@@ -64,7 +64,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   daemon: find_symbol, goto_definition, find_references, call_graph, impact_of, check, format,
   find_dynamic_code, workspace_status. Compact paginated JSON through `render.py`. Engine gains
   `groovyscope/symbols`, `/definition`, `/references` and `/dynamicCode` plus `DynamicCodeFinder`.
-- [ ] **Stage 6: packaging extras** — branch `feat/packaging-extras` (in progress since 2026-10-17).
+- [x] **Stage 6: packaging extras** — branch `feat/packaging-extras`, PR #21 merged 2026-10-17.
   `groovyscope fetch [--from]` (checksum-verified release JAR into the cache, used when nothing is bundled),
   `groovyscope jdk install` and `jdk.autoProvision` (Temurin via the Adoptium API, verified, found by
   discovery), `scripts/homebrew_formula.py` plus a `homebrew` job in `workflow.yml` that opens a PR on
@@ -73,9 +73,23 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   downloads"; vendoring them would double the wheel), so `format.engine: basic` remains the shipped
   formatter; Maven Central publishing of the engine JAR is skipped (no Central Portal account; the JAR is
   attached to every GitHub Release with provenance).
-- [ ] **Stage 7: docs polish, benchmark, upstream watch** — branch `feat/docs-benchmark`.
-  Complete docs, credit benchmark on a real repository, monthly check of apache/groovy PR #2936
-  (GROOVY-12411); v1.0.0.
+- [x] **Stage 7: docs polish, benchmark, upstream watch** — branch `feat/docs-benchmark` (2026-10-17).
+  Docs brought up to date with everything shipped (README status, rules, architecture, AGENTS, install);
+  `docs/benchmark.md` fixes the credit benchmark protocol (five tasks, two conditions, what to record,
+  answer key first). The benchmark itself has not been run: a full run costs ten to twenty Kiro credits,
+  which is the owner's call on a free account, so the results table is empty and `v1.0.0` waits for a
+  recorded run. Upstream watch recorded below.
+
+## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
+
+Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.
+
+- 2026-10-17: apache/groovy#2936 was **merged on 2026-10-11** into `master` as `subprojects/groovy-lsp`
+  (87 source files, a `groovylsp` launcher in the distribution's `bin/`). Maven Central has no
+  `org.apache.groovy:groovy-lsp` artifact and the latest tag is `GROOVY_6_0_0`, so it is unreleased. When a
+  Groovy release ships it: evaluate it as the LSP front end for Kiro's `code` tool (a new stage), keep the
+  MCP tools on this engine (index, call graph, CodeNarc, dynamic-code review are not LSP features), and
+  compare navigation answers on the fixture projects before switching.
 
 ## Log
 
@@ -103,3 +117,9 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   formula for 0.5.0 was merged into SCGIS-Wales/homebrew-tap (PR #1 there) and
   `brew install SCGIS-Wales/tap/groovyscope` plus `brew test` pass on macOS. Automatic tap updates need the
   `HOMEBREW_TAP_TOKEN` repository secret.
+- 2026-10-17: PyPI had silently stopped receiving releases after 0.2.0: `release-please.yml` called
+  `workflow.yml` as a reusable workflow, so the Sigstore certificate named `release-please.yml` and PyPI's
+  trusted publisher rejected the attested upload. PR #20 makes release-please dispatch `workflow.yml`
+  instead; 0.3.0, 0.4.0 and 0.5.0 were published by manual dispatch the same day.
+- 2026-10-17: Stage 6 merged (PR #21). Stage 7 on `feat/docs-benchmark`: docs polish, benchmark protocol,
+  upstream watch entry (groovy-lsp merged upstream, unreleased).

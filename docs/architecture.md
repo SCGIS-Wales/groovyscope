@@ -30,7 +30,11 @@ Packages under `org.groovyscope.engine`:
 | `callgraph` | 4 | `CallGraph` (every call as an edge from its containing method, script or class initialiser to each resolved target, built once per snapshot) and `ImpactAnalyzer` (direct and transitive callers, overrides in both directions, tests, name-only sites, risk score, suggested checks). |
 
 Keeping the engine API free of LSP4J types outside `lsp` lets the front end be swapped for, or contribute to,
-Apache Groovy's own `groovy-lsp` (GROOVY-12411) if it ships.
+Apache Groovy's own `groovy-lsp` (GROOVY-12411). That server was merged into Groovy's master branch on
+11 October 2026 as `subprojects/groovy-lsp` with a `groovylsp` launcher in the distribution; it is not in a
+released Groovy yet. When it ships, the plan is to evaluate it as the LSP front end for Kiro's `code` tool
+while the MCP tools (impact, call graph, lint, format, dynamic-code review) stay on this engine, because
+they need the index, call graph and CodeNarc integration that a plain language server does not offer.
 
 ## Daemon (Stage 2)
 
@@ -99,7 +103,8 @@ analysis (Stage 4) will report those sites for manual review.
   runs capped, exactly one final newline, and semicolons removed only on lines CodeNarc flagged. It never
   re-flows code. `greclipse` is accepted by the schema but refused by the engine: the Groovy Eclipse
   formatter needs the Eclipse bundles that Spotless fetches at runtime, which is at odds with "no runtime
-  downloads"; vendoring them is a Stage 6 packaging question.
+  downloads", and vendoring them would roughly double the wheel. Decision (Stage 6): not bundled; teams
+  that want it run Spotless in their build with `config/format/greclipse.properties`.
 - **CLI.** `groovyscope check` and `groovyscope format` talk to the daemon through the custom
   `groovyscope/check` and `groovyscope/format` requests (passing the workspace root, since those connections
   skip `initialize`) and return compact JSON on request.
@@ -125,7 +130,7 @@ A performance spec generates a synthetic workspace (300 classes in CI, `-Dgroovy
 the full run) and prints cold compile, warm references and single-file re-check timings; its budgets are
 deliberately loose so shared runners do not fail the build.
 
-## Known limits of Stage 1
+## Known limits
 
 - GDK extension methods on JDK types (for example `String.size()`) are not resolved.
 - Default-argument overloads and methods added by AST transformations are not visible before class
@@ -158,8 +163,16 @@ Style: functional, no user-defined classes (TypedDicts only), `mypy --strict`.
 ## Packaging
 
 The release builds the shaded JAR, `scripts/bundle_jar.py` copies it into `python/src/groovyscope/_jar/`
-with a manifest (version, file name, SHA-256), and `uv build` produces a `py3-none-any` wheel. One artefact
-serves Linux and macOS; the JDK is the only external prerequisite.
+with a manifest (version, file name, SHA-256), and `uv build` produces a `py3-none-any` wheel and an sdist
+that both carry the JAR. One artefact serves Linux and macOS; the JDK is the only external prerequisite.
+
+Releases are cut by release-please on `main`; merging the release PR tags `vX.Y.Z` and dispatches
+`workflow.yml` (build, provenance attestations, PyPI through trusted publishing, release assets with SBOMs
+and checksums, and a Homebrew tap pull request when `HOMEBREW_TAP_TOKEN` is set). The workflow is
+dispatched rather than called as a reusable workflow because PyPI verifies that the signing certificate
+names the registered workflow file. The tap formula (`scripts/homebrew_formula.py`) installs the sdist into
+a virtualenv with uv and depends on `openjdk@21`; `groovyscope fetch` and `groovyscope jdk install` cover
+installs that bundle no JAR or have no JDK, both checksum-verified and never implicit.
 
 ## MCP server
 

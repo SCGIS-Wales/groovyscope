@@ -1,7 +1,7 @@
 # Defensive coding rules for Groovy 5.x and 6.x
 
-These are the policies groovyscope enforces (lint in Stage 3, impact analysis in Stage 4) and the steering
-file installs for Kiro agents. The CodeNarc profiles live in `config/codenarc/`.
+These are the policies groovyscope enforces (through lint, impact analysis and `find_dynamic_code`) and the
+steering file installs for Kiro agents. The CodeNarc profiles live in `config/codenarc/`.
 
 1. **Static by default.** Compile production code with `@CompileStatic` through the configuration script
    `config/groovyc/compile-static.groovy`. Allow `@CompileDynamic` only on builders and DSL entry points, with
@@ -37,5 +37,9 @@ automatically, or everywhere with `--profile jenkins`.
 
 ## Formatter
 
-`config/format/greclipse.properties`: four-space indentation, 120 columns, same-line opening braces, unnecessary
-semicolons removed. Pair it with `.editorconfig` (already in this repository).
+`groovyscope format` ships the `basic` engine: tabs to spaces, trailing whitespace and extra blank lines
+removed, one final newline, semicolons removed where CodeNarc flagged them. It never re-flows code, so it is
+safe to run from an agent. `config/format/greclipse.properties` (four-space indentation, 120 columns,
+same-line opening braces, unnecessary semicolons removed) is the matching Groovy Eclipse configuration for
+teams that run that formatter through Spotless in their build; it is not bundled in the engine (see
+docs/architecture.md). Pair either with `.editorconfig` (already in this repository).

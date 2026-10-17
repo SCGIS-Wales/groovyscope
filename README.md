@@ -6,8 +6,8 @@
 
 Groovy 5/6 code intelligence for AI coding agents, with [Kiro CLI](https://kiro.dev) as the first consumer.
 
-One warm JVM engine (Apache Groovy compiler, CodeNarc, Groovy Eclipse formatter) answers semantic questions
-about Groovy, Gradle and Jenkinsfile code. Two front ends share it:
+One warm JVM engine (Apache Groovy 6 compiler, CodeNarc 4, Groovy's static type checker and a conservative
+formatter) answers semantic questions about Groovy, Gradle and Jenkinsfile code. Two front ends share it:
 
 - an **LSP server** that Kiro CLI spawns from `.kiro/settings/lsp.json` and uses through its built-in `code`
   tool (definition, references, rename, diagnostics, hover, symbols);
@@ -18,17 +18,21 @@ Python owns the installer, CLI, configuration and MCP bridge. Every semantic ans
 
 ## Status
 
-Stage 5 of 7 (MCP server). The engine compiles the workspace with the Groovy compiler and
-serves go to definition, type definition, find references, hover, document and workspace symbols,
-completion, signature help, rename with a dry-run prepare step, call hierarchy, semantic tokens and
-diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename refuses
-rather than guesses when a call site can only be matched by name. One JVM per workspace stays warm across
-sessions, with a symbol cache for cold starts. CodeNarc 4 runs in process with a defensive profile, Groovy
-6's checkers run on statically typed classes, lint findings arrive as diagnostics with quick fixes, a
+All seven stages of the [roadmap](docs/roadmap.md) are implemented. The engine compiles the workspace with
+the Groovy compiler and serves go to definition, type definition, find references, hover, document and
+workspace symbols, completion, signature help, rename with a dry-run prepare step, call hierarchy, semantic
+tokens and diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename
+refuses rather than guesses when a call site can only be matched by name. One JVM per workspace stays warm
+across sessions, with a symbol cache for cold starts. CodeNarc 4 runs in process with a defensive profile,
+Groovy 6's checkers run on statically typed classes, lint findings arrive as diagnostics with quick fixes, a
 conservative formatter is bundled, and `impact` answers "what breaks if I change this?" with direct and
-transitive callers, overrides, tests and the dynamic call sites to review. `groovyscope mcp` exposes all
-of that to agents as nine compact MCP tools over the same warm daemon. Packaging extras and the credit
-benchmark follow; see [docs/roadmap.md](docs/roadmap.md).
+transitive callers, overrides, tests and the dynamic call sites to review. `groovyscope mcp` exposes all of
+that to agents as nine compact MCP tools over the same warm daemon. Installs come from PyPI or the Homebrew
+tap; a checksum-verified JAR fetch and an opt-in Temurin download cover machines without either.
+
+What is still open: the [credit benchmark](docs/benchmark.md) has a protocol but no recorded run, and
+Apache Groovy's own language server (merged upstream in October 2026, not yet in a release) is tracked in the
+roadmap for a possible front-end swap.
 
 ## Install
 
@@ -115,7 +119,7 @@ engine/   JVM engine (Java 21 sources, Gradle, Spock tests)       -> groovyscope
 python/   groovyscope package (CLI, config, Kiro writers, tests)   -> PyPI wheel bundling the JAR
 config/   CodeNarc rulesets, formatter and groovyc configuration (mirrored inside the package)
 kiro/     Templates written by `groovyscope kiro init` (mirrored inside the package)
-docs/     Install, Kiro, rules, architecture, security, troubleshooting, roadmap, research
+docs/     Install, Kiro, rules, architecture, security, troubleshooting, benchmark, roadmap, research
 ```
 
 ## Contributing
