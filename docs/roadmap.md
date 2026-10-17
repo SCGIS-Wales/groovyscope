@@ -79,7 +79,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   answer key first). First run recorded on 2026-10-17 on CodeNarc 4.0.0 (10.73 credits, one pass); see
   `docs/benchmark.md`. Upstream watch recorded below.
 
-- [ ] **Stage 8: practices knowledge base and runtime profiles** — branch `feat/groovy-practices`.
+- [x] **Stage 8: practices knowledge base and runtime profiles** — branch `feat/groovy-practices`, PR #32 merged 2026-10-17, released as 0.7.0.
   Practice catalogue and `docs/practices.md`; GS001-GS012 with AST fixes; CodeNarc profile aligned with the
   knowledge base; strict NullChecker plus Regex, FormatString and Combiner checkers gated on Groovy 6;
   `fix`, `explain`, `review` (CLI and MCP); `check --format short|sarif`; type checking that survives broken
@@ -150,3 +150,5 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   runtime-profile question called `profile_status` and answered that `Set.of` is unproven on the target
   Groovy (0.19). Follow-ups fixed the same day: the type fix now handles `final x = ...`, duplicate edits
   from two codes on one spot apply once, and `profile_status` lists each construct's status.
+- 2026-10-17: Stage 8 merged (PR #32, CI green on Ubuntu and macOS). v0.7.0 released through the dispatched
+  `workflow.yml` (build, attestations, release assets, PyPI all green).
