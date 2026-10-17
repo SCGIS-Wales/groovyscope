@@ -7,7 +7,7 @@ spotless = "4.10.4"
 sqlite-jdbc = "3.53.4.0"
 spock = "2.5-groovy-6.0"
 shadow = "9.6.1"
-cyclonedx = "1.4.0"
+cyclonedx = "3.5.1"
 
 [libraries]
 groovy = { module = "org.apache.groovy:groovy", version.ref = "groovy" }

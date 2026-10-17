@@ -106,4 +106,4 @@ tasks.assemble {
     dependsOn(tasks.shadowJar)
 }
 
-// The CycloneDX plugin writes build/reports/bom.json and bom.xml with its defaults.
+// The CycloneDX plugin (3.x) writes build/reports/cyclonedx/bom.json and bom.xml with its defaults.

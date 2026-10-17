@@ -74,7 +74,7 @@ jobs:
           mkdir -p release
           cp python/dist/*.whl python/dist/*.tar.gz release/
           cp engine/build/libs/groovyscope-engine-*-all.jar release/
-          cp engine/build/reports/bom.json release/groovyscope-engine-sbom.cdx.json
+          cp engine/build/reports/cyclonedx/bom.json release/groovyscope-engine-sbom.cdx.json
           cp python/dist/groovyscope-python-sbom.cdx.json release/
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
