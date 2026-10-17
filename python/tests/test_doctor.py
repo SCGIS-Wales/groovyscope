@@ -7,6 +7,7 @@ import pytest
 from groovyscope.doctor import (
     build_report,
     config_check,
+    daemon_check,
     has_failures,
     jar_check,
     jdk_check,
@@ -72,6 +73,23 @@ def test_build_report_and_failures(
     monkeypatch.setattr("groovyscope.doctor.locate_jar", lambda env: locate_jar(env, tmp_path / "no-bundle"))
     env = {**clean_env, "JAVA_HOME": str(fake_jdk)}
     report = build_report(tmp_path, None, env)
-    assert [name for _, name, _ in report] == ["groovyscope", "python", "config", "jdk", "engine jar", "kiro files"]
+    assert [name for _, name, _ in report] == [
+        "groovyscope",
+        "python",
+        "config",
+        "jdk",
+        "engine jar",
+        "kiro files",
+        "daemon",
+    ]
     assert has_failures(report)  # no JAR bundled
     assert not has_failures([("ok", "a", ""), ("warn", "b", ""), ("info", "c", "")])
+
+
+def test_daemon_check(tmp_path: Path, monkeypatch) -> None:
+    environ = {"GROOVYSCOPE_SOCKET_DIR": str(tmp_path), "GROOVYSCOPE_CACHE_DIR": str(tmp_path)}
+    level, _, message = daemon_check(tmp_path, environ)
+    assert level == "info" and "not running" in message
+    monkeypatch.setattr("groovyscope.daemon.probe", lambda _s, _timeout=5.0: {"engine": "1.2.3"})
+    level, _, message = daemon_check(tmp_path, environ)
+    assert level == "ok" and "engine 1.2.3" in message

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__
+from groovyscope import __version__, daemon
 from groovyscope.config import load_config
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover_jdk, jdk_status
@@ -64,6 +64,14 @@ def kiro_check(root: Path) -> Check:
     return ("warn", "kiro files", "missing: " + ", ".join(missing))
 
 
+def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
+    details = daemon.info(root, environ)
+    if details["running"]:
+        engine = (details["status"] or {}).get("engine", "?")
+        return ("ok", "daemon", f"running on {details['socket']} (engine {engine})")
+    return ("info", "daemon", f"not running; starts with the first `groovyscope lsp` session (log: {details['log']})")
+
+
 def build_report(root: Path, config_path: Path | None, environ: Mapping[str, str]) -> list[Check]:
     config_result, config = config_check(root, config_path, environ)
     jdk_result, _ = jdk_check(config, environ)
@@ -74,6 +82,7 @@ def build_report(root: Path, config_path: Path | None, environ: Mapping[str, str
         jdk_result,
         jar_check(environ),
         kiro_check(root),
+        daemon_check(root, environ),
     ]
 
 

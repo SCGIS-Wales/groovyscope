@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -60,3 +63,14 @@ def fake_jar_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture
+def short_dir() -> Iterator[Path]:
+    """A short path for Unix sockets; pytest's tmp_path on macOS exceeds the AF_UNIX length limit."""
+    path = Path("/tmp") / f"gst-{uuid.uuid4().hex[:8]}"  # noqa: S108 - sockets need a short path
+    path.mkdir()
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)

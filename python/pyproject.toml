@@ -48,6 +48,7 @@ dev = [
   "pytest>=9.0,<10",
   "pytest-cov>=7.0,<8",
   "hypothesis>=6.140,<7",
+  "pytest-asyncio>=1.0,<2",
   "ruff>=0.14,<1",
   "mypy>=1.19,<3",
   "types-PyYAML>=6.0.12",
@@ -108,6 +109,7 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+asyncio_mode = "strict"
 markers = [
   "integration: boots the real engine JAR (skipped unless it is available)",
 ]

@@ -106,7 +106,7 @@ class MainSpec extends Specification {
     def 'bad configuration options exit 2 with a message'() {
         expect:
         run('lsp', '--stdio', '--config') == 2
-        stderr().contains('--config needs a file path')
+        stderr().contains('--config needs a value')
 
         and:
         run('lsp', '--stdio', '--config', temp.resolve('missing.json').toString()) == 2
@@ -114,6 +114,26 @@ class MainSpec extends Specification {
         and:
         run('lsp', '--stdio', '--bogus') == 2
         stderr().contains('unknown option: --bogus')
+    }
+
+    def 'daemon mode needs a socket and exits on its own when idle'() {
+        given:
+        Path socket = Paths.get('/tmp', "gs-main-${UUID.randomUUID().toString().take(8)}.sock")
+
+        expect:
+        run('daemon') == 2
+        stderr().contains('needs --socket')
+        run('daemon', '--socket', socket.toString(), '--idle-seconds', 'soon') == 2
+        stderr().contains('whole number')
+        run('daemon', '--socket', socket.toString(), '--idle-seconds', '0', '--cache-dir', temp.resolve('cache').toString()) == 0
+        !Files.exists(socket)
+    }
+
+    def 'lsp options accept a cache directory'() {
+        expect:
+        Main.parseOptions(['--cache-dir', 'cache'], [:], temp).cacheDir() == temp.resolve('cache')
+        Main.parseOptions([], [:], temp).idleSeconds() == Main.DEFAULT_IDLE_SECONDS
+        run('lsp', '--stdio', '--cache-dir', temp.resolve('cache').toString()) == 0
     }
 
     def 'invalid configuration JSON in the environment exits 2'() {

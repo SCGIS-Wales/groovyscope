@@ -15,11 +15,15 @@
  */
 package org.groovyscope.engine.services;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
@@ -30,6 +34,7 @@ import org.groovyscope.engine.compile.GroovyCompiler;
 import org.groovyscope.engine.index.AstIndex;
 import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.index.NodeEntry;
+import org.groovyscope.engine.index.SymbolStore;
 import org.groovyscope.engine.index.TextLines;
 import org.groovyscope.engine.model.Completion;
 import org.groovyscope.engine.model.Confidence;
@@ -62,14 +67,36 @@ public final class LanguageServices {
 
     private final WorkspaceModel workspace;
     private final GroovyCompiler compiler;
+    private final SymbolStore store;
     private final Object lock = new Object();
+    private final ExecutorService background = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "groovyscope-background");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicBoolean backgroundRefreshQueued = new AtomicBoolean();
     private volatile Snapshot snapshot = Snapshot.empty();
     private volatile boolean dirty = true;
+    private volatile List<Symbol> cachedSymbols;
     private long version;
 
     public LanguageServices(WorkspaceModel workspace, GroovyCompiler compiler) {
+        this(workspace, compiler, null);
+    }
+
+    /**
+     * @param store optional on-disk symbol cache; answers symbol searches before the first compile and is
+     *              rewritten after every compile
+     */
+    public LanguageServices(WorkspaceModel workspace, GroovyCompiler compiler, SymbolStore store) {
         this.workspace = workspace;
         this.compiler = compiler;
+        this.store = store;
+    }
+
+    /** True once at least one compile has produced a snapshot. */
+    public boolean hasCompiled() {
+        return snapshot.version() > 0;
     }
 
     public WorkspaceModel workspace() {
@@ -102,8 +129,55 @@ public final class LanguageServices {
             version++;
             snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
             dirty = false;
+            persistSymbols(snapshot, sources);
             return snapshot;
         }
+    }
+
+    private void persistSymbols(Snapshot fresh, Map<String, String> sources) {
+        if (store == null) {
+            return;
+        }
+        List<Symbol> symbols = fresh.symbols().workspaceSymbols("", Integer.MAX_VALUE);
+        background.submit(() -> {
+            try {
+                store.save(sources, symbols);
+            } catch (IOException e) {
+                System.err.println("groovyscope-engine: symbol cache not saved: " + e.getMessage());
+            }
+        });
+    }
+
+    /** Symbols from the cache for documents whose text has not changed since they were stored. */
+    private List<Symbol> cachedSymbols() {
+        List<Symbol> cached = cachedSymbols;
+        if (cached == null) {
+            try {
+                cached = store == null ? List.of() : store.load(workspace.sources());
+            } catch (IOException e) {
+                System.err.println("groovyscope-engine: symbol cache not read: " + e.getMessage());
+                cached = List.of();
+            }
+            cachedSymbols = cached;
+        }
+        return cached;
+    }
+
+    /** Before the first compile, serve symbol searches from the cache and compile in the background. */
+    private boolean answerFromCache() {
+        if (store == null || hasCompiled() || cachedSymbols().isEmpty()) {
+            return false;
+        }
+        if (backgroundRefreshQueued.compareAndSet(false, true)) {
+            background.submit(() -> {
+                try {
+                    refresh();
+                } finally {
+                    backgroundRefreshQueued.set(false);
+                }
+            });
+        }
+        return true;
     }
 
     /** The current snapshot, rebuilt first when stale. */
@@ -212,10 +286,20 @@ public final class LanguageServices {
     }
 
     public List<Symbol> documentSymbols(String uri) {
+        if (answerFromCache()) {
+            return cachedSymbols().stream().filter(s -> s.location().uri().equals(uri)).toList();
+        }
         return snapshot().symbols().documentSymbols(uri);
     }
 
     public List<Symbol> workspaceSymbols(String query) {
+        if (answerFromCache()) {
+            String needle = query == null ? "" : query.toLowerCase();
+            return cachedSymbols().stream()
+                    .filter(s -> s.name().toLowerCase().contains(needle))
+                    .limit(WORKSPACE_SYMBOL_LIMIT)
+                    .toList();
+        }
         return snapshot().symbols().workspaceSymbols(query, WORKSPACE_SYMBOL_LIMIT);
     }
 

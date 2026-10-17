@@ -17,6 +17,7 @@ java {
 dependencies {
     implementation(libs.groovy)
     implementation(libs.lsp4j)
+    implementation(libs.sqlite.jdbc)
 
     testImplementation(libs.spock.core)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
