@@ -327,8 +327,8 @@ def serve(root: Path, socket_file: Path, output: Mapping[str, Any], environ: Map
     """Open one engine session, run the MCP server on stdio until the client disconnects, close the session."""
     session = rpc.open_session(socket_file)
     try:
-        rpc.call(session, "initialize", {"rootUri": root.as_uri(), "capabilities": {}, "processId": None})
-        rpc.notify_session(session, "initialized", {})
+        # No LSP initialize: every groovyscope/* request names its root, and an initialized session would make
+        # the engine lint the whole workspace and push diagnostics for every file to a client that ignores them.
 
         def call(method: str, params: dict[str, Any]) -> Any:
             return rpc.call(session, method, params, timeout=600.0)

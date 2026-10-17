@@ -87,7 +87,7 @@ Session = dict[str, Any]
 
 def open_session(socket_path: Path, timeout: float = DEFAULT_TIMEOUT) -> Session:
     """Connect once; the returned mapping carries the socket, the read buffer and the next request id."""
-    return {"sock": _connect(socket_path, timeout), "buffer": b"", "next_id": 1, "notifications": []}
+    return {"sock": _connect(socket_path, timeout), "buffer": b"", "next_id": 1, "notifications": 0}
 
 
 def _read_frame(session: Session) -> dict[str, Any]:
@@ -104,7 +104,7 @@ def _read_frame(session: Session) -> dict[str, Any]:
 
 
 def call(session: Session, method: str, params: Any = None, timeout: float | None = None) -> Any:
-    """Send a request on the session and wait for its reply; notifications in between are kept aside."""
+    """Send a request on the session and wait for its reply; notifications in between are dropped."""
     sock: socket.socket = session["sock"]
     if timeout is not None:
         sock.settimeout(timeout)
@@ -127,7 +127,7 @@ def call(session: Session, method: str, params: Any = None, timeout: float | Non
                 encode({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": "unsupported"}})
             )
         elif "method" in message:
-            session["notifications"].append(message)
+            session["notifications"] += 1  # counted, not kept: a long session must not grow without bound
 
 
 def notify_session(session: Session, method: str, params: Any = None) -> None:

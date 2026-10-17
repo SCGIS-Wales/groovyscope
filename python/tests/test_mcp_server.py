@@ -214,7 +214,7 @@ def test_compact_helpers() -> None:
     assert mcp_server.to_uri(ROOT, "src/A.groovy") == "file:///ws/src/A.groovy"
 
 
-def test_serve_opens_a_session_initializes_and_closes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[tuple[str, Any]] = []
     session = {"sock": None}
 
@@ -242,8 +242,6 @@ def test_serve_opens_a_session_initializes_and_closes(monkeypatch: pytest.Monkey
     assert mcp_server.serve(ROOT, Path("/s.sock"), {}, {}) == 0
     assert events == [
         ("open", Path("/s.sock")),
-        ("initialize", None),
-        ("initialized", None),
         ("run", "stdio"),
         ("groovyscope/status", 600.0),
         ("close", session),
