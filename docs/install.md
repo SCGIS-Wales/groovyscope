@@ -1,6 +1,7 @@
 # Install
 
-groovyscope ships as a pure-Python wheel that bundles the engine JAR. The only external prerequisite is a JDK
+groovyscope ships as a pure-Python wheel that bundles the engine JAR; it runs on Python 3.12 to 3.15 (every
+release is tested on each). The only external prerequisite is a JDK
 (17 minimum, 21 recommended). `groovyscope doctor` checks everything.
 
 ## Ubuntu 22.04 / 24.04

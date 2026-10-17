@@ -24,6 +24,7 @@ machine:
 
 ```bash
 uv tool install groovyscope       # or: pipx install groovyscope, or: brew install SCGIS-Wales/tap/groovyscope
+                                  # Python 3.12 to 3.15; the engine needs a JDK 17 or newer (see docs/install.md)
 groovyscope kiro init --global    # adds groovyscope to ~/.kiro without removing anything already there
 groovyscope doctor                # ok lines are good; info lines are optional extras
 ```
