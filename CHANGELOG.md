@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.4.0...v0.5.0) (2026-10-17)
+
+
+### Features
+
+* call graph, impact analysis, call hierarchy and semantic tokens (stage 4) ([#15](https://github.com/SCGIS-Wales/groovyscope/issues/15)) ([3dd9a17](https://github.com/SCGIS-Wales/groovyscope/commit/3dd9a1701e774bd58e5147fd92470b4923cd84ce))
+
+
+### Bug Fixes
+
+* **engine:** keep edits that arrive during a compile from being lost ([#17](https://github.com/SCGIS-Wales/groovyscope/issues/17)) ([f8b0d13](https://github.com/SCGIS-Wales/groovyscope/commit/f8b0d13e048ec1344ac3c5a7559f3a5148aba700))
+
+
+### Documentation
+
+* mark stage 4 merged and stage 5 in progress ([7effd09](https://github.com/SCGIS-Wales/groovyscope/commit/7effd099f233ea00d79a5fed36deb23d8687ba90))
+
 ## [0.4.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.3.0...v0.4.0) (2026-10-17)
 
 
