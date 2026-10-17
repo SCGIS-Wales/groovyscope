@@ -242,6 +242,7 @@ _RELAY: Callable[[Path], int] = relay.main
 _RPC: Callable[..., Any] = rpc.request
 RPC_TIMEOUT_SECONDS = 600.0
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
+POSITION_PARTS = 3  # path:line:col
 
 
 def daemon_socket_for(obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
@@ -390,6 +391,123 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
         click.echo(f"{len(rows)} of {checked} file(s) {'formatted' if apply_changes else 'need formatting'}")
     if rows and not apply_changes:
         sys.exit(1)
+
+
+def target_params(obj: dict[str, Any], target: str) -> dict[str, Any]:
+    """``path:line:col`` (1-based) becomes a uri with a zero-based position; anything else is a symbol name."""
+    parts = target.rsplit(":", 2)
+    if len(parts) == POSITION_PARTS and parts[1].isdigit() and parts[2].isdigit():
+        path = (obj["root"] / parts[0]).resolve()
+        return {"uri": path.as_uri(), "line": int(parts[1]) - 1, "character": int(parts[2]) - 1}
+    return {"symbol": target}
+
+
+def describe_symbol(symbol: dict[str, Any], root: Path) -> str:
+    location = symbol.get("location")
+    where = ""
+    if location:
+        path = uri_to_path(location["uri"])
+        try:
+            shown = path.relative_to(root).as_posix()
+        except ValueError:
+            shown = path.as_posix()
+        where = f" ({shown}:{int(location['line']) + 1}:{int(location['character']) + 1})"
+    detail = symbol.get("detail") or symbol.get("name")
+    container = symbol.get("container")
+    return f"{container + '.' if container else ''}{detail}{where}"
+
+
+def describe_site(site: dict[str, Any], root: Path) -> str:
+    where = uri_to_path(site["site"]["uri"])
+    try:
+        shown = where.relative_to(root).as_posix()
+    except ValueError:
+        shown = where.as_posix()
+    position = f"{shown}:{int(site['site']['line']) + 1}:{int(site['site']['character']) + 1}"
+    return f"{position} in {describe_symbol(site['caller'], root)} [{site['confidence']}]"
+
+
+@main.command()
+@click.argument("target")
+@click.option(
+    "--change",
+    type=click.Choice(["signature", "rename", "delete", "behaviour"]),
+    default="signature",
+    show_default=True,
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def impact(obj: dict[str, Any], target: str, change: str, as_json: bool) -> None:
+    """What breaks if TARGET changes. TARGET is a qualified name (pkg.Class.method, Class#method) or path:line:col."""
+    socket_file, _ = daemon_socket_for(obj)
+    params = {"root": str(obj["root"]), "change": change, **target_params(obj, target)}
+    result = _RPC_LIST(socket_file, "groovyscope/impact", params)
+    if as_json:
+        click.echo(compact_json(result))
+        return
+    if not result:
+        click.echo(f"no declaration found for {target}", err=True)
+        sys.exit(2)
+    root = obj["root"]
+    for report in result:
+        counts = report["counts"]
+        click.echo(f"{describe_symbol(report['symbol'], root)}")
+        click.echo(f"  change: {report['change']}  risk: {report['riskLevel']} ({report['riskScore']}/100)")
+        click.echo(
+            f"  direct callers: {counts['direct']}  transitive: {counts['transitive']}  "
+            f"overrides: {counts['overrides']}  tests: {counts['tests']}  dynamic (review): {counts['dynamicUnknowns']}"
+        )
+        for label, key in (
+            ("direct", "directCallers"),
+            ("transitive", "transitiveCallers"),
+            ("dynamic", "dynamicUnknowns"),
+        ):
+            for site in report[key]:
+                click.echo(f"    {label}: {describe_site(site, root)}")
+        for override in report["overrides"]:
+            click.echo(f"    override: {describe_symbol(override, root)}")
+        for check in report["suggestedChecks"]:
+            click.echo(f"  - {check}")
+
+
+@main.command()
+@click.argument("target")
+@click.option("--direction", type=click.Choice(["in", "out"]), default="in", show_default=True)
+@click.option("--depth", type=click.IntRange(1, 6), default=2, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def callgraph(obj: dict[str, Any], target: str, direction: str, depth: int, as_json: bool) -> None:
+    """Callers of (in) or calls made by (out) TARGET, to the given depth."""
+    socket_file, _ = daemon_socket_for(obj)
+    params = {"root": str(obj["root"]), "direction": direction, "depth": depth, **target_params(obj, target)}
+    result = engine_call(socket_file, "groovyscope/callGraph", params)
+    if as_json:
+        click.echo(compact_json(result))
+        return
+    root = obj["root"]
+    if not result.get("roots"):
+        click.echo(f"no declaration found for {target}", err=True)
+        sys.exit(2)
+    nodes = len(result.get("nodes", []))
+    edges = result.get("edges", [])
+    heading = "incoming" if direction == "in" else "outgoing"
+    click.echo(f"{heading} calls, depth {depth}, {nodes} node(s), {len(edges)} edge(s)")
+    for edge in edges:
+        caller = describe_symbol(edge["caller"], root)
+        callee = describe_symbol(edge["callee"], root)
+        click.echo(f"  {caller} -> {callee} [{edge['confidence']}]")
+
+
+def _rpc_list(socket_file: Path, method: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        result = _RPC(socket_file, method, params, RPC_TIMEOUT_SECONDS)
+    except (OSError, RuntimeError, ValueError) as exc:
+        click.echo(f"groovyscope: {method} failed: {exc}", err=True)
+        sys.exit(1)
+    return [dict(item) for item in result] if isinstance(result, list) else []
+
+
+_RPC_LIST = _rpc_list
 
 
 @main.command()

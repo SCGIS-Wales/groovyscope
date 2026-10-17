@@ -34,6 +34,8 @@ import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.RenameOptions;
+import org.eclipse.lsp4j.SemanticTokensLegend;
+import org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.ServerInfo;
 import org.eclipse.lsp4j.SignatureHelpOptions;
@@ -130,6 +132,10 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         capabilities.setDocumentFormattingProvider(Boolean.TRUE);
         capabilities.setCodeActionProvider(new CodeActionOptions(List.of(CodeActionKind.QuickFix)));
         capabilities.setDiagnosticProvider(new DiagnosticRegistrationOptions(false, false));
+        capabilities.setCallHierarchyProvider(Boolean.TRUE);
+        capabilities.setSemanticTokensProvider(new SemanticTokensWithRegistrationOptions(
+                new SemanticTokensLegend(org.groovyscope.engine.services.SemanticTokensSupport.TYPES,
+                        org.groovyscope.engine.services.SemanticTokensSupport.MODIFIERS), Boolean.TRUE));
         return capabilities;
     }
 
@@ -246,6 +252,74 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      * The services of this connection, or, for a connection that skipped {@code initialize} (the Python
      * {@code check} and {@code format} commands), the services of the {@code root} named in the params.
      */
+    /**
+     * Impact of changing a declaration. Params: {@code symbol} (qualified name) or {@code uri} + {@code line}
+     * + {@code character} (zero-based), {@code change} (signature|rename|delete|behaviour), {@code root}.
+     */
+    @JsonRequest("groovyscope/impact")
+    public CompletableFuture<List<Map<String, Object>>> impact(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            org.groovyscope.engine.model.ImpactReport.Change change;
+            try {
+                change = org.groovyscope.engine.model.ImpactReport.Change.parse(
+                        params.get("change") == null ? null : params.get("change").toString());
+            } catch (IllegalArgumentException e) {
+                throw invalid(e.getMessage());
+            }
+            List<org.groovyscope.engine.model.ImpactReport> reports;
+            if (params.get("symbol") != null && !params.get("symbol").toString().isBlank()) {
+                reports = current.impactOf(params.get("symbol").toString(), change);
+            } else if (params.get("uri") != null) {
+                reports = current.impact(params.get("uri").toString(), positionOf(params), change)
+                        .map(List::of).orElse(List.of());
+            } else {
+                throw invalid("impact needs a symbol or a uri with line and character");
+            }
+            List<Map<String, Object>> converted = new java.util.ArrayList<>();
+            for (org.groovyscope.engine.model.ImpactReport report : reports) {
+                converted.add(ReportJson.impact(report));
+            }
+            return converted;
+        });
+    }
+
+    /**
+     * Call graph around a declaration. Params: {@code symbol} or {@code uri} + {@code line} + {@code character},
+     * {@code direction} (in|out), {@code depth} (default 2), {@code root}.
+     */
+    @JsonRequest("groovyscope/callGraph")
+    public CompletableFuture<Map<String, Object>> callGraph(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            boolean outgoing = "out".equalsIgnoreCase(String.valueOf(params.getOrDefault("direction", "in")));
+            int depth = params.get("depth") instanceof Number number ? Math.max(1, Math.min(6, number.intValue())) : 2;
+            List<org.groovyscope.engine.model.Symbol> roots = new java.util.ArrayList<>();
+            if (params.get("symbol") != null && !params.get("symbol").toString().isBlank()) {
+                for (org.codehaus.groovy.ast.ASTNode node : current.findDeclarations(current.snapshot(),
+                        params.get("symbol").toString())) {
+                    roots.add(current.snapshot().symbols().of(node));
+                }
+            } else if (params.get("uri") != null) {
+                current.callHierarchyItem(params.get("uri").toString(), positionOf(params)).ifPresent(roots::add);
+            } else {
+                throw invalid("callGraph needs a symbol or a uri with line and character");
+            }
+            return ReportJson.callGraph(current, roots, outgoing, depth);
+        });
+    }
+
+    private static org.groovyscope.engine.model.Position positionOf(Map<String, Object> params) {
+        int line = params.get("line") instanceof Number number ? number.intValue() : 0;
+        int character = params.get("character") instanceof Number number ? number.intValue() : 0;
+        return new org.groovyscope.engine.model.Position(line, character);
+    }
+
+    private static org.eclipse.lsp4j.jsonrpc.ResponseErrorException invalid(String message) {
+        return new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.InvalidParams, message, null));
+    }
+
     private LanguageServices requireServices(Map<String, Object> params) {
         LanguageServices current = services.get();
         if (current == null && params != null && params.get("root") instanceof String root && !root.isBlank()) {
