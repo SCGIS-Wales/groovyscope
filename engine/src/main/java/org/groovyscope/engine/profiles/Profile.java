@@ -18,9 +18,7 @@ package org.groovyscope.engine.profiles;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import java.nio.file.FileSystems;
 import java.nio.file.Path;
-import java.nio.file.PathMatcher;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -130,17 +128,12 @@ public record Profile(String name, Activation activation, Target target, List<Co
         return false;
     }
 
-    /** True when a workspace-relative path matches a glob ({@code **}/ also matches at the root). */
+    /**
+     * True when a workspace-relative path matches a glob ({@code **}/ also matches at the root). Matchers are
+     * cached; a glob with invalid syntax is reported once and matches nothing.
+     */
     public static boolean matches(String glob, Path relative) {
-        if (glob == null || glob.isBlank()) {
-            return false;
-        }
-        PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + glob);
-        if (matcher.matches(relative)) {
-            return true;
-        }
-        return glob.startsWith("**/") && FileSystems.getDefault().getPathMatcher("glob:" + glob.substring(3))
-                .matches(relative);
+        return org.groovyscope.engine.workspace.Globs.matches(glob, relative);
     }
 
     /** The provenance label for a file, or {@code null}. */

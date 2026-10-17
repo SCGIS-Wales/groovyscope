@@ -173,6 +173,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         status.put("engine", EngineVersion.current());
         status.put("root", workspaceRoot.get() == null ? null : workspaceRoot.get().toString());
         status.put("daemon", daemonShutdown != null);
+        status.put("configHash", config.configHash());
         LanguageServices current = services.get();
         if (current != null) {
             status.put("dirty", current.isDirty());
@@ -193,8 +194,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             List<String> uris = targets(current, params);
             Object profile = params.get("profile");
             java.util.Set<String> include = new java.util.LinkedHashSet<>(stringList(params.get("include")));
-            org.groovyscope.engine.model.CheckResult result = current.quality().check(uris,
-                    profile == null ? null : profile.toString(), include);
+            org.groovyscope.engine.model.CheckResult result = noneInside(params, uris)
+                    ? new org.groovyscope.engine.model.CheckResult(Map.of())
+                    : current.quality().check(uris, profile == null ? null : profile.toString(), include);
             Map<String, List<org.eclipse.lsp4j.Diagnostic>> converted = new LinkedHashMap<>();
             for (Map.Entry<String, List<org.groovyscope.engine.model.Diagnostic>> entry : result.diagnostics().entrySet()) {
                 List<org.eclipse.lsp4j.Diagnostic> list = new java.util.ArrayList<>();
@@ -223,8 +225,10 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> fix(Map<String, Object> params) {
         return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
             LanguageServices current = requireServices(params);
-            org.groovyscope.engine.services.QualityServices.FixResult result = current.quality().fix(
-                    targets(current, params), new java.util.LinkedHashSet<>(stringList(params.get("codes"))));
+            List<String> uris = targets(current, params);
+            org.groovyscope.engine.services.QualityServices.FixResult result = noneInside(params, uris)
+                    ? new org.groovyscope.engine.services.QualityServices.FixResult(Map.of(), Map.of(), Map.of())
+                    : current.quality().fix(uris, new java.util.LinkedHashSet<>(stringList(params.get("codes"))));
             Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
             for (Map.Entry<String, List<org.groovyscope.engine.model.TextEdit>> entry : result.edits().entrySet()) {
                 List<org.eclipse.lsp4j.TextEdit> list = new java.util.ArrayList<>();
@@ -259,6 +263,11 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             if (params.get("uri") == null) {
                 throw invalid("profile needs a uri");
             }
+            if (outside(current, params.get("uri"))) {
+                Map<String, Object> status = new LinkedHashMap<>();
+                status.put("governed", false);
+                return status;
+            }
             return current.quality().profileStatus(params.get("uri").toString());
         });
     }
@@ -276,8 +285,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
             LanguageServices current = requireServices(params);
             List<String> uris = targets(current, params);
-            if (uris.isEmpty()) {
+            if (uris.isEmpty() && !noneInside(params, uris)) {
                 uris = new java.util.ArrayList<>(current.workspace().sources().keySet());
+                uris.removeIf(uri -> !current.workspace().contains(uri));
             }
             Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
             for (String uri : uris) {
@@ -326,8 +336,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             if (params.get("symbol") != null && !params.get("symbol").toString().isBlank()) {
                 reports = current.impactOf(params.get("symbol").toString(), change);
             } else if (params.get("uri") != null) {
-                reports = current.impact(params.get("uri").toString(), positionOf(params), change)
-                        .map(List::of).orElse(List.of());
+                reports = outside(current, params.get("uri")) ? List.of()
+                        : current.impact(params.get("uri").toString(), positionOf(params), change)
+                                .map(List::of).orElse(List.of());
             } else {
                 throw invalid("impact needs a symbol or a uri with line and character");
             }
@@ -356,7 +367,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                     roots.add(current.snapshot().symbols().of(node));
                 }
             } else if (params.get("uri") != null) {
-                current.callHierarchyItem(params.get("uri").toString(), positionOf(params)).ifPresent(roots::add);
+                if (!outside(current, params.get("uri"))) {
+                    current.callHierarchyItem(params.get("uri").toString(), positionOf(params)).ifPresent(roots::add);
+                }
             } else {
                 throw invalid("callGraph needs a symbol or a uri with line and character");
             }
@@ -389,6 +402,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             if (params.get("uri") == null) {
                 throw invalid("definition needs a uri with line and character");
             }
+            if (outside(current, params.get("uri"))) {
+                return null;
+            }
             return current.definition(params.get("uri").toString(), positionOf(params))
                     .map(definition -> {
                         Map<String, Object> response = new LinkedHashMap<>();
@@ -412,8 +428,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             boolean includeDeclaration = Boolean.TRUE.equals(params.get("includeDeclaration"));
             List<Map<String, Object>> references = new java.util.ArrayList<>();
             Map<String, Integer> counts = new LinkedHashMap<>();
-            for (org.groovyscope.engine.model.Reference reference : current.references(params.get("uri").toString(),
-                    positionOf(params), includeDeclaration)) {
+            List<org.groovyscope.engine.model.Reference> found = outside(current, params.get("uri")) ? List.of()
+                    : current.references(params.get("uri").toString(), positionOf(params), includeDeclaration);
+            for (org.groovyscope.engine.model.Reference reference : found) {
                 Map<String, Object> json = ReportJson.location(reference.location());
                 json.put("confidence", reference.confidence().name());
                 references.add(json);
@@ -433,7 +450,10 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             LanguageServices current = requireServices(params);
             List<Map<String, Object>> findings = new java.util.ArrayList<>();
             Map<String, Integer> counts = new LinkedHashMap<>();
-            for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : current.dynamicCode(targets(current, params))) {
+            List<String> uris = targets(current, params);
+            List<org.groovyscope.engine.semantics.DynamicCodeFinder.Finding> found = noneInside(params, uris)
+                    ? List.of() : current.dynamicCode(uris);
+            for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : found) {
                 Map<String, Object> json = new LinkedHashMap<>();
                 json.put("kind", finding.kind());
                 json.put("symbol", finding.symbol());
@@ -463,7 +483,15 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     private LanguageServices requireServices(Map<String, Object> params) {
         LanguageServices current = services.get();
         if (current == null && params != null && params.get("root") instanceof String root && !root.isBlank()) {
-            Path path = Paths.get(root).toAbsolutePath().normalize();
+            Path path;
+            try {
+                path = Paths.get(root).toAbsolutePath().normalize();
+            } catch (java.nio.file.InvalidPathException e) {
+                throw invalid("root is not a valid path: " + root);
+            }
+            if (!java.nio.file.Files.isDirectory(path)) {
+                throw invalid("root is not an existing directory: " + root);
+            }
             workspaceRoot.set(path);
             services.compareAndSet(null, servicesProvider.apply(path));
             current = services.get();
@@ -477,9 +505,30 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return current;
     }
 
-    /** The {@code uris} parameter with every directory replaced by the workspace sources under it. */
+    /**
+     * The {@code uris} parameter with every directory replaced by the workspace sources under it. URIs whose real
+     * path lies outside the workspace root are dropped: requests never read files the workspace does not hold.
+     */
     static List<String> targets(LanguageServices current, Map<String, Object> params) {
-        return expandDirectories(stringList(params.get("uris")), current.workspace().sources().keySet());
+        List<String> inside = new java.util.ArrayList<>();
+        for (String uri : stringList(params.get("uris"))) {
+            if (current.workspace().contains(uri)) {
+                inside.add(uri);
+            } else {
+                System.err.println("groovyscope-engine: ignoring " + uri + ": outside the workspace root");
+            }
+        }
+        return expandDirectories(inside, current.workspace().sources().keySet());
+    }
+
+    /** True when the request named documents but none of them is inside the workspace (so nothing is checked). */
+    static boolean noneInside(Map<String, Object> params, List<String> targets) {
+        return targets.isEmpty() && !stringList(params.get("uris")).isEmpty();
+    }
+
+    /** True when a {@code uri} parameter does not name a file inside the workspace root. */
+    private static boolean outside(LanguageServices current, Object uri) {
+        return uri == null || !current.workspace().contains(uri.toString());
     }
 
     /**
@@ -514,6 +563,16 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return list;
     }
 
+    /**
+     * Releases what this connection holds once its stream has ended (normally or not): the documents it opened
+     * are closed, so their unsaved text stops overriding the disk for other clients, and its diagnostics thread
+     * stops. Safe to call more than once.
+     */
+    public void connectionClosed() {
+        textDocumentService.closeAll();
+        diagnostics.shutdown();
+    }
+
     /** Asks a daemon to exit after this connection closes; ignored when not running as a daemon. */
     @JsonNotification("groovyscope/shutdownDaemon")
     public void shutdownDaemon() {
@@ -535,6 +594,11 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** True once the client has asked the server to shut down. */
     public boolean shutdownRequested() {
         return shutdownRequested;
+    }
+
+    /** True once this connection's diagnostics thread has stopped (after shutdown or the end of the connection). */
+    public boolean diagnosticsStopped() {
+        return diagnostics.isShutdown();
     }
 
     /** The connected client, or {@code null} when not connected. */

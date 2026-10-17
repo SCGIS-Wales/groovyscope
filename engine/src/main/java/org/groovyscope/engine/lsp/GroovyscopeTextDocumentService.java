@@ -88,10 +88,34 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     private final Supplier<LanguageServices> services;
     private final DiagnosticsPublisher diagnostics;
+    /** The documents this connection has open, so they can be released when it ends. */
+    private final java.util.Set<String> opened = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     GroovyscopeTextDocumentService(Supplier<LanguageServices> services, DiagnosticsPublisher diagnostics) {
         this.services = services;
         this.diagnostics = diagnostics;
+    }
+
+    /** The documents this connection currently has open. */
+    java.util.Set<String> openedDocuments() {
+        return java.util.Set.copyOf(opened);
+    }
+
+    /**
+     * Closes every document this connection opened: an editor that crashed or disconnected without
+     * {@code didClose} must not leave its unsaved text overriding the disk for other clients.
+     */
+    void closeAll() {
+        LanguageServices current = services.get();
+        java.util.List<String> uris = new java.util.ArrayList<>(opened);
+        opened.clear();
+        if (current == null || uris.isEmpty()) {
+            return;
+        }
+        for (String uri : uris) {
+            current.workspace().close(uri);
+        }
+        current.markDirty();
     }
 
     private LanguageServices ready() {
@@ -107,7 +131,13 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public void didOpen(DidOpenTextDocumentParams params) {
         LanguageServices current = services.get();
         if (current != null) {
-            current.workspace().open(params.getTextDocument().getUri(), params.getTextDocument().getText());
+            String uri = params.getTextDocument().getUri();
+            if (opened.add(uri)) {
+                current.workspace().open(uri, params.getTextDocument().getText());
+            } else {
+                // Opened again by the same connection: one reference, new text.
+                current.workspace().change(uri, params.getTextDocument().getText());
+            }
             current.markDirty();
             diagnostics.schedule();
         }
@@ -129,7 +159,12 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
             }
         }
         if (text != null) {
-            current.workspace().change(uri, text);
+            if (opened.add(uri)) {
+                // A change without didOpen from this connection still makes the overlay this connection's to release.
+                current.workspace().open(uri, text);
+            } else {
+                current.workspace().change(uri, text);
+            }
             current.markDirty();
             diagnostics.schedule();
         }
@@ -146,7 +181,10 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public void didClose(DidCloseTextDocumentParams params) {
         LanguageServices current = services.get();
         if (current != null) {
-            current.workspace().close(params.getTextDocument().getUri());
+            String uri = params.getTextDocument().getUri();
+            if (opened.remove(uri)) {
+                current.workspace().close(uri);
+            }
             current.markDirty();
             diagnostics.schedule();
         }

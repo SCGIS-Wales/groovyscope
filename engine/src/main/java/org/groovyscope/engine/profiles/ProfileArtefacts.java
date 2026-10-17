@@ -43,7 +43,7 @@ public final class ProfileArtefacts {
         if (profile.descriptor() == null) {
             return out;
         }
-        List<Descriptors.Document> documents = Descriptors.all(profile.descriptor(), root);
+        List<Descriptors.Document> documents = Descriptors.all(profile.descriptor(), root, config.exclude());
         for (Descriptors.Document document : documents) {
             for (Profile.ForbiddenValue forbidden : profile.descriptor().forbiddenValues()) {
                 JsonElement value = Descriptors.at(document.json(), forbidden.path());
@@ -58,7 +58,7 @@ public final class ProfileArtefacts {
         for (Descriptors.Document document : documents) {
             supplied.addAll(document.parameters().keySet());
         }
-        for (Descriptors.Variable variable : Descriptors.variables(profile.infrastructure(), root)) {
+        for (Descriptors.Variable variable : Descriptors.variables(profile.infrastructure(), root, config.exclude())) {
             boolean fromDescriptor = supplied.stream().anyMatch(name -> Descriptors.sameName(variable.name(), name));
             if (!fromDescriptor) {
                 continue;

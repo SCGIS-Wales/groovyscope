@@ -108,6 +108,7 @@ public final class Main {
     static Options parseOptions(List<String> options, Map<String, String> environment, Path cwd) throws IOException {
         List<String> remaining = new ArrayList<>(options);
         String json = environment == null ? null : environment.get(CONFIG_ENV);
+        String configHash = EngineConfig.hashOf(json);
         Path socket = null;
         Path cacheDir = null;
         long idleSeconds = DEFAULT_IDLE_SECONDS;
@@ -127,7 +128,7 @@ public final class Main {
                 default -> throw new IllegalArgumentException("unknown option: " + option);
             }
         }
-        return new Options(EngineConfig.fromJson(json), socket, idleSeconds, cacheDir);
+        return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir);
     }
 
     private static String value(List<String> remaining, String option) {
