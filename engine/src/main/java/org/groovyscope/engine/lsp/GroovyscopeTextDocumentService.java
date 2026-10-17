@@ -22,10 +22,18 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
+import org.eclipse.lsp4j.CodeAction;
+import org.eclipse.lsp4j.CodeActionKind;
+import org.eclipse.lsp4j.CodeActionParams;
+import org.eclipse.lsp4j.Command;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionList;
 import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.DefinitionParams;
+import org.eclipse.lsp4j.DocumentDiagnosticParams;
+import org.eclipse.lsp4j.DocumentDiagnosticReport;
+import org.eclipse.lsp4j.DocumentFormattingParams;
+import org.eclipse.lsp4j.RelatedFullDocumentDiagnosticReport;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
@@ -58,6 +66,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.groovyscope.engine.model.Completion;
 import org.groovyscope.engine.model.Definition;
+import org.groovyscope.engine.model.Diagnostic;
 import org.groovyscope.engine.model.Position;
 import org.groovyscope.engine.model.Reference;
 import org.groovyscope.engine.model.RenamePreparation;
@@ -242,6 +251,57 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
             }
             return Either3.forSecond(new PrepareRenameResult(Converters.toLsp(preparation.range()),
                     preparation.placeholder()));
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<? extends TextEdit>> formatting(DocumentFormattingParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            List<TextEdit> edits = new ArrayList<>();
+            try {
+                for (org.groovyscope.engine.model.TextEdit edit : ready().quality().format(params.getTextDocument().getUri())) {
+                    edits.add(Converters.toLsp(edit));
+                }
+            } catch (IllegalStateException e) {
+                throw new ResponseErrorException(new ResponseError(ResponseErrorCode.InvalidRequest, e.getMessage(), null));
+            }
+            return edits;
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<Either<Command, CodeAction>>> codeAction(CodeActionParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            String uri = params.getTextDocument().getUri();
+            List<Either<Command, CodeAction>> actions = new ArrayList<>();
+            for (org.groovyscope.engine.model.CodeAction fix : ready().quality().codeActions(uri,
+                    new org.groovyscope.engine.model.Range(Converters.fromLsp(params.getRange().getStart()),
+                            Converters.fromLsp(params.getRange().getEnd())))) {
+                CodeAction action = new CodeAction(fix.title());
+                action.setKind(CodeActionKind.QuickFix);
+                action.setDiagnostics(List.of(Converters.toLsp(fix.diagnostic())));
+                List<TextEdit> edits = new ArrayList<>();
+                for (org.groovyscope.engine.model.TextEdit edit : fix.edits()) {
+                    edits.add(Converters.toLsp(edit));
+                }
+                Map<String, List<TextEdit>> changes = new HashMap<>();
+                changes.put(uri, edits);
+                action.setEdit(new WorkspaceEdit(changes));
+                actions.add(Either.forRight(action));
+            }
+            return actions;
+        });
+    }
+
+    @Override
+    public CompletableFuture<DocumentDiagnosticReport> diagnostic(DocumentDiagnosticParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            String uri = params.getTextDocument().getUri();
+            List<org.eclipse.lsp4j.Diagnostic> items = new ArrayList<>();
+            for (Diagnostic diagnostic : ready().quality().publishedDiagnostics().getOrDefault(uri, List.of())) {
+                items.add(Converters.toLsp(diagnostic));
+            }
+            return new DocumentDiagnosticReport(new RelatedFullDocumentDiagnosticReport(items));
         });
     }
 

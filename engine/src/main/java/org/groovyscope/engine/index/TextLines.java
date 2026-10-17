@@ -46,9 +46,10 @@ public final class TextLines {
         return lineStarts.length;
     }
 
+    /** A column past the end of a line clamps to the line's last character, never onto the line break. */
     public int offsetOf(Position position) {
         int line = Math.max(0, Math.min(position.line(), lineStarts.length - 1));
-        int lineEnd = line + 1 < lineStarts.length ? lineStarts[line + 1] : text.length();
+        int lineEnd = line + 1 < lineStarts.length ? lineStarts[line + 1] - 1 : text.length();
         return Math.min(lineStarts[line] + Math.max(0, position.column()), lineEnd);
     }
 

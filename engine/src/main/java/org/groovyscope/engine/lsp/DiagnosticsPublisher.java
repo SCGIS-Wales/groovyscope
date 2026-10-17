@@ -73,7 +73,7 @@ final class DiagnosticsPublisher {
             return;
         }
         try {
-            Map<String, List<org.groovyscope.engine.model.Diagnostic>> all = current.diagnostics();
+            Map<String, List<org.groovyscope.engine.model.Diagnostic>> all = current.quality().publishedDiagnostics();
             Set<String> gone;
             synchronized (this) {
                 gone = new HashSet<>(published);

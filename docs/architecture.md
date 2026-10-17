@@ -25,7 +25,8 @@ Packages under `org.groovyscope.engine`:
 | `index`, `semantics` | 1 | Positioned node index per document, declaration lookup, and a resolver that assigns a confidence to every answer. |
 | `services` | 1 | `LanguageServices`: the protocol-free engine API over an immutable `Snapshot` (compile + index + resolver). |
 | `daemon` | 2 | Unix domain socket server, one front end per connection, shared `WorkspaceRegistry`, idle watchdog, `groovyscope/status` and `groovyscope/shutdownDaemon`. |
-| `lint`, `typecheck`, `format` | 3 | CodeNarc in process, Groovy 6 checkers as diagnostics, GrEclipse formatting returning edits. |
+| `lint`, `typecheck`, `format` | 3 | CodeNarc 4 in process (rule sets cached per path, findings cached per document hash); Groovy's static type checker over the workspace with the Groovy 6 checkers added to every `@CompileStatic`/`@TypeChecked` annotation; the bundled `basic` formatter returning one whole-document edit. |
+| `services.QualityServices` | 3 | `check`, `format`, quick fixes and the merged compile + lint diagnostics the LSP publishes. |
 | `callgraph` | 4 | Call graph and impact analysis with per-edge confidence. |
 
 Keeping the engine API free of LSP4J types outside `lsp` lets the front end be swapped for, or contribute to,
@@ -81,6 +82,27 @@ pins the target. `INFERRED`: a single candidate matched on an inferred receiver 
 with a constructor, a chained call, a type matched by simple name when the compiler could not resolve it).
 `DYNAMIC_UNKNOWN`: matched by name only. Rename refuses when any reference is `DYNAMIC_UNKNOWN`; impact
 analysis (Stage 4) will report those sites for manual review.
+
+## Lint, type-check and format (Stage 3)
+
+- **Lint.** CodeNarc 4 runs in process on one document at a time (`StringSourceAnalyzer`), so unsaved
+  editor text is linted too. Rule sets come from `lint.ruleset` / `lint.jenkinsRuleset` or the bundled
+  profiles; Jenkinsfiles and `vars/` scripts get the Jenkins profile automatically. Findings are cached by
+  document content hash and profile, published as diagnostics (`lint.publish`), served through pull
+  diagnostics, and exposed as quick fixes where the fix is purely textual (unnecessary semicolon, trailing
+  whitespace, extra blank line).
+- **Type-check.** `check --include typecheck` compiles the workspace to `INSTRUCTION_SELECTION` (still no
+  bytecode) in a separate unit with a customizer that appends the configured Groovy 6 checkers
+  (`NullChecker`, `SqlInjectionChecker`, `PurityChecker` + `ModifiesChecker`) to the `extensions` of every
+  existing `@CompileStatic` or `@TypeChecked` annotation. Dynamic code is never forced into static typing.
+- **Format.** `format.engine: basic` is bundled: leading tabs to spaces, trailing whitespace removed, blank
+  runs capped, exactly one final newline, and semicolons removed only on lines CodeNarc flagged. It never
+  re-flows code. `greclipse` is accepted by the schema but refused by the engine: the Groovy Eclipse
+  formatter needs the Eclipse bundles that Spotless fetches at runtime, which is at odds with "no runtime
+  downloads"; vendoring them is a Stage 6 packaging question.
+- **CLI.** `groovyscope check` and `groovyscope format` talk to the daemon through the custom
+  `groovyscope/check` and `groovyscope/format` requests (passing the workspace root, since those connections
+  skip `initialize`) and return compact JSON on request.
 
 ## Known limits of Stage 1
 
