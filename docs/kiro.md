@@ -61,8 +61,13 @@ npx @modelcontextprotocol/inspector groovyscope mcp
 
 - `/code init` can overwrite custom entries in `lsp.json` (kirodotdev/Kiro#10684). Commit the file and run
   `groovyscope kiro repair` if the groovy entry disappears.
-- Kiro CLI releases weekly. The permission `effect` values and the `@server` tool selector in
-  `agents/groovy.json` should be checked against your installed version (`kiro-cli --version`).
+- Kiro CLI releases weekly. `agents/groovy.json` uses the agent format Kiro CLI 2.x loads (`tools`,
+  `allowedTools`, `toolsSettings`): read, search, `code` and the groovyscope MCP tools run without asking,
+  `write` and `shell` ask, except `./gradlew`, `groovyscope`, `git status` and `git diff`. Releases up to
+  0.6.x also wrote a `permissions` block, which makes Kiro CLI 2.32 treat the agent as V3-only and fall back
+  to `kiro_default` ("agent groovy not found"); `groovyscope kiro repair` removes it. `kiro-cli agent list`
+  must show `groovy` without "(v3 format)", and `kiro-cli agent upgrade .kiro/agents` converts the file to
+  Kiro's universal format if you want both engines to load it.
 - The Kiro IDE does not read `lsp.json`; it relies on editor extensions. Steering and `mcp.json` are shared.
 - Kiro counts an MCP server that fails to start as "1 MCP failure" at the prompt; `groovyscope doctor` and
   `groovyscope daemon status` show why (usually no JDK or no engine JAR).

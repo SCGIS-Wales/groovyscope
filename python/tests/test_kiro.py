@@ -7,6 +7,7 @@ import pytest
 
 from groovyscope.kiro import (
     KIRO_FILES,
+    RETIRED_KEYS,
     apply_changes,
     load_template,
     merge_content,
@@ -104,3 +105,23 @@ def test_present_files_partial(tmp_path: Path) -> None:
     presence = present_files(tmp_path)
     assert presence[".kiro/settings/lsp.json"] is True
     assert sum(presence.values()) == 1
+
+
+def test_agent_permissions_from_older_releases_are_retired(tmp_path: Path) -> None:
+    """Kiro CLI 2.x ignores an agent with a `permissions` block, so the one groovyscope used to write goes."""
+    agent = tmp_path / ".kiro/agents/groovy.json"
+    agent.parent.mkdir(parents=True)
+    legacy = RETIRED_KEYS[".kiro/agents/groovy.json"]["permissions"]
+    agent.write_text(
+        json.dumps({"name": "groovy", "tools": ["read"], "permissions": legacy, "mine": 1}), encoding="utf-8"
+    )
+    planned = {c["path"]: c for c in plan_changes(tmp_path)}[".kiro/agents/groovy.json"]
+    after = json.loads(planned["after"])
+    assert "permissions" not in after
+    assert after["mine"] == 1
+    assert "@groovyscope" in after["allowedTools"] and "shell" in after["toolsSettings"]
+
+    custom = {"rules": [{"capability": "shell", "match": ["make *"], "effect": "allow"}]}
+    agent.write_text(json.dumps({"name": "groovy", "permissions": custom}), encoding="utf-8")
+    kept = json.loads({c["path"]: c for c in plan_changes(tmp_path)}[".kiro/agents/groovy.json"]["after"])
+    assert kept["permissions"] == custom
