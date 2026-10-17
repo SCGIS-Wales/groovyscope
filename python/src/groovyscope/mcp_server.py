@@ -25,7 +25,9 @@ SERVER_NAME = "groovyscope"
 LOG = logging.getLogger("groovyscope.mcp")
 INSTRUCTIONS = (
     "Groovy code intelligence for this workspace. Use these tools instead of grep, sed, head or tail to "
-    "locate Groovy symbols. Every answer carries a confidence; DYNAMIC_UNKNOWN means matched by name only. "
+    "locate Groovy symbols, and document_symbols or hover instead of reading whole files. Every answer carries a "
+    "confidence; DYNAMIC_UNKNOWN means matched by name only. Lists are paged: pass limit and the next_cursor you "
+    "were given rather than asking for everything. Rename through rename (a dry run first), never by text replace. "
     "Paths are workspace-relative; lines and columns are 1-based. Before finishing a change, call review on the "
     "changed files and fix what it reports (fix applies the safe mechanical fixes); explain says why a code matters. "
     "When impact_of is asked about a change, report its transitive callers and tests too, not only direct callers. "

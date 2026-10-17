@@ -89,6 +89,29 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   --global` merges into `~/.kiro`. The daemon re-reads files changed on disk before every CLI or MCP request.
   Done when: CI green on the PR, local Kiro CLI checks recorded, release published.
 
+- [ ] **Stage 9: hardening, Corretto, Kiro formats, diagnostics, MCP parity** — branch `feat/hardening`.
+  From a reliability, resilience, security and code audit of 0.7.1 (engine and Python), plus the owner's
+  requests:
+  - Security: user-level workspace trust (`groovyscope trust`); a repository's `.groovyscope.yaml` can no
+    longer enable AST transforms, pick the `java` binary, load rule sets or emulation jars by itself; private
+    0700 socket folders, 0600 sockets, no unlinking a live daemon's socket; reads and writes confined to the
+    workspace; https-only redirects; validated JDK release names; pinned SBOM tool built apart from the
+    published files.
+  - Resilience: start lock and fail-fast daemon start; restart after an engine upgrade; stale-configuration
+    warning and `daemon restart`; MCP reconnect and a lock for parallel tool calls; atomic writes keeping
+    line endings and UTF-16 offsets; tolerant file walks that skip excluded folders and oversize files;
+    compiler crashes contained; accept loop that survives errors; per-connection document and thread cleanup;
+    bounded and per-profile caches.
+  - JDK: version and vendor from the `release` file, `.jdk` bundle paths, reported (not silent) fallbacks,
+    configured minimum passed to `java_home`, shims and standard folders; Amazon Corretto via
+    `jdk install --vendor corretto`; verified on Corretto 21 and 25.
+  - Kiro: agent format detection (V2, universal, out of sync, V3, unknown) and format-preserving merges.
+  - Diagnostics: `--debug`/`--verbose`/`--log-file`, engine log with request tracing, `groovyscope logs`,
+    `doctor --bundle`.
+  - MCP: `hover`, `type_definition`, `document_symbols`, `rename`; compact single-copy results, titles and
+    annotations.
+  Done when: CI green on the PR, local Kiro CLI checks recorded, release published.
+
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
 Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.

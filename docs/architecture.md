@@ -236,6 +236,14 @@ engine. Each tool maps to one engine request: `groovyscope/symbols`, `/definitio
 `/dynamicCode` and `/status`. Every request carries `root`, so
 the daemon serves several Kiro sessions on the same workspace from one compiled snapshot.
 
+Results are returned as one compact JSON text block per call. The SDK would otherwise pretty-print each result
+and also attach it as `structuredContent`, sending every answer twice and about a third larger;
+`output.structured: true` restores the structured copy for clients that read it. Tools carry titles and
+`ToolAnnotations` (read-only, idempotent, closed-world). The SDK runs tools on worker threads, so the one engine
+session is guarded by a lock and reopened (with a daemon restart if needed) when the engine went away.
+`hover`, `type_definition`, `document_symbols` and `rename` map to `groovyscope/hover`, `/typeDefinition`,
+`/documentSymbols` and `/rename`, which reuse the LSP implementations.
+
 `find_dynamic_code` is the one tool with no LSP counterpart: `DynamicCodeFinder` walks the index for the
 constructs that defeat static analysis (classes with neither `@CompileStatic` nor `@CompileDynamic`, `def`
 on public methods, `methodMissing`/`propertyMissing`/`invokeMethod` hooks, `metaClass` writes, `@Grab` on

@@ -10,6 +10,10 @@ inclusion: always
   head or tail to locate Groovy symbols.
 - Before changing a public method, class or closure parameter, call `groovyscope.impact_of` and report the
   affected files, transitive callers and tests, not only the direct callers.
+- To understand a file, call `groovyscope.document_symbols` (its outline) and `groovyscope.hover` on what
+  matters, rather than reading the whole file. Pass `limit` and `cursor` to page long answers.
+- Rename with `groovyscope.rename` (dry run, then `apply: true`); it refuses when a use is matched by name
+  only. Never rename by text search and replace.
 
 ## Every change
 
