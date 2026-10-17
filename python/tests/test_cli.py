@@ -4,6 +4,7 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -163,11 +164,28 @@ def test_lsp_fails_cleanly_without_jdk_or_jar(
     assert bad_config.exit_code == 1 and "daemon.heap" in bad_config.output
 
 
-@pytest.mark.parametrize("args", [["mcp"]])
-def test_placeholders_exit_3(runner: CliRunner, args: list[str]) -> None:
-    result = runner.invoke(cli.main, args)
-    assert result.exit_code == cli.EXIT_NOT_IMPLEMENTED
-    assert "not implemented yet" in result.output
+def test_mcp_command_serves_over_the_daemon(
+    runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
+    monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv(cli.CONFIG_ENV, "")
+    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
+    served: list[tuple[Path, Path, dict[str, Any], dict[str, str]]] = []
+    monkeypatch.setattr(
+        cli,
+        "_MCP_SERVE",
+        lambda root, socket_file, output, environ: served.append((root, socket_file, output, environ)) or 0,
+    )
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "mcp"])
+    assert result.exit_code == 0, result.output
+    assert served[0][0] == tmp_path.resolve()
+    assert served[0][1].suffix == ".sock"
+    assert served[0][2]["maxResults"] == 50
 
 
 def test_configure_logging_levels() -> None:

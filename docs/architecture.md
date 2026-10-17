@@ -4,7 +4,7 @@
 
 ```
 Kiro CLI ──(stdio, LSP)──▶ groovyscope lsp --stdio ──▶ engine JAR (LSP4J front end)
-Kiro CLI ──(stdio, MCP)──▶ groovyscope mcp (Stage 5) ──(JSON-RPC over Unix socket, Stage 2)──▶ engine daemon
+Kiro CLI ──(stdio, MCP)──▶ groovyscope mcp ──(JSON-RPC over Unix socket)──▶ engine daemon
 ```
 
 One JVM engine per workspace. Two thin clients. Python owns the edges (installer, CLI, configuration, MCP
@@ -144,7 +144,8 @@ deliberately loose so shared runners do not fail the build.
 | `jar.py` | bundled JAR lookup and SHA-256 verification, `GROOVYSCOPE_JAR` override |
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
-| `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing) |
+| `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing); one-shot requests and persistent sessions |
+| `mcp_server.py` | the MCP server: nine tool functions over one engine session, compact output through `render.py` |
 | `relay.py` | asyncio byte relay between this process's stdio and the socket |
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
 | `doctor.py` | pure report building for `doctor` |
@@ -157,6 +158,22 @@ Style: functional, no user-defined classes (TypedDicts only), `mypy --strict`.
 The release builds the shaded JAR, `scripts/bundle_jar.py` copies it into `python/src/groovyscope/_jar/`
 with a manifest (version, file name, SHA-256), and `uv build` produces a `py3-none-any` wheel. One artefact
 serves Linux and macOS; the JDK is the only external prerequisite.
+
+## MCP server
+
+`groovyscope mcp` runs the official `mcp` SDK's `MCPServer` on stdio. At start it opens one persistent
+JSON-RPC session to the workspace daemon (starting it when needed), sends `initialize`/`initialized`, and
+binds every tool to that session; the session closes when the MCP client disconnects. Tools are plain
+functions built by `build_tools(root, call, output, environ)`, which keeps them testable against a fake
+engine. Each tool maps to one engine request: `groovyscope/symbols`, `/definition`, `/references`,
+`/callGraph`, `/impact`, `/check`, `/format`, `/dynamicCode` and `/status`. Every request carries `root`, so
+the daemon serves several Kiro sessions on the same workspace from one compiled snapshot.
+
+`find_dynamic_code` is the one tool with no LSP counterpart: `DynamicCodeFinder` walks the index for the
+constructs that defeat static analysis (classes with neither `@CompileStatic` nor `@CompileDynamic`, `def`
+on public methods, `methodMissing`/`propertyMissing`/`invokeMethod` hooks, `metaClass` writes, `@Grab` on
+classes, methods or imports, `Eval`/`GroovyShell`/template engines, and `execute()`), so an agent can review
+them before trusting navigation or impact answers around them.
 
 ## Token economy
 

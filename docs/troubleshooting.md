@@ -12,7 +12,8 @@ hard failures.
 | `FAIL config ...` | The message names the key (`daemon.heap: 'lots' does not match ...`); fix `.groovyscope.yaml` or the `GROOVYSCOPE_*` variable |
 | Kiro `/code status` does not list groovyscope | Run `groovyscope kiro init` in the workspace root, restart Kiro CLI; check `/code logs -l ERROR` |
 | groovyscope entry vanished from `lsp.json` | `/code init` overwrote it (Kiro#10684); run `groovyscope kiro repair` |
-| `groovyscope mcp` exits 3 | Not implemented yet (Stage 5); `kiro init` warns about this |
+| Kiro shows `1 MCP failure` | `groovyscope mcp` could not start or reach the daemon; run `groovyscope doctor`, then `groovyscope daemon status` and read its log |
+| An MCP tool answers `... failed: ...` | The engine refused the request (unknown symbol, bad position, unknown change kind); the message names the cause |
 | `daemon unavailable (...); running the engine directly` on stderr | The daemon could not start; `groovyscope daemon status` shows the log path, read it, then `groovyscope daemon start` |
 | Stale answers after switching branches | The daemon recompiles on file events from Kiro; if in doubt, `groovyscope daemon stop` and let the next session restart it |
 | Socket path too long (`AF_UNIX path too long`) | Set `GROOVYSCOPE_SOCKET_DIR` to a short directory such as `/tmp/gs` |

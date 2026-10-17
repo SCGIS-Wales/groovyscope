@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import socket
 from pathlib import Path
@@ -77,3 +78,64 @@ def notify(socket_path: Path, method: str, params: Any = None, timeout: float = 
     message = {"jsonrpc": "2.0", "method": method, "params": {} if params is None else params}
     with _connect(socket_path, timeout) as sock:
         sock.sendall(encode(message))
+
+
+# ---- persistent sessions (one connection, many requests; used by the MCP server) ----
+
+Session = dict[str, Any]
+
+
+def open_session(socket_path: Path, timeout: float = DEFAULT_TIMEOUT) -> Session:
+    """Connect once; the returned mapping carries the socket, the read buffer and the next request id."""
+    return {"sock": _connect(socket_path, timeout), "buffer": b"", "next_id": 1, "notifications": []}
+
+
+def _read_frame(session: Session) -> dict[str, Any]:
+    sock: socket.socket = session["sock"]
+    while True:
+        parsed, session["buffer"] = split_frame(session["buffer"])
+        if parsed is not None:
+            return parsed
+        chunk = sock.recv(65536)
+        if not chunk:
+            msg = "engine closed the session"
+            raise RuntimeError(msg)
+        session["buffer"] += chunk
+
+
+def call(session: Session, method: str, params: Any = None, timeout: float | None = None) -> Any:
+    """Send a request on the session and wait for its reply; notifications in between are kept aside."""
+    sock: socket.socket = session["sock"]
+    if timeout is not None:
+        sock.settimeout(timeout)
+    request_id = session["next_id"]
+    session["next_id"] = request_id + 1
+    sock.sendall(
+        encode({"jsonrpc": "2.0", "id": request_id, "method": method, "params": {} if params is None else params})
+    )
+    while True:
+        message = _read_frame(session)
+        if message.get("id") == request_id and ("result" in message or "error" in message):
+            if "error" in message:
+                error = message["error"]
+                msg = f"{method} failed: {error.get('message', error)}"
+                raise RuntimeError(msg)
+            return message.get("result")
+        if "method" in message and "id" in message:
+            # A request from the engine (none are expected): answer with an error so it does not hang.
+            sock.sendall(
+                encode({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": "unsupported"}})
+            )
+        elif "method" in message:
+            session["notifications"].append(message)
+
+
+def notify_session(session: Session, method: str, params: Any = None) -> None:
+    sock: socket.socket = session["sock"]
+    sock.sendall(encode({"jsonrpc": "2.0", "method": method, "params": {} if params is None else params}))
+
+
+def close_session(session: Session) -> None:
+    sock: socket.socket = session["sock"]
+    with contextlib.suppress(OSError):
+        sock.close()
