@@ -79,7 +79,9 @@ def test_provision_unpacks_verifies_and_is_discovered(tmp_path: Path, mac_layout
     assert install_dir in home.parents and home.relative_to(install_dir).parts[0] == "jdk-21.0.9+10"
     assert seen[0].startswith(provision.ADOPTIUM_API) and seen[1] == "https://example.test/jdk.tar.gz"
     assert provision.provisioned_homes(install_dir) == [home]
-    found = discover_jdk(None, {"PATH": "/nonexistent"}, platform="linux", which=lambda _n: None, provisioned=[home])
+    found = discover_jdk(
+        None, {"PATH": "/nonexistent"}, platform="linux", which=lambda _n: None, provisioned=[home], scan=False
+    )
     assert found is not None and found["source"] == "provisioned" and found["version"] == 21
     # Installing again replaces the previous unpack instead of failing.
     again = provision.provision_jdk(install_dir, feature=21, downloader=download, system="linux", machine="x86_64")

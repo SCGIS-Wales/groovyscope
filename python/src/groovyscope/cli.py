@@ -386,7 +386,11 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     for note in notes:
         click.echo(f"groovyscope: {note}", err=True)
     apply_config_logging(obj, effective)
-    LOG.debug("configuration: %s", json.dumps(effective, sort_keys=True, default=str))
+    LOG.debug(
+        "configuration: %s; workspace %s; `groovyscope config validate --show` prints it",
+        obj["config_path"] or "defaults + .groovyscope.yaml when present",
+        "trusted" if effective["workspace"].get("trust") else "untrusted",
+    )
     jdk = resolve_jdk(effective, dict(os.environ))
     if jdk is None:
         click.echo("groovyscope: no suitable JDK found; run `groovyscope doctor`", err=True)
