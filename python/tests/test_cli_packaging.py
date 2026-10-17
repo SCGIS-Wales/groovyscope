@@ -66,25 +66,34 @@ def test_jdk_install(runner: CliRunner, clean_env: dict[str, str], monkeypatch: 
 def test_resolve_jdk_provisions_only_when_asked(
     tmp_path: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Discovery is stubbed to know only provisioned JDKs, so the JDKs on the test machine stay out of it."""
+
+    def discover(_configured: str | None, _environ: Any, *, minimum: int, provisioned: list[Path]) -> Any:
+        assert minimum == 17
+        return {"home": str(provisioned[0]), "version": 21, "source": "provisioned"} if provisioned else None
+
+    monkeypatch.setattr(cli, "discover_jdk", discover)
     effective: dict[str, Any] = {"jdk": {"home": None, "minimum": 17, "autoProvision": False}}
     assert cli.resolve_jdk(effective, dict(clean_env)) is None
 
     provisioned = make_fake_jdk(tmp_path / "unpacked", "21.0.9")
+    downloads: list[int] = []
 
     def fake_provision(install_dir: Path, *, feature: int, **_kwargs: Any) -> provision.ProvisionedJdk:
+        downloads.append(feature)
         return {"home": str(provisioned), "version": feature, "release": "jdk-21.0.9+10"}
 
     monkeypatch.setattr(cli.provision, "provision_jdk", fake_provision)
     effective["jdk"]["autoProvision"] = True
     found = cli.resolve_jdk(effective, dict(clean_env))
     assert found == {"home": str(provisioned), "version": 21, "source": "provisioned"}
+    assert downloads == [21]
 
-    # A JDK already unpacked under the cache wins over downloading again.
+    # A JDK already unpacked under the cache is handed to discovery, so nothing is downloaded again.
     cache_jdk = Path(clean_env["GROOVYSCOPE_CACHE_DIR"]) / "jdk"
     make_fake_jdk(cache_jdk, "21.0.9").rename(cache_jdk / "jdk-21.0.9+10")
-    monkeypatch.setattr(cli.provision, "provision_jdk", lambda *_a, **_k: pytest.fail("must not download"))
     cached = cli.resolve_jdk(effective, dict(clean_env))
-    assert cached is not None and cached["source"] == "provisioned" and cached["home"].endswith("jdk-21.0.9+10")
+    assert cached is not None and cached["home"].endswith("jdk-21.0.9+10") and downloads == [21]
 
     def failing(install_dir: Path, **_kwargs: Any) -> provision.ProvisionedJdk:
         raise ValueError("no Temurin build for win32/x86_64")
