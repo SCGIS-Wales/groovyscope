@@ -35,7 +35,11 @@ UNION_PATHS: tuple[tuple[str, ...], ...] = (
     ("allowedTools",),
     ("resources",),
     ("toolsSettings", "shell", "allowedCommands"),
+    ("hooks", "agentSpawn"),
+    ("hooks", "userPromptSubmit"),
 )
+# Keys both engines read, merged into a V3-only agent as well (hooks run the groovyscope checkup at start).
+SHARED_KEYS = ("hooks", "welcomeMessage", "resources")
 # The V3 rules groovyscope needs, as `kiro-cli agent upgrade` derives them from the V2 template.
 V3_RULES: tuple[dict[str, Any], ...] = (
     {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},
@@ -153,8 +157,10 @@ def upgrade(text: str, run: KiroRunner | None) -> str | None:
 
 def union(existing: Any, ours: Any) -> Any:
     """Existing entries first, then ours that are missing."""
-    if not isinstance(existing, list) or not isinstance(ours, list):
+    if not isinstance(existing, list):
         return ours
+    if not isinstance(ours, list):
+        return existing
     return [*existing, *(item for item in ours if item not in existing)]
 
 
@@ -188,9 +194,13 @@ def merge_v2(current: Mapping[str, Any], template: Mapping[str, Any]) -> dict[st
     return merged
 
 
-def merge_v3(current: Mapping[str, Any]) -> dict[str, Any]:
-    """A V3-only agent keeps its format; groovyscope's permission rules are added when missing."""
+def merge_v3(current: Mapping[str, Any], template: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """A V3-only agent keeps its format; groovyscope's permission rules are added when missing, and the keys both
+    engines read (hooks, welcome message, resources) are merged from ``template`` with the user's entries kept."""
     merged: dict[str, Any] = json.loads(json.dumps(current))
+    if template is not None:
+        shared = {key: value for key, value in template.items() if key in SHARED_KEYS}
+        merged = merge_v2(merged, shared)
     permissions = merged.get("permissions")
     if not isinstance(permissions, dict):
         permissions = {}
@@ -237,7 +247,7 @@ def merge_agent(existing: str | None, template: str, *, requested: str, run: Kir
         if current_format is None:
             merged = merge_v3({key: value for key, value in ours.items() if key not in V2_KEYS})
         else:
-            merged = merge_v3({key: value for key, value in current.items() if key not in ("kiroUpgrade",)})
+            merged = merge_v3({key: value for key, value in current.items() if key not in ("kiroUpgrade",)}, ours)
         return {"text": dump(merged), "format": "v3", "note": ""}
     v2 = merge_v2(v2_view(current), ours)
     if goal == "v2":

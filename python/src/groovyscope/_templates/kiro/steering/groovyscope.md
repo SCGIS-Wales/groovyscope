@@ -1,7 +1,21 @@
 ---
 inclusion: always
 ---
+<!-- written by groovyscope {{version}}; refreshed by `groovyscope kiro repair --global` -->
 # Groovy navigation and quality policy
+
+## Session start
+
+- The agent start hook ran `groovyscope checkup --agent` and its output is in your context. Open the session
+  with one line: what it repaired, what still needs a decision, and nothing when all is well. Do not restate
+  the checkup line by line.
+- Items marked `todo` need the user's say-so. Offer each as one sentence with the exact command, for example
+  "`groovyscope trust` lets `groovyscope classpath` run the build so library classes resolve; shall I?". Run it
+  only after a yes (the `groovyscope` shell command runs without a prompt).
+- Then offer the quality menu once, in one line: review this branch as a merge request; review my changes; full
+  quality check; duplicated code; swallowed exceptions; dynamic Groovy; untested code; what breaks if I change
+  a symbol. Say "run all" runs the first six and reports one combined summary.
+- If the checkup output is missing or says it could not run, continue normally and mention it once.
 
 ## Navigation
 
@@ -22,6 +36,31 @@ inclusion: always
   affected files, transitive callers and tests, not only the direct callers.
 - Rename with `groovyscope.rename` (dry run, then `apply: true`); it refuses when a use is matched by name
   only. Never rename by text search and replace.
+
+## Reporting findings
+
+- Every finding you present says three things: what it means in plain words, whether it is a defect, a gap or
+  by design here, and the fix. Group by meaning, not by file. Call `groovyscope.explain <code>` when a match
+  carries a `code` and you are not sure.
+- Catch blocks: `handling` says what the block does with the exception. `swallowed` (empty body) is a defect
+  unless a comment proves it deliberate. `rethrows` is fine when the cause is kept. `logged` is a gap when
+  callers need to react to the failure. `returns-default` is by design at a parsing or lookup boundary and a
+  gap elsewhere. `other` means read the body. The variable name (`e`, `ignored`) is the developer's choice,
+  not a verdict; `implicitType: true` means the header names no type, so Groovy catches `Exception` under a
+  variable that only looks like a type: report that as a defect.
+- Never list more than ten rows without a summary line first (counts per meaning, worst first).
+
+## Merge request review
+
+- "Review this branch", "review my merge request" or "review my changes": call `groovyscope.review_changes`
+  (base branch `main` unless told otherwise; `staged: true` for the index only). It returns the changed
+  files, every finding on them, the impact of changed public declarations, and the risky constructs added
+  in the changed lines, grouped blocking, should fix, by design, with a verdict.
+- Report in that order: the verdict in one sentence; blocking items with file and line; should-fix items;
+  what is by design and why; what the change breaks elsewhere (`impact`) and which tests cover it. Offer
+  `groovyscope.fix` for the mechanical ones. Do not pad the review with style remarks when there are
+  blocking items.
+- When `coverage_gaps` reports uncovered methods among the changed files, name them and offer to write tests.
 
 ## Every change
 

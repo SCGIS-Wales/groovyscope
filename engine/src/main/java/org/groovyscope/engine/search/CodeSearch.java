@@ -108,10 +108,64 @@ public final class CodeSearch {
         }
     }
 
-    /** One match; lines and characters are zero-based. */
+    /**
+     * One match; lines and characters are zero-based. {@code facts} carries what the kind knows beyond its detail
+     * (a catch clause's {@code handling}, {@code variable}, {@code catches}, {@code code} and {@code implicitType}),
+     * empty for kinds without any.
+     */
     public record Match(String uri, int line, int character, int endLine, String kind, String detail, String snippet,
-            String enclosing) {
+            String enclosing, Map<String, Object> facts) {
+
+        public Match {
+            facts = facts == null ? Map.of() : Map.copyOf(facts);
+        }
     }
+
+    /** How a catch block treats the exception: the value of its {@code handling} fact. */
+    public enum Handling {
+        /** The block is empty: the failure disappears. */
+        SWALLOWED("swallowed"),
+        /** A throw inside the block passes the failure on. */
+        RETHROWS("rethrows"),
+        /** The block calls a logger or prints the exception, and keeps going. */
+        LOGGED("logged"),
+        /** The block returns a value in place of the failed computation. */
+        RETURNS_DEFAULT("returns-default"),
+        /** Something else: state is changed, a flag set, a callback run. */
+        OTHER("other");
+
+        private final String label;
+
+        Handling(String label) {
+            this.label = label;
+        }
+
+        /** The value reported in JSON. */
+        public String label() {
+            return label;
+        }
+    }
+
+    /** CodeNarc rule codes for catch clauses of overly broad types, so {@code explain} applies to a match. */
+    static final Map<String, String> CATCH_CODES = Map.of(
+            "Exception", "CatchException",
+            "Throwable", "CatchThrowable",
+            "RuntimeException", "CatchRuntimeException",
+            "Error", "CatchError",
+            "NullPointerException", "CatchNullPointerException",
+            "ArrayIndexOutOfBoundsException", "CatchArrayIndexOutOfBoundsException",
+            "IndexOutOfBoundsException", "CatchIndexOutOfBoundsException",
+            "IllegalMonitorStateException", "CatchIllegalMonitorStateException");
+
+    /** The rule code of an empty catch block, which outranks the type-based codes. */
+    static final String EMPTY_CATCH_CODE = "EmptyCatchBlock";
+
+    private static final Set<String> LOG_METHODS = Set.of("trace", "debug", "info", "warn", "warning", "error",
+            "fatal", "severe", "log");
+    private static final Set<String> PRINT_METHODS = Set.of("println", "print", "printf", "printStackTrace");
+    private static final Set<String> LOG_RECEIVERS = Set.of("log", "logger", "LOG", "LOGGER", "System.err",
+            "System.out");
+    private static final Pattern IMPLICIT_CATCH = Pattern.compile("catch\\s*\\(\\s*(?:final\\s+)?([\\w$]+)\\s*\\)");
 
     private CodeSearch() {
     }
@@ -193,6 +247,79 @@ public final class CodeSearch {
             return true;
         }
         return statement == null || statement instanceof org.codehaus.groovy.ast.stmt.EmptyStatement;
+    }
+
+    /**
+     * How a catch block treats the exception. A throw wins over everything; a logger or print call counts as
+     * logged even when the block also returns; a return without logging hands back a default; an empty block
+     * swallows the failure.
+     */
+    static Handling handlingOf(Statement body) {
+        if (isEmpty(body)) {
+            return Handling.SWALLOWED;
+        }
+        if (containsThrow(body)) {
+            return Handling.RETHROWS;
+        }
+        boolean[] logged = {false};
+        boolean[] returns = {false};
+        body.visit(new CodeVisitorSupport() {
+            @Override
+            public void visitMethodCallExpression(MethodCallExpression call) {
+                if (isLogging(call.getMethodAsString(), call.isImplicitThis() ? "this"
+                        : call.getObjectExpression().getText())) {
+                    logged[0] = true;
+                }
+                super.visitMethodCallExpression(call);
+            }
+
+            @Override
+            public void visitStaticMethodCallExpression(StaticMethodCallExpression call) {
+                if (isLogging(call.getMethod(), "this")) {
+                    logged[0] = true;
+                }
+                super.visitStaticMethodCallExpression(call);
+            }
+
+            @Override
+            public void visitReturnStatement(ReturnStatement statement) {
+                returns[0] = true;
+                super.visitReturnStatement(statement);
+            }
+        });
+        if (logged[0]) {
+            return Handling.LOGGED;
+        }
+        return returns[0] ? Handling.RETURNS_DEFAULT : Handling.OTHER;
+    }
+
+    /**
+     * True for a call that records the exception: a print method on anything, or a logger method on an implicit
+     * receiver or on something named like a logger ({@code log}, {@code this.logger}, {@code System.err}).
+     */
+    static boolean isLogging(String method, String receiver) {
+        if (method == null) {
+            return false;
+        }
+        if (PRINT_METHODS.contains(method)) {
+            return true;
+        }
+        if (!LOG_METHODS.contains(method)) {
+            return false;
+        }
+        if (receiver == null || "this".equals(receiver)) {
+            return true;
+        }
+        String name = receiver.substring(receiver.lastIndexOf('.') + 1);
+        return LOG_RECEIVERS.contains(receiver) || LOG_RECEIVERS.contains(name);
+    }
+
+    /**
+     * True when the catch header names no type, so Groovy catches {@code Exception} under a variable that reads
+     * like a type ({@code catch (MissingResourceException)}): the mistake behind many "narrow" catches.
+     */
+    static boolean implicitType(String header) {
+        return header != null && IMPLICIT_CATCH.matcher(header).find();
     }
 
     /** True when a statement contains a {@code throw} anywhere inside it. */
@@ -326,6 +453,11 @@ public final class CodeSearch {
 
         /** Reports {@code node} (at {@code fallback}'s position when it has none), once. */
         private void report(ASTNode node, ASTNode fallback, String detail) {
+            report(node, fallback, detail, Map.of());
+        }
+
+        /** Reports {@code node} with the facts its kind knows beyond the detail. */
+        private void report(ASTNode node, ASTNode fallback, String detail, Map<String, Object> facts) {
             Range range = AstRanges.rangeOf(node);
             if (range == null && fallback != null) {
                 range = AstRanges.rangeOf(fallback);
@@ -338,7 +470,7 @@ public final class CodeSearch {
                 snippet = snippet.substring(0, SNIPPET_LIMIT);
             }
             out.add(new Match(uri, range.start().line(), range.start().column(), range.end().line(), kind, detail,
-                    snippet, enclosing()));
+                    snippet, enclosing(), facts));
         }
 
         private boolean modifiersMatch(int modifiers) {
@@ -498,8 +630,21 @@ public final class CodeSearch {
                 if (typeMatches(type, query.type())
                         && (query.emptyBody() == null || query.emptyBody() == empty)
                         && (query.rethrows() == null || query.rethrows() == rethrows)) {
-                    report(statement, null, "catch (" + (type == null ? "" : TypeNames.simple(type) + " ")
-                            + (variable == null ? "" : variable.getName()) + ")" + (empty ? " empty" : ""));
+                    String caught = type == null ? "" : TypeNames.simple(type);
+                    Map<String, Object> facts = new LinkedHashMap<>();
+                    facts.put("handling", handlingOf(statement.getCode()).label());
+                    facts.put("catches", caught);
+                    facts.put("variable", variable == null ? "" : variable.getName());
+                    String code = empty ? EMPTY_CATCH_CODE : CATCH_CODES.get(caught);
+                    if (code != null) {
+                        facts.put("code", code);
+                    }
+                    Range range = AstRanges.rangeOf(statement);
+                    if (range != null && implicitType(lines.line(range.start().line()))) {
+                        facts.put("implicitType", Boolean.TRUE);
+                    }
+                    report(statement, null, "catch (" + (caught.isEmpty() ? "" : caught + " ")
+                            + (variable == null ? "" : variable.getName()) + ")" + (empty ? " empty" : ""), facts);
                 }
             } else if (is("empty-block")) {
                 emptyBlock(statement.getCode(), statement, "catch");

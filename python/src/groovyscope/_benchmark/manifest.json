@@ -1,0 +1,13 @@
+{
+  "files": 582,
+  "license": "Apache-2.0",
+  "name": "CodeNarc",
+  "roots": [
+    "src/main/groovy",
+    "src/main/java"
+  ],
+  "sha256": "e9ae79ffd5af18e66c6fbc03cfc51b99151d72734a641f84752d02bc1ba05c08",
+  "source": "https://github.com/CodeNarc/CodeNarc",
+  "version": "4.0.0",
+  "zip": "codenarc-4.0.0-src-main.zip"
+}

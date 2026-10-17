@@ -24,6 +24,16 @@ FIND_CODE_KINDS = (
 )
 
 
+STANDARD_MATCH_KEYS = frozenset({"uri", "line", "character", "endLine", "kind", "detail", "snippet", "enclosing"})
+HANDLING_MEANING = {
+    "swallowed": "empty catch: the failure disappears; a defect unless a comment proves it is deliberate",
+    "rethrows": "the failure is passed on; fine when the cause is kept",
+    "logged": "logged and execution continues; a gap when callers need to react",
+    "returns-default": "a default value replaces the failed result; by design at a parsing boundary, a gap elsewhere",
+    "other": "state is changed or a callback runs; read the body",
+}
+
+
 def compact_match(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "path": relative_path(str(item.get("uri", "")), root),
@@ -34,6 +44,9 @@ def compact_match(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
     }
     if item.get("enclosing"):
         entry["in"] = item["enclosing"]
+    # Facts a kind knows beyond its detail (a catch clause's handling, variable, catches, code, implicitType).
+    facts = {key: value for key, value in item.items() if key not in STANDARD_MATCH_KEYS}
+    entry.update({key: value for key, value in facts.items() if value not in (None, "")})
     return entry
 
 
@@ -97,7 +110,11 @@ def search_tools(
     ) -> dict[str, Any]:
         """Structural search over the Groovy trees (use instead of grep). KIND: catch (TYPE, EMPTY_BODY, RETHROWS),
         throw (TYPE), call (NAME, TYPE of receiver), new (TYPE), return-null, string-literal (PATTERN regex),
-        annotation (NAME), def, empty-block, field (MODIFIERS), method (MODIFIERS, MIN_LINES, MIN_PARAMETERS)."""
+        annotation (NAME), def, empty-block, field (MODIFIERS), method (MODIFIERS, MIN_LINES, MIN_PARAMETERS).
+        A catch match says how the block handles the exception (handling: swallowed, rethrows, logged,
+        returns-default, other; see `meaning`), the variable name (a developer's choice, not a verdict), the type
+        caught, the CodeNarc code to pass to explain, and implicitType when the header names no type so Groovy
+        catches Exception under a variable that looks like a type."""
         if kind not in FIND_CODE_KINDS:
             return {"error": f"unknown kind {kind!r}", "kinds": list(FIND_CODE_KINDS)}
         params: dict[str, Any] = {"root": str(root), "uris": uris(paths), "kind": kind}
@@ -113,8 +130,17 @@ def search_tools(
         }
         params.update({key: value for key, value in optional.items() if value is not None})
         raw = call("groovyscope/findCode", params)
-        result = paged([compact_match(item, root) for item in raw.get("matches", [])], limit, cursor)
+        matches = [compact_match(item, root) for item in raw.get("matches", [])]
+        result = paged(matches, limit, cursor)
         result["count"] = raw.get("count", 0)
+        if kind == "catch":
+            seen = {str(m.get("handling")) for m in matches if m.get("handling")}
+            result["meaning"] = {key: HANDLING_MEANING[key] for key in HANDLING_MEANING if key in seen}
+            counts: dict[str, int] = {}
+            for match in matches:
+                label = str(match.get("handling", "other"))
+                counts[label] = counts.get(label, 0) + 1
+            result["byHandling"] = counts
         return result
 
     def find_duplicates(

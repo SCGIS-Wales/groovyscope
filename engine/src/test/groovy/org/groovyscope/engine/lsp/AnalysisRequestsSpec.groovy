@@ -146,6 +146,13 @@ class AnalysisRequestsSpec extends Specification {
         all.matches[0].uri == uri(HANDLERS)
         all.matches[0].line == lineOf(HANDLERS, 'catch (IOException')
         all.matches[0].kind == 'catch'
+        all.matches[0].handling == 'swallowed'
+        all.matches[0].code == 'EmptyCatchBlock'
+        all.matches[0].catches == 'IOException'
+        all.matches[0].variable == 'e'
+        all.matches[0].implicitType == null
+        all.matches[1].handling == 'rethrows'
+        all.matches[1].code == 'CatchException'
         empty.matches*.enclosing == ['Handlers.load']
         swallowed.matches*.enclosing == ['Handlers.load']
         broad.matches*.enclosing == ['Handlers.store']

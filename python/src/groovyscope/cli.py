@@ -18,6 +18,8 @@ import click
 
 from groovyscope import (
     __version__,
+    benchmark,
+    checkup,
     diagnostics,
     kiro_agent,
     mcp_server,
@@ -128,6 +130,72 @@ def main(
     LOG.debug("groovyscope %s on Python %s, root %s", __version__, sys.version.split()[0], ctx.obj["root"])
 
 
+@main.command("checkup")
+@click.option(
+    "--agent",
+    "for_agent",
+    is_flag=True,
+    help="The compact block the Kiro agent's start hook injects: applies the safe repairs, never fails.",
+)
+@click.option("--fix", is_flag=True, help="Apply the safe repairs (Kiro files, project LSP entry, benchmark corpus).")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable report.")
+@click.pass_obj
+def checkup_command(obj: dict[str, Any], *, for_agent: bool, fix: bool, as_json: bool) -> None:
+    """Everything to do after an install or upgrade, as one report with the exact fix per item."""
+    environ = dict(os.environ)
+    try:
+        report = checkup.build(
+            obj["root"],
+            obj["config_path"],
+            environ,
+            Path.home(),
+            fix=fix or for_agent,
+            run=None if for_agent else _KIRO(),
+            config_hash=config_hash_or_none(obj),
+        )
+    except Exception as exc:
+        if for_agent:
+            click.echo(f"groovyscope checkup could not run: {exc}")
+            return
+        raise
+    if for_agent:
+        click.echo(checkup.render_agent(report))
+        return
+    if as_json:
+        click.echo(compact_json(report))
+        return
+    for line in checkup.render(report):
+        click.echo(line)
+    if any(item["level"] == "fail" for item in report["items"]):
+        sys.exit(1)
+
+
+def config_hash_or_none(obj: dict[str, Any]) -> str | None:
+    """The hash of the configuration this process would hand to the engine, or None when it cannot be loaded."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError):
+        return None
+    hand_over_config(obj, effective)
+    return config_hash()
+
+
+@main.group("benchmark")
+def benchmark_group() -> None:
+    """The bundled benchmark corpus (CodeNarc src/main), the fixed workspace of docs/benchmark.md."""
+
+
+@benchmark_group.command("path")
+@click.option("--to", "target", type=click.Path(path_type=Path, file_okay=False), default=None, help="Unpack here.")
+@click.option("--refresh", is_flag=True, help="Restore the bundled files even when the corpus is up to date.")
+def benchmark_path(target: Path | None, refresh: bool) -> None:
+    """Print where the corpus is (unpacking it first when needed); --to DIR unpacks it into DIR instead."""
+    destination = unpack_benchmark(dict(os.environ), refresh=refresh, target=target)
+    if destination is None:
+        sys.exit(1)
+    click.echo(str(destination))
+
+
 @main.command()
 def version() -> None:
     """Print the package and bundled engine versions."""
@@ -220,18 +288,9 @@ def kiro() -> None:
 def profile_guidance_for(obj: dict[str, Any], *, global_scope: bool = False) -> str:
     """Steering text from the active runtime profiles (in a project, only those that apply to it); empty when
     there are none or the config is invalid."""
-    try:
-        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
-    except (ValueError, OSError):
-        return ""
-    found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
-    if global_scope:
-        # The global steering applies to every project, so only profiles kept outside this repository count.
-        root = obj["root"].resolve()
-        outside = [p for p in found["profiles"] if not Path(p["path"]).resolve().is_relative_to(root)]
-        found = {**found, "profiles": outside}
-        return profiles.guidance(found, None)
-    return profiles.guidance(found, obj["root"])
+    return checkup.profile_guidance(
+        obj["root"], obj["config_path"], dict(os.environ), Path.home(), global_scope=global_scope
+    )
 
 
 def run_kiro_merge(
@@ -278,6 +337,8 @@ def run_kiro_merge(
         if written and backup and any(c["before"] is not None and c["action"] == "update" for c in changes):
             click.echo(f"originals kept as <file>{BACKUP_SUFFIX}")
     if global_scope:
+        if not dry_run:
+            unpack_benchmark(dict(os.environ))
         click.echo(
             "next: in each Groovy project run `groovyscope kiro init` once; Kiro CLI reads LSP servers only from "
             "the project's .kiro/settings/lsp.json"
@@ -285,6 +346,26 @@ def run_kiro_merge(
         return
     click.echo(f"note: {KIRO_INIT_WARNING}", err=True)
     click.echo("next: restart Kiro CLI, then run /code status (expect: groovyscope (groovy) - initialized)")
+
+
+def unpack_benchmark(environ: dict[str, str], *, refresh: bool = False, target: Path | None = None) -> Path | None:
+    """Unpack the bundled benchmark corpus (CodeNarc src/main) into the user's home, or ``target``; one line of
+    output, never an exception."""
+    destination = target or benchmark.corpus_root(Path.home(), environ)
+    try:
+        result = benchmark.ensure(destination, refresh=refresh)
+    except (OSError, ValueError) as exc:
+        click.echo(f"benchmark corpus: could not unpack into {destination}: {exc}", err=True)
+        return None
+    if result is None:
+        click.echo("benchmark corpus: this package bundles none", err=True)
+        return None
+    if result["action"] != "up-to-date":
+        click.echo(
+            f"benchmark corpus {result['action']} at {result['path']} (CodeNarc {result['version']}, "
+            f"{result['files']} files)"
+        )
+    return Path(result["path"])
 
 
 GLOBAL_HELP = "Write the MCP server, groovy agent and steering to the Kiro home (~/.kiro, or $KIRO_HOME)."

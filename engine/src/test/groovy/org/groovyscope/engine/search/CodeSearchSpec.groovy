@@ -62,6 +62,58 @@ def ref = this.&println
 throw task
 '''
 
+    static final String CATCHES = '''\
+package demo
+
+import java.util.MissingResourceException
+
+class Catches {
+    private final Object log = null
+    int counter = 0
+
+    String logged(String s) {
+        try {
+            return s.toUpperCase()
+        } catch (Exception e) {
+            log.warn('trim failed', e)
+            return ''
+        }
+    }
+
+    String fallback(String s) {
+        try {
+            return s.toUpperCase()
+        } catch (IllegalArgumentException ignored) {
+            return ''
+        }
+    }
+
+    void counted() {
+        try {
+            counter++
+        } catch (RuntimeException e) {
+            counter--
+        }
+    }
+
+    void implicit() {
+        try {
+            counter++
+        } catch (MissingResourceException) {
+            counter = 0
+        }
+    }
+
+    void printed() {
+        try {
+            counter++
+        } catch (Throwable t) {
+            t.printStackTrace()
+        }
+    }
+}
+'''
+
     static final String TYPES = '''\
 package demo
 
@@ -75,7 +127,8 @@ class Shapes {
 '''
 
     def setupSpec() {
-        snapshot = SearchFixtures.compile(root, ['tool.groovy': SCRIPT, 'demo/Shapes.groovy': TYPES])
+        snapshot = SearchFixtures.compile(root, ['tool.groovy': SCRIPT, 'demo/Shapes.groovy': TYPES,
+                                                 'demo/Catches.groovy': CATCHES])
     }
 
     List<CodeSearch.Match> find(CodeSearch.Query query, Collection<String> uris = []) {
@@ -108,6 +161,31 @@ class Shapes {
         find(new CodeSearch.Query('call', 'size', 'GString', null, [], null, null, null, null)).size() == 1
         find(new CodeSearch.Query('call', 'trim', 'String', null, [], null, null, null, null)).size() == 1
         find(new CodeSearch.Query('call', 'println', null, null, [], null, null, null, null))*.detail.every { it == 'call println' }
+    }
+
+    def 'catch clauses say how they handle the exception and which rule names them'() {
+        when:
+        def found = find(CodeSearch.Query.of('catch'), [SearchFixtures.uri(root, 'demo/Catches.groovy')])
+
+        then:
+        found*.facts.handling == ['logged', 'returns-default', 'other', 'other', 'logged']
+        found*.facts.variable == ['e', 'ignored', 'e', 'MissingResourceException', 't']
+        found*.facts.catches == ['Exception', 'IllegalArgumentException', 'RuntimeException', 'Exception', 'Throwable']
+        found*.facts.code == ['CatchException', null, 'CatchRuntimeException', 'CatchException', 'CatchThrowable']
+        found*.facts.implicitType == [null, null, null, true, null]
+        found.every { it.detail.startsWith('catch (') && !it.detail.endsWith('empty') }
+    }
+
+    def 'handling helpers classify bodies and headers'() {
+        expect:
+        CodeSearch.handlingOf(null) == CodeSearch.Handling.SWALLOWED
+        CodeSearch.isLogging('warn', 'this.logger')
+        CodeSearch.isLogging('printStackTrace', 'e')
+        !CodeSearch.isLogging('warn', 'user')
+        !CodeSearch.isLogging(null, 'log')
+        CodeSearch.implicitType('} catch (final Foo) {')
+        !CodeSearch.implicitType('} catch (Foo e) {')
+        !CodeSearch.implicitType(null)
     }
 
     def 'throws of expressions describe the expression'() {

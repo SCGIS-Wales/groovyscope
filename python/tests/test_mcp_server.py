@@ -504,6 +504,11 @@ def test_search_tools(tools: dict[str, Any], engine: dict[str, Any]) -> None:
                 "detail": "catch (Exception e)",
                 "snippet": "} catch (Exception e) {",
                 "enclosing": "A.run",
+                "handling": "logged",
+                "catches": "Exception",
+                "variable": "e",
+                "code": "CatchException",
+                "implicitType": None,
             }
         ],
         "count": 1,
@@ -516,7 +521,13 @@ def test_search_tools(tools: dict[str, Any], engine: dict[str, Any]) -> None:
         "detail": "catch (Exception e)",
         "snippet": "} catch (Exception e) {",
         "in": "A.run",
+        "handling": "logged",
+        "catches": "Exception",
+        "variable": "e",
+        "code": "CatchException",
     }
+    assert found["byHandling"] == {"logged": 1}
+    assert list(found["meaning"]) == ["logged"]
     assert engine["calls"][-1][1] == {
         "root": "/ws",
         "uris": [],

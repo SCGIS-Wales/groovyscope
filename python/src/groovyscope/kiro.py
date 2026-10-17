@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 import shutil
 from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from groovyscope import kiro_agent
+from groovyscope import __version__, kiro_agent
 from groovyscope.config import deep_merge
 
 # (template name inside the package, destination relative to the workspace root)
@@ -28,6 +29,10 @@ GLOBAL_FILES: tuple[tuple[str, str], ...] = tuple(
 LSP_ONLY_FILES: tuple[tuple[str, str], ...] = tuple((name, path) for name, path in KIRO_FILES if name == "lsp.json")
 PROFILE_STEERING = "steering/groovyscope-profiles.md"
 STEERING_HEADER = "---\ninclusion: always\n---\n"
+# The steering template carries this token; the written file carries the package version instead, so `checkup`
+# can tell Kiro files written by an older groovyscope from current ones.
+STAMP_PLACEHOLDER = "{{version}}"
+STAMP_PATTERN = re.compile(r"<!-- written by groovyscope (?P<version>[^\s;]+)")
 KIRO_HOME_ENV = "KIRO_HOME"
 BACKUP_SUFFIX = ".bak"
 # Keys earlier groovyscope releases wrote that current Kiro CLI misreads, removed on merge only while they still
@@ -70,7 +75,23 @@ class KiroChange(TypedDict):
 
 
 def load_template(name: str) -> str:
-    return resources.files("groovyscope").joinpath("_templates/kiro").joinpath(name).read_text(encoding="utf-8")
+    """A template with the version token replaced, so the written file names the groovyscope that wrote it."""
+    text = resources.files("groovyscope").joinpath("_templates/kiro").joinpath(name).read_text(encoding="utf-8")
+    return text.replace(STAMP_PLACEHOLDER, __version__)
+
+
+def written_by(text: str | None) -> str | None:
+    """The groovyscope version stamped into a steering file, or None for a file without a stamp."""
+    match = STAMP_PATTERN.search(text or "")
+    return match.group("version") if match else None
+
+
+def kiro_files_version(home: Path) -> str | None:
+    """Which groovyscope wrote the global Kiro files (from the steering stamp); None when unstamped or absent."""
+    try:
+        return written_by((home / "steering" / "groovyscope.md").read_text(encoding="utf-8"))
+    except OSError:
+        return None
 
 
 def normalize_json(text: str) -> str:
