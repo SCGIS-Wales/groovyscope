@@ -108,7 +108,9 @@
       "additionalProperties": false,
       "properties": {
         "maxResults": { "type": "integer", "minimum": 1 },
-        "maxBytes": { "type": "integer", "minimum": 256 }
+        "maxBytes": { "type": "integer", "minimum": 256 },
+        "maxMessageChars": { "type": "integer", "minimum": 0 },
+        "structured": { "type": "boolean" }
       }
     },
     "logging": {

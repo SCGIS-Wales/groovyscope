@@ -300,7 +300,7 @@ def position_params(root: Path, path: str, line: int, col: int) -> dict[str, Any
 
 
 def quality_tools(
-    root: Path, call: Call, paged: Paged, cap: int, environ: Mapping[str, str]
+    root: Path, call: Call, paged: Paged, cap: int, environ: Mapping[str, str], *, clip_at: int = MESSAGE_CHARS
 ) -> dict[str, Callable[..., Any]]:
     """check, format, find_dynamic_code and workspace_status."""
 
@@ -321,7 +321,9 @@ def quality_tools(
             params["profile"] = profile
         raw = call("groovyscope/check", params)
         findings = [
-            compact_diagnostic(uri, item, root) for uri, items in raw.get("diagnostics", {}).items() for item in items
+            compact_diagnostic(uri, item, root, clip_at)
+            for uri, items in raw.get("diagnostics", {}).items()
+            for item in items
         ]
         findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
         result = paged(findings, limit, cursor)
@@ -382,7 +384,7 @@ def quality_tools(
     }
 
 
-def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHARS) -> dict[str, Callable[..., Any]]:
     """explain, review, fix and profile_status."""
 
     def explain(code: str) -> dict[str, Any]:
@@ -397,7 +399,9 @@ def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., 
             {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "include": []},
         )
         findings = [
-            compact_diagnostic(uri, item, root) for uri, items in raw.get("diagnostics", {}).items() for item in items
+            compact_diagnostic(uri, item, root, clip_at)
+            for uri, items in raw.get("diagnostics", {}).items()
+            for item in items
         ]
         groups = practices.review(findings, max(1, min(top, cap)))
         result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap]}
@@ -483,11 +487,12 @@ def build_tools(
 ) -> dict[str, Callable[..., Any]]:
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
+    clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
     return {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, cap),
-        **quality_tools(root, call, paged, cap, environ),
-        **practice_tools(root, call, cap),
+        **quality_tools(root, call, paged, cap, environ, clip_at=clip_at),
+        **practice_tools(root, call, cap, clip_at),
     }
 
 

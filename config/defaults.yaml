@@ -51,6 +51,8 @@ format:
 output:
   maxResults: 50          # per response, with continuation tokens beyond that
   maxBytes: 16000         # hard cap on the JSON body returned to an agent
+  maxMessageChars: 400    # finding messages longer than this are clipped in MCP answers (0 = never)
+  structured: false       # MCP: also send results as structuredContent (doubles the payload; most clients read the text)
 logging:
   level: "warning"        # debug | info | warning | error
   file: null              # null = stderr
