@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.8.2...v0.9.0) (2026-10-17)
+
+
+### Features
+
+* classpath export, missing-dependency findings, code search tools, lsp parity and mcp inheritance ([#44](https://github.com/SCGIS-Wales/groovyscope/issues/44)) ([75998d9](https://github.com/SCGIS-Wales/groovyscope/commit/75998d972ef88de7aebdf27ca631c14678cb7dfb))
+
+
+### Documentation
+
+* stage 10 agent capabilities, steering and mcp instructions ([#46](https://github.com/SCGIS-Wales/groovyscope/issues/46)) ([37367fb](https://github.com/SCGIS-Wales/groovyscope/commit/37367fb98e3562f431a2d7edbb1ab236d9b3f8b3))
+
 ## [0.8.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.8.1...v0.8.2) (2026-10-17)
 
 
