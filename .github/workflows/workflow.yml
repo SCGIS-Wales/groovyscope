@@ -61,7 +61,7 @@ jobs:
         run: |
           python3 scripts/bundle_jar.py
           cd python
-          uv sync --locked --no-dev
+          uv sync --frozen --no-dev
           uv build
           rm -f dist/.gitignore
 

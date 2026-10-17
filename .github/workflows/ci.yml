@@ -64,7 +64,7 @@ jobs:
 
       - name: Sync Python dependencies
         working-directory: python
-        run: uv sync --locked
+        run: uv sync --frozen
 
       - name: Lint
         working-directory: python
