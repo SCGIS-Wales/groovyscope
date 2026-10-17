@@ -18,26 +18,28 @@ Python owns the installer, CLI, configuration and MCP bridge. Every semantic ans
 
 ## Quick start
 
-You need a JDK 17 or newer (21 recommended) and Kiro CLI.
+You need a JDK 17 or newer (21 recommended) and Kiro CLI. Once per machine:
 
 ```bash
 uv tool install groovyscope       # or: pipx install groovyscope, or: brew install SCGIS-Wales/tap/groovyscope
 groovyscope kiro init --global    # adds groovyscope to ~/.kiro without removing anything already there
-groovyscope doctor                # every line should say ok (info lines are optional extras)
+groovyscope doctor                # ok lines are good; info lines are optional extras
 ```
 
-Then, in any Groovy project:
+Once per Groovy project (Kiro CLI reads language servers only from the project's own `.kiro/`):
 
 ```bash
+cd your-groovy-project
+groovyscope kiro init             # writes .kiro/settings/lsp.json only, since the global setup has the rest
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
 ```
 
-`kiro init --global` merges into `~/.kiro/settings/mcp.json`, `~/.kiro/settings/lsp.json`,
-`~/.kiro/agents/groovy.json` and `~/.kiro/steering/groovyscope.md`: other MCP servers, languages and agent
-settings stay as they are, any file it changes is backed up to `<file>.bak`, and it prints a diff first. Add
-`--dry-run` to see the diff without writing. Use `groovyscope kiro init` (without `--global`) inside a
-project instead to keep the setup in that project's `.kiro/`. Details in [docs/kiro.md](docs/kiro.md).
+`kiro init --global` merges into `~/.kiro/settings/mcp.json`, `~/.kiro/agents/groovy.json` and
+`~/.kiro/steering/`: other MCP servers and agent settings stay as they are, every changed file is backed up to
+`<file>.bak`, and the diff is printed. Add `--dry-run` to see the diff without writing. In a project,
+`groovyscope kiro init --full` writes all the files there instead, for a setup the whole team can commit.
+Details in [docs/kiro.md](docs/kiro.md).
 
 No JDK? The Homebrew formula brings one. Otherwise `groovyscope jdk install` downloads a checksum-verified
 Temurin JDK into groovyscope's cache; nothing is downloaded unless you ask. See [docs/install.md](docs/install.md).
@@ -66,7 +68,7 @@ parsing. `explain` says why a finding matters and how to fix it.
 | Command | What it does |
 |---|---|
 | `groovyscope doctor` | Checks Python, configuration, JDK, the engine JAR (SHA-256), Kiro files and runtime profiles |
-| `groovyscope kiro init \| repair [--global] [--dry-run]` | Installs or re-merges the Kiro files in the project, or in `~/.kiro` with `--global` |
+| `groovyscope kiro init \| repair [--global] [--full] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project |
 | `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif]` | All findings; `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
 | `groovyscope fix [PATHS] [--code X] [--apply]` | Safe fixes; reports them unless `--apply` |
 | `groovyscope explain CODE` | Why a code (GS001, RP010, NullChecker, a CodeNarc rule) matters and how to fix it |

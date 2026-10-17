@@ -312,14 +312,22 @@ def test_kiro_init_global_merges_into_the_kiro_home(
     assert not (isolated_home / ".kiro" / "agents").exists()
     real = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init", "--global"])
     assert real.exit_code == 0, real.output
-    assert "5 file(s) written" in real.output and "originals kept as <file>.bak" in real.output
+    assert "4 file(s) written" in real.output and "originals kept as <file>.bak" in real.output
+    assert "in each Groovy project run `groovyscope kiro init`" in real.output
     mcp = json.loads((settings / "mcp.json").read_text(encoding="utf-8"))
     assert set(mcp["mcpServers"]) == {"other", "groovyscope"}
     steering = (isolated_home / ".kiro" / "steering" / "groovyscope-profiles.md").read_text(encoding="utf-8")
     assert "Stay on the proven path." in steering
     assert not (tmp_path / ".kiro").exists()
+    project = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init"])
+    assert "writing only the project's LSP entry" in project.output
+    assert sorted(p.name for p in (tmp_path / ".kiro").rglob("*") if p.is_file()) == ["lsp.json"]
+    full = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "repair", "--full"])
+    assert full.exit_code == 0 and (tmp_path / ".kiro" / "agents" / "groovy.json").is_file()
+    assert (tmp_path / ".kiro" / "steering" / "groovyscope-profiles.md").is_file()
     monkeypatch.setenv("KIRO_HOME", str(tmp_path / "kh"))
     repaired = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "repair", "--global"])
-    assert repaired.exit_code == 0 and (tmp_path / "kh" / "settings" / "lsp.json").is_file()
+    assert repaired.exit_code == 0 and (tmp_path / "kh" / "settings" / "mcp.json").is_file()
+    assert not (tmp_path / "kh" / "settings" / "lsp.json").exists()
     (tmp_path / ".groovyscope.yaml").write_text("profiles: {discover: maybe}\n", encoding="utf-8")
     assert cli.profile_guidance_for({"root": tmp_path, "config_path": None}) == ""

@@ -10,6 +10,7 @@ from groovyscope.kiro import (
     KIRO_FILES,
     RETIRED_KEYS,
     apply_changes,
+    has_global_setup,
     kiro_home,
     load_template,
     merge_content,
@@ -139,15 +140,21 @@ def test_global_scope_targets_the_kiro_home(tmp_path: Path) -> None:
     )
     changes = plan_changes(base, global_scope=True)
     assert [c["path"] for c in changes] == [path for _, path in GLOBAL_FILES]
-    assert [c["action"] for c in changes] == ["create", "update", "create", "create"]
+    assert [c["action"] for c in changes] == ["update", "create", "create"]
     written = apply_changes(base, changes)
-    assert len(written) == 4
+    assert len(written) == 3
+    assert has_global_setup(base) and not has_global_setup(tmp_path / "nowhere")
     mcp = json.loads((base / "settings" / "mcp.json").read_text(encoding="utf-8"))
     assert set(mcp["mcpServers"]) == {"other", "groovyscope"}
     assert (base / "settings" / "mcp.json.bak").is_file()
     agent = json.loads((base / "agents" / "groovy.json").read_text(encoding="utf-8"))
     assert agent["resources"][-1] == f"file://{base.as_posix()}/steering/**/*.md"
-    assert [c["action"] for c in plan_changes(base, global_scope=True)] == ["unchanged"] * 4
+    assert [c["action"] for c in plan_changes(base, global_scope=True)] == ["unchanged"] * 3
+    assert [c["path"] for c in plan_changes(tmp_path, lsp_only=True, profile_guidance="x")] == [
+        ".kiro/settings/lsp.json"
+    ]
+    (base / "settings" / "mcp.json").write_text("[1]", encoding="utf-8")
+    assert not has_global_setup(base)
 
 
 def test_profile_guidance_gets_its_own_steering_file(tmp_path: Path) -> None:

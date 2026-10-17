@@ -26,6 +26,7 @@ from groovyscope.kiro import (
     BACKUP_SUFFIX,
     KIRO_INIT_WARNING,
     apply_changes,
+    has_global_setup,
     kiro_home,
     plan_changes,
     unified_diff,
@@ -125,11 +126,21 @@ def profile_guidance_for(obj: dict[str, Any]) -> str:
 
 
 def run_kiro_merge(
-    obj: dict[str, Any], *, force: bool, backup: bool, dry_run: bool, global_scope: bool = False
+    obj: dict[str, Any], *, force: bool, backup: bool, dry_run: bool, global_scope: bool = False, full: bool = False
 ) -> None:
-    base = kiro_home(dict(os.environ), Path.home()) if global_scope else obj["root"]
+    home = kiro_home(dict(os.environ), Path.home())
+    base = home if global_scope else obj["root"]
+    lsp_only = not global_scope and not full and has_global_setup(home)
+    if lsp_only:
+        click.echo(f"global groovyscope setup found in {home}: writing only the project's LSP entry (--full for all)")
     try:
-        changes = plan_changes(base, force=force, global_scope=global_scope, profile_guidance=profile_guidance_for(obj))
+        changes = plan_changes(
+            base,
+            force=force,
+            global_scope=global_scope,
+            profile_guidance=profile_guidance_for(obj),
+            lsp_only=lsp_only,
+        )
     except ValueError as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
@@ -146,31 +157,42 @@ def run_kiro_merge(
         click.echo(f"{len(written)} file(s) written" if written else "nothing to do")
         if written and backup and any(c["before"] is not None and c["action"] == "update" for c in changes):
             click.echo(f"originals kept as <file>{BACKUP_SUFFIX}")
+    if global_scope:
+        click.echo(
+            "next: in each Groovy project run `groovyscope kiro init` once; Kiro CLI reads LSP servers only from "
+            "the project's .kiro/settings/lsp.json"
+        )
+        return
     click.echo(f"note: {KIRO_INIT_WARNING}", err=True)
     click.echo("next: restart Kiro CLI, then run /code status (expect: groovyscope (groovy) - initialized)")
 
 
-GLOBAL_HELP = "Write to the Kiro home (~/.kiro, or $KIRO_HOME) so every workspace gets groovyscope."
+GLOBAL_HELP = "Write the MCP server, groovy agent and steering to the Kiro home (~/.kiro, or $KIRO_HOME)."
+FULL_HELP = "In a project, write all files even when the global setup already provides the MCP server and agent."
 
 
 @kiro.command("init")
 @click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
+@click.option("--full", is_flag=True, help=FULL_HELP)
 @click.option("--force", is_flag=True, help="Replace existing files instead of merging into them.")
 @click.option("--no-backup", is_flag=True, help="Do not write <file>.bak before overwriting.")
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
-def kiro_init(obj: dict[str, Any], global_scope: bool, force: bool, no_backup: bool, dry_run: bool) -> None:
+def kiro_init(
+    obj: dict[str, Any], *, global_scope: bool, full: bool, force: bool, no_backup: bool, dry_run: bool
+) -> None:
     """Write lsp.json, mcp.json, the groovy agent and the steering file (merging, never clobbering)."""
-    run_kiro_merge(obj, force=force, backup=not no_backup, dry_run=dry_run, global_scope=global_scope)
+    run_kiro_merge(obj, force=force, backup=not no_backup, dry_run=dry_run, global_scope=global_scope, full=full)
 
 
 @kiro.command("repair")
 @click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
+@click.option("--full", is_flag=True, help=FULL_HELP)
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
-def kiro_repair(obj: dict[str, Any], global_scope: bool, dry_run: bool) -> None:
+def kiro_repair(obj: dict[str, Any], *, global_scope: bool, full: bool, dry_run: bool) -> None:
     """Re-merge groovyscope's entries after `/code init` or a manual edit removed them."""
-    run_kiro_merge(obj, force=False, backup=True, dry_run=dry_run, global_scope=global_scope)
+    run_kiro_merge(obj, force=False, backup=True, dry_run=dry_run, global_scope=global_scope, full=full)
 
 
 def cds_archive_for(

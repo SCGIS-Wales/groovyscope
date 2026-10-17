@@ -4,33 +4,34 @@ Kiro CLI spawns LSP servers configured in `.kiro/settings/lsp.json` and talks to
 The agent never sees raw LSP: it calls the built-in `code` tool, which Kiro translates into LSP requests.
 MCP servers (`.kiro/settings/mcp.json`) are a separate channel for higher-order tools.
 
-## Global or per project
+## Global and per project
 
 ```bash
 groovyscope kiro init --global    # once per machine: ~/.kiro (or $KIRO_HOME)
-groovyscope kiro init             # or per project: <project>/.kiro
+groovyscope kiro init             # once per project: <project>/.kiro
 ```
 
-Both write the same four files; Kiro CLI reads the global ones in every workspace and lets a project's own
-`.kiro/` add to or override them.
+Kiro CLI 2.32 reads MCP servers, agents and steering from both `~/.kiro` and the project's `.kiro/`, but
+language servers only from the project's `.kiro/settings/lsp.json` (verified: with only a global
+`lsp.json`, `/code status` reports the workspace as not initialized, and `/code init` writes Kiro's built-in
+server list without Groovy). So the global step installs the MCP server, the `groovy` agent and the steering,
+and the project step adds the LSP entry. When the global setup is present, `groovyscope kiro init` in a
+project writes only `lsp.json`; `--full` writes everything into the project instead.
 
-| File (under `~/.kiro/` or `<project>/.kiro/`) | Purpose |
-|---|---|
-| `settings/lsp.json` | `languages.groovy` entry: command `groovyscope lsp --stdio`, extensions, Jenkinsfile patterns, timeouts |
-| `settings/mcp.json` | `mcpServers.groovyscope` entry: command `groovyscope mcp`, a two-minute tool timeout |
-| `agents/groovy.json` | A `groovy` agent with the `code` tool, the MCP server and tool approvals |
-| `steering/groovyscope.md` | Always-on policy: navigate through LSP/MCP, review and fix before finishing, the review checklist |
-| `steering/groovyscope-profiles.md` | Only when a runtime profile with `guidance` is active: that guidance, per profile |
+| File | Written by | Purpose |
+|---|---|---|
+| `.kiro/settings/lsp.json` | project | `languages.groovy` entry: command `groovyscope lsp --stdio`, extensions, Jenkinsfile patterns, timeouts |
+| `settings/mcp.json` | global, or project with `--full` | `mcpServers.groovyscope` entry: command `groovyscope mcp`, a two-minute tool timeout |
+| `agents/groovy.json` | global, or project with `--full` | A `groovy` agent with the `code` tool, the MCP server and tool approvals |
+| `steering/groovyscope.md` | global, or project with `--full` | Always-on policy: navigate through LSP/MCP, review and fix before finishing, the review checklist |
+| `steering/groovyscope-profiles.md` | same, only when a runtime profile has `guidance` | That guidance, per profile |
 
 **Nothing of yours is removed.** JSON files are merged: other MCP servers, other languages and the other keys
-of an existing `groovy` agent are kept, and only groovyscope's own entries are added or updated. The two
-steering files belong to groovyscope and are replaced. Every changed file is backed up to `<name>.bak` and
-the diff is printed first. `--dry-run` shows the diff and writes nothing; `--force` replaces files wholesale
-(still with backups unless `--no-backup`). `groovyscope kiro repair [--global]` re-merges after a manual edit
-or `/code init` removed an entry.
-
-The global agent also reads `~/.kiro/steering/**/*.md` by absolute path, so the policy applies in projects
-that have no `.kiro/` of their own.
+of an existing `groovy` agent are kept, and only groovyscope's own entries are added or updated. The steering
+files belong to groovyscope and are replaced. Every changed file is backed up to `<name>.bak` and the diff is
+printed first. `--dry-run` shows the diff and writes nothing; `--force` replaces files wholesale (still with
+backups unless `--no-backup`). `groovyscope kiro repair [--global]` re-merges after a manual edit or
+`/code init` removed an entry. The global agent also reads `~/.kiro/steering/**/*.md` by absolute path.
 
 ## Verify
 

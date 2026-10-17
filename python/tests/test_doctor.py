@@ -65,6 +65,13 @@ def test_kiro_check_states(tmp_path: Path) -> None:
     assert level == "warn" and "mcp.json" in message
     apply_changes(tmp_path, plan_changes(tmp_path))
     assert kiro_check(tmp_path)[0] == "ok"
+    home = tmp_path / "kh"
+    project = tmp_path / "project"
+    apply_changes(home, plan_changes(home, global_scope=True))
+    level, _, message = kiro_check(project, home)
+    assert level == "warn" and "run `groovyscope kiro init` in this project" in message
+    apply_changes(project, plan_changes(project, lsp_only=True))
+    assert kiro_check(project, home)[0] == "ok"
 
 
 def test_build_report_and_failures(

@@ -18,8 +18,12 @@ KIRO_FILES: tuple[tuple[str, str], ...] = (
     ("agents/groovy.json", ".kiro/agents/groovy.json"),
     ("steering/groovyscope.md", ".kiro/steering/groovyscope.md"),
 )
-# The same files relative to the Kiro home (~/.kiro, or $KIRO_HOME) for `kiro init --global`.
-GLOBAL_FILES: tuple[tuple[str, str], ...] = tuple((name, path.removeprefix(".kiro/")) for name, path in KIRO_FILES)
+# Files relative to the Kiro home (~/.kiro, or $KIRO_HOME) for `kiro init --global`. Kiro CLI 2.x reads LSP servers
+# only from the project's .kiro/settings/lsp.json, so the global setup has no lsp.json.
+GLOBAL_FILES: tuple[tuple[str, str], ...] = tuple(
+    (name, path.removeprefix(".kiro/")) for name, path in KIRO_FILES if name != "lsp.json"
+)
+LSP_ONLY_FILES: tuple[tuple[str, str], ...] = tuple((name, path) for name, path in KIRO_FILES if name == "lsp.json")
 PROFILE_STEERING = "steering/groovyscope-profiles.md"
 STEERING_HEADER = "---\ninclusion: always\n---\n"
 KIRO_HOME_ENV = "KIRO_HOME"
@@ -123,11 +127,17 @@ def planned(base: Path, template_name: str, relative: str, template: str, *, for
 
 
 def plan_changes(
-    base: Path, *, force: bool = False, global_scope: bool = False, profile_guidance: str = ""
+    base: Path,
+    *,
+    force: bool = False,
+    global_scope: bool = False,
+    profile_guidance: str = "",
+    lsp_only: bool = False,
 ) -> list[KiroChange]:
     """Compute every write without touching the file system. ``base`` is the workspace root, or the Kiro home
-    with ``global_scope``. Runtime profile guidance, when there is any, goes to its own steering file."""
-    files = GLOBAL_FILES if global_scope else KIRO_FILES
+    with ``global_scope``. ``lsp_only`` writes just the project's lsp.json (the rest comes from the global setup).
+    Runtime profile guidance, when there is any, goes to its own steering file."""
+    files = GLOBAL_FILES if global_scope else LSP_ONLY_FILES if lsp_only else KIRO_FILES
     changes = [
         planned(
             base,
@@ -138,7 +148,7 @@ def plan_changes(
         )
         for name, relative in files
     ]
-    if profile_guidance:
+    if profile_guidance and not lsp_only:
         relative = PROFILE_STEERING if global_scope else ".kiro/" + PROFILE_STEERING
         changes.append(planned(base, PROFILE_STEERING, relative, STEERING_HEADER + profile_guidance, force=force))
     return changes
@@ -169,3 +179,12 @@ def apply_changes(root: Path, changes: Sequence[KiroChange], *, backup: bool = T
 def present_files(root: Path) -> dict[str, bool]:
     """Which Kiro files exist under ``root`` (used by ``doctor``)."""
     return {relative: (root / relative).is_file() for _, relative in KIRO_FILES}
+
+
+def has_global_setup(home: Path) -> bool:
+    """Whether the Kiro home already carries groovyscope's MCP server and agent (``kiro init --global`` ran)."""
+    try:
+        servers = json.loads((home / "settings" / "mcp.json").read_text(encoding="utf-8")).get("mcpServers", {})
+    except (OSError, ValueError, AttributeError):
+        return False
+    return isinstance(servers, dict) and "groovyscope" in servers and (home / "agents" / "groovy.json").is_file()
