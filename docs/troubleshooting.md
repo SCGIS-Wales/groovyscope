@@ -13,6 +13,9 @@ hard failures.
 | Kiro `/code status` does not list groovyscope | Run `groovyscope kiro init` in the workspace root, restart Kiro CLI; check `/code logs -l ERROR` |
 | groovyscope entry vanished from `lsp.json` | `/code init` overwrote it (Kiro#10684); run `groovyscope kiro repair` |
 | `groovyscope mcp` exits 3 | Not implemented yet (Stage 5); `kiro init` warns about this |
+| `daemon unavailable (...); running the engine directly` on stderr | The daemon could not start; `groovyscope daemon status` shows the log path, read it, then `groovyscope daemon start` |
+| Stale answers after switching branches | The daemon recompiles on file events from Kiro; if in doubt, `groovyscope daemon stop` and let the next session restart it |
+| Socket path too long (`AF_UNIX path too long`) | Set `GROOVYSCOPE_SOCKET_DIR` to a short directory such as `/tmp/gs` |
 | `kiro init` fails with "not valid JSON" | An existing `.kiro/settings/*.json` is broken; fix it or rerun with `--force` (a `.bak` is written) |
 
 ## Logs

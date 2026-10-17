@@ -26,8 +26,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.function.IntConsumer;
 import org.groovyscope.engine.config.EngineConfig;
+import org.groovyscope.engine.daemon.DaemonServer;
+import org.groovyscope.engine.daemon.WorkspaceRegistry;
 import org.groovyscope.engine.lsp.LspServerRunner;
 import org.groovyscope.engine.version.EngineVersion;
 
@@ -44,6 +47,9 @@ public final class Main {
             "  lsp --stdio [--config <file.json>]",
             "                 serve the Language Server Protocol on stdin/stdout; the configuration is read",
             "                 from --config or the " + CONFIG_ENV + " environment variable (JSON)",
+            "  daemon --socket <path> [--idle-seconds <n>] [--cache-dir <dir>] [--config <file.json>]",
+            "                 serve LSP to every client of a Unix domain socket; exit after <n> idle seconds",
+            "  --cache-dir <dir>   (lsp and daemon) keep a per-workspace symbol cache under <dir>",
             "  --version      print the engine version",
             "  --help         print this message",
             "");
@@ -72,14 +78,17 @@ public final class Main {
             return 0;
         }
         if (arguments.size() >= 2 && arguments.get(0).equals("lsp") && arguments.get(1).equals("--stdio")) {
-            EngineConfig config;
+            Options parsed;
             try {
-                config = configFrom(arguments.subList(2, arguments.size()), environment, cwd);
+                parsed = parseOptions(arguments.subList(2, arguments.size()), environment, cwd);
             } catch (IllegalArgumentException | IOException e) {
                 err.println("groovyscope-engine: " + e.getMessage());
                 return 2;
             }
-            return serveLsp(in, out, err, cwd, exitHandler, config);
+            return serveLsp(in, out, err, cwd, exitHandler, parsed.config, parsed.cacheDir);
+        }
+        if (arguments.get(0).equals("daemon")) {
+            return runDaemon(arguments.subList(1, arguments.size()), err, cwd, environment);
         }
         err.println("groovyscope-engine: unknown arguments: " + String.join(" ", arguments));
         err.print(USAGE);
@@ -87,29 +96,82 @@ public final class Main {
     }
 
     static EngineConfig configFrom(List<String> options, Map<String, String> environment, Path cwd) throws IOException {
+        return parseOptions(options, environment, cwd).config;
+    }
+
+    /** Parsed daemon/LSP options: configuration plus the daemon socket and idle timeout. */
+    record Options(EngineConfig config, Path socket, long idleSeconds, Path cacheDir) {
+    }
+
+    static final long DEFAULT_IDLE_SECONDS = 3600;
+
+    static Options parseOptions(List<String> options, Map<String, String> environment, Path cwd) throws IOException {
         List<String> remaining = new ArrayList<>(options);
         String json = environment == null ? null : environment.get(CONFIG_ENV);
+        Path socket = null;
+        Path cacheDir = null;
+        long idleSeconds = DEFAULT_IDLE_SECONDS;
         while (!remaining.isEmpty()) {
             String option = remaining.remove(0);
-            if (option.equals("--config")) {
-                if (remaining.isEmpty()) {
-                    throw new IllegalArgumentException("--config needs a file path");
+            switch (option) {
+                case "--config" -> json = Files.readString(cwd.resolve(value(remaining, option)), StandardCharsets.UTF_8);
+                case "--socket" -> socket = cwd.resolve(value(remaining, option));
+                case "--cache-dir" -> cacheDir = cwd.resolve(value(remaining, option));
+                case "--idle-seconds" -> {
+                    try {
+                        idleSeconds = Long.parseLong(value(remaining, option));
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException("--idle-seconds needs a whole number", e);
+                    }
                 }
-                json = Files.readString(cwd.resolve(remaining.remove(0)), StandardCharsets.UTF_8);
-            } else {
-                throw new IllegalArgumentException("unknown option: " + option);
+                default -> throw new IllegalArgumentException("unknown option: " + option);
             }
         }
-        return EngineConfig.fromJson(json);
+        return new Options(EngineConfig.fromJson(json), socket, idleSeconds, cacheDir);
+    }
+
+    private static String value(List<String> remaining, String option) {
+        if (remaining.isEmpty()) {
+            throw new IllegalArgumentException(option + " needs a value");
+        }
+        return remaining.remove(0);
+    }
+
+    private static int runDaemon(List<String> options, PrintStream err, Path cwd, Map<String, String> environment) {
+        Options parsed;
+        try {
+            parsed = parseOptions(options, environment, cwd);
+        } catch (IllegalArgumentException | IOException e) {
+            err.println("groovyscope-engine: " + e.getMessage());
+            return 2;
+        }
+        if (parsed.socket == null) {
+            err.println("groovyscope-engine: daemon needs --socket <path>");
+            return 2;
+        }
+        CountDownLatch exited = new CountDownLatch(1);
+        try (DaemonServer server = new DaemonServer(parsed.socket, parsed.config,
+                java.time.Duration.ofSeconds(parsed.idleSeconds), exited::countDown, parsed.cacheDir)) {
+            server.start();
+            Runtime.getRuntime().addShutdownHook(new Thread(server::close, "groovyscope-daemon-cleanup"));
+            exited.await();
+            return 0;
+        } catch (IOException e) {
+            err.println("groovyscope-engine: cannot listen on " + parsed.socket + ": " + e.getMessage());
+            return 1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return 130;
+        }
     }
 
     private static int serveLsp(InputStream in, PrintStream out, PrintStream err, Path cwd,
-            IntConsumer exitHandler, EngineConfig config) {
+            IntConsumer exitHandler, EngineConfig config, Path cacheDir) {
         // stdout is the protocol channel: anything that still prints to System.out must go to stderr.
         PrintStream previousOut = System.out;
         System.setOut(err);
         try {
-            LspServerRunner.serve(in, out, cwd, exitHandler, config);
+            LspServerRunner.serve(in, out, cwd, exitHandler, config, new WorkspaceRegistry(config, cacheDir));
             return 0;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

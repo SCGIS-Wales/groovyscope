@@ -20,8 +20,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Objects;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 import org.eclipse.lsp4j.CompletionOptions;
 import org.eclipse.lsp4j.InitializeParams;
@@ -33,6 +36,8 @@ import org.eclipse.lsp4j.ServerInfo;
 import org.eclipse.lsp4j.SignatureHelpOptions;
 import org.eclipse.lsp4j.TextDocumentSyncKind;
 import org.eclipse.lsp4j.WorkspaceFolder;
+import org.eclipse.lsp4j.jsonrpc.services.JsonNotification;
+import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageClientAware;
 import org.eclipse.lsp4j.services.LanguageServer;
@@ -57,6 +62,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     private final IntConsumer exitHandler;
     private final Path fallbackRoot;
     private final EngineConfig config;
+    private final Function<Path, LanguageServices> servicesProvider;
+    private final Runnable daemonShutdown;
     private final AtomicReference<Path> workspaceRoot = new AtomicReference<>();
     private final AtomicReference<LanguageClient> client = new AtomicReference<>();
     private final AtomicReference<LanguageServices> services = new AtomicReference<>();
@@ -71,9 +78,21 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      * @param config the engine configuration handed over by the front end
      */
     public GroovyscopeLanguageServer(IntConsumer exitHandler, Path fallbackRoot, EngineConfig config) {
+        this(exitHandler, fallbackRoot, config,
+                root -> new LanguageServices(new WorkspaceModel(root, config), new GroovyCompiler()), null);
+    }
+
+    /**
+     * @param servicesProvider supplies (possibly shared) services for a workspace root
+     * @param daemonShutdown what {@code groovyscope/shutdownDaemon} does; {@code null} outside the daemon
+     */
+    public GroovyscopeLanguageServer(IntConsumer exitHandler, Path fallbackRoot, EngineConfig config,
+            Function<Path, LanguageServices> servicesProvider, Runnable daemonShutdown) {
         this.exitHandler = Objects.requireNonNull(exitHandler, "exitHandler");
         this.fallbackRoot = Objects.requireNonNull(fallbackRoot, "fallbackRoot");
         this.config = Objects.requireNonNull(config, "config");
+        this.servicesProvider = Objects.requireNonNull(servicesProvider, "servicesProvider");
+        this.daemonShutdown = daemonShutdown;
         this.diagnostics = new DiagnosticsPublisher(services::get, client::get);
         this.textDocumentService = new GroovyscopeTextDocumentService(services::get, diagnostics);
         this.workspaceService = new GroovyscopeWorkspaceService(services::get, diagnostics);
@@ -88,7 +107,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<InitializeResult> initialize(InitializeParams params) {
         Path root = resolveRoot(params, fallbackRoot);
         workspaceRoot.set(root);
-        services.set(new LanguageServices(new WorkspaceModel(root, config), new GroovyCompiler()));
+        services.set(servicesProvider.apply(root));
         ServerInfo info = new ServerInfo(SERVER_NAME, EngineVersion.current());
         return CompletableFuture.completedFuture(new InitializeResult(capabilities(), info));
     }
@@ -133,6 +152,30 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     @Override
     public WorkspaceService getWorkspaceService() {
         return workspaceService;
+    }
+
+    /** Daemon and engine state for the Python front end and {@code groovyscope doctor}. */
+    @JsonRequest("groovyscope/status")
+    public CompletableFuture<Map<String, Object>> status() {
+        Map<String, Object> status = new LinkedHashMap<>();
+        status.put("engine", EngineVersion.current());
+        status.put("root", workspaceRoot.get() == null ? null : workspaceRoot.get().toString());
+        status.put("daemon", daemonShutdown != null);
+        LanguageServices current = services.get();
+        if (current != null) {
+            status.put("dirty", current.isDirty());
+            status.put("files", current.workspace().discoverSourceFiles().size());
+            status.put("trust", current.workspace().config().trust());
+        }
+        return CompletableFuture.completedFuture(status);
+    }
+
+    /** Asks a daemon to exit after this connection closes; ignored when not running as a daemon. */
+    @JsonNotification("groovyscope/shutdownDaemon")
+    public void shutdownDaemon() {
+        if (daemonShutdown != null) {
+            daemonShutdown.run();
+        }
     }
 
     /** The workspace root chosen during {@code initialize}, or {@code null} before initialisation. */

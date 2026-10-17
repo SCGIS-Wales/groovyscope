@@ -32,10 +32,14 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   prepareRename/rename, compile diagnostics). Fixture projects. Security tests for `@Grab`, `@ASTTest`
   and untrusted global AST transforms. Done when a references query on a fixture returns correct locations
   through Kiro's `code` tool.
-- [ ] **Stage 2: daemon + Python relay** — branch `feat/daemon-relay` (in progress since 2026-10-17).
-  Unix domain socket daemon per workspace, idle timeout, SQLite index persistence, CDS archive;
-  `daemon.py`, `relay.py`, `rpc.py`; `groovyscope daemon start|stop|status`. Done when two sessions share one
-  JVM and the daemon exits on idle.
+- [ ] **Stage 2: daemon + Python relay** — branch `feat/daemon-relay`, PR open (2026-10-17).
+  Delivered on the branch: `DaemonServer` (Unix domain socket, one LSP front end per connection, shared
+  `WorkspaceRegistry`, idle watchdog, `groovyscope/status`, `groovyscope/shutdownDaemon`), `SymbolStore`
+  (SQLite symbol cache keyed by content hash, answers symbol searches before the first compile), engine
+  `daemon` command and `--cache-dir`; Python `daemon.py`, `rpc.py`, `relay.py`, `lsp --stdio` relays through
+  the daemon with direct-exec fallback, real `daemon start|stop|status`, CDS archive flags, doctor daemon
+  line; specs and tests including a real daemon lifecycle integration test. Per-file incremental
+  invalidation deferred (full recompile inside the warm JVM is fast enough for now).
 - [ ] **Stage 3: CodeNarc + formatter + diagnostics** — branch `feat/lint-format`.
   CodeNarc 4 in process with the bundled rulesets (prune unknown rules), Groovy 6 type-checker extensions,
   GrEclipse formatting via spotless-lib returning TextEdits, pull diagnostics, codeAction, `check` and
