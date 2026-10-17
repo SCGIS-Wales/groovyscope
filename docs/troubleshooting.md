@@ -14,6 +14,7 @@ hard failures.
 | `FAIL engine jar SHA-256 mismatch` | The bundled JAR was modified; reinstall the wheel |
 | `FAIL config ...` | The message names the key (`daemon.heap: 'lots' does not match ...`); fix `.groovyscope.yaml` or the `GROOVYSCOPE_*` variable |
 | Kiro `/code status` does not list groovyscope | Run `groovyscope kiro init` in the workspace root, restart Kiro CLI; check `/code logs -l ERROR` |
+| Kiro says `agent "groovy" not found, using "kiro_default"` | The agent was written by groovyscope 0.6.x or earlier with a `permissions` block Kiro CLI 2.x ignores; run `groovyscope kiro repair`, then `kiro-cli agent list` should show `groovy` without "(v3 format)" |
 | groovyscope entry vanished from `lsp.json` | `/code init` overwrote it (Kiro#10684); run `groovyscope kiro repair` |
 | Kiro shows `1 MCP failure` | `groovyscope mcp` could not start or reach the daemon; run `groovyscope doctor`, then `groovyscope daemon status` and read its log |
 | An MCP tool answers `... failed: ...` | The engine refused the request (unknown symbol, bad position, unknown change kind); the message names the cause |

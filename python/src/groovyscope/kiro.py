@@ -19,6 +19,28 @@ KIRO_FILES: tuple[tuple[str, str], ...] = (
     ("steering/groovyscope.md", ".kiro/steering/groovyscope.md"),
 )
 BACKUP_SUFFIX = ".bak"
+# Keys earlier groovyscope releases wrote that current Kiro CLI misreads, removed on merge only while they still
+# hold exactly what groovyscope wrote. A `permissions` block makes Kiro CLI 2.x treat the agent as V3-only and
+# ignore it ("agent groovy not found"); the agent now uses allowedTools and toolsSettings instead.
+RETIRED_KEYS: dict[str, dict[str, Any]] = {
+    ".kiro/agents/groovy.json": {
+        "permissions": {
+            "rules": [
+                {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},
+                {
+                    "capability": "shell",
+                    "match": ["./gradlew *", "groovyscope *", "git status", "git diff *"],
+                    "effect": "allow",
+                },
+                {
+                    "capability": "shell",
+                    "match": ["grep *", "rg *", "sed *", "awk *", "head *", "tail *", "find * -name *.groovy*"],
+                    "effect": "ask",
+                },
+            ]
+        },
+    },
+}
 KIRO_INIT_WARNING = (
     "Kiro's `/code init` can overwrite custom entries in .kiro/settings/lsp.json (kirodotdev/Kiro#10684). "
     "Commit the file and run `groovyscope kiro repair` if the groovy entry disappears."
@@ -55,6 +77,9 @@ def merge_content(existing: str | None, template: str, *, is_json: bool, force: 
     if not isinstance(current, dict):
         msg = f"{path} must contain a JSON object; rerun with --force to replace it"
         raise ValueError(msg)
+    for key, value in RETIRED_KEYS.get(path, {}).items():
+        if current.get(key) == value:
+            del current[key]
     merged = deep_merge(current, json.loads(template))
     return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
 
