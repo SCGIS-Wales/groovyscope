@@ -180,8 +180,8 @@ def test_mcp_command_serves_over_the_daemon(
     monkeypatch.setattr(
         cli,
         "_MCP_SERVE",
-        lambda root, socket_file, output, environ, reconnect: (
-            served.append((root, socket_file, output, environ, reconnect)) or 0
+        lambda root, socket_file, output, environ, reconnect, configuration=None: (
+            served.append((root, socket_file, output, environ, reconnect, configuration)) or 0
         ),
     )
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "mcp"])
@@ -291,7 +291,7 @@ def test_daemon_commands(
     )
     restarted = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"])
     assert restarted.exit_code == 0 and "daemon restarted" in restarted.output
-    assert "started with a different configuration" in restarted.output
+    assert "could not reload it" in restarted.output and "daemon restart" in restarted.output
 
     def stop_fails(_s: object) -> bool:
         msg = "did not stop"

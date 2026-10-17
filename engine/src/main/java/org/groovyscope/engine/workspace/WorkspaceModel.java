@@ -46,8 +46,8 @@ import org.groovyscope.engine.profiles.Profile;
 public final class WorkspaceModel {
 
     private final Path root;
-    private final EngineConfig config;
-    private final List<String> excludes;
+    private volatile EngineConfig config;
+    private volatile List<String> excludes;
     private final Map<String, String> openDocuments = new ConcurrentHashMap<>();
     private final Map<String, Integer> openCounts = new HashMap<>();
     private volatile Path realRoot;
@@ -64,6 +64,16 @@ public final class WorkspaceModel {
 
     public EngineConfig config() {
         return config;
+    }
+
+    /**
+     * Replaces the configuration (classpath, excludes, every setting) in place, so a re-exported classpath or an
+     * edited {@code .groovyscope.yaml} applies without restarting the daemon. Open documents are kept.
+     */
+    public void reconfigure(EngineConfig replacement) {
+        EngineConfig next = Objects.requireNonNull(replacement, "replacement");
+        this.excludes = next.exclude().stream().flatMap(WorkspaceModel::globVariants).toList();
+        this.config = next;
     }
 
     /** Absolute classpath entries, resolved against the root. */
@@ -218,6 +228,8 @@ public final class WorkspaceModel {
         StringBuilder text = new StringBuilder();
         List<Path> files = new ArrayList<>(discoverCompileFiles());
         files.addAll(profileInputs());
+        // A rebuilt module jar or classes folder on the classpath changes what resolves, too.
+        files.addAll(classpath());
         for (Path file : files) {
             text.append(file).append('|');
             try {
@@ -232,7 +244,21 @@ public final class WorkspaceModel {
 
     /** Groovy documents keyed by file URI: disk contents overlaid with open documents. Lint and format use these. */
     public Map<String, String> sources() {
-        return read(discoverSourceFiles());
+        return read(discoverSourceFiles(), false);
+    }
+
+    /** The URIs {@link #sources()} would carry, without reading any file: disk files plus open Groovy documents. */
+    public Set<String> sourceUris() {
+        Set<String> uris = new java.util.TreeSet<>();
+        for (Path file : discoverSourceFiles()) {
+            uris.add(toUri(file));
+        }
+        for (String open : openDocuments.keySet()) {
+            if (isGroovyUri(open)) {
+                uris.add(open);
+            }
+        }
+        return uris;
     }
 
     /**
@@ -240,10 +266,11 @@ public final class WorkspaceModel {
      * {@code workspace.javaSources} is on. Groovy's parser reads Java syntax, so Java classes become resolvable.
      */
     public Map<String, String> compileSources() {
-        return read(discoverCompileFiles());
+        return read(discoverCompileFiles(), config.javaSources());
     }
 
-    private Map<String, String> read(List<Path> files) {
+    private Map<String, String> read(List<Path> files, boolean withJava) {
+        long limit = config.maxFileBytes();
         Map<String, String> sources = new TreeMap<>();
         for (Path file : files) {
             String uri = toUri(file);
@@ -257,9 +284,16 @@ public final class WorkspaceModel {
             }
         }
         for (Map.Entry<String, String> open : openDocuments.entrySet()) {
-            if (isGroovyUri(open.getKey())) {
-                sources.put(open.getKey(), open.getValue());
+            String uri = open.getKey();
+            if (!isGroovyUri(uri) && !(withJava && isJavaUri(uri))) {
+                continue;
             }
+            if (limit > 0 && open.getValue().length() > limit) {
+                FileWalker.reportOnce("size:" + uri, "skipping open " + uri + ": " + open.getValue().length()
+                        + " chars is over workspace.maxFileBytes (" + limit + ")");
+                continue;
+            }
+                sources.put(uri, open.getValue());
         }
         return sources;
     }

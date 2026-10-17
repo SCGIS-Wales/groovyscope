@@ -34,7 +34,7 @@ Then open any Groovy project:
 cd your-groovy-project
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
-> /mcp                            # expect: groovyscope running 26 tools
+> /mcp                            # expect: groovyscope running 27 tools
 ```
 
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
@@ -93,7 +93,7 @@ them returns a whole file.
 | `groovyscope logs [-n N] [-f] [--kiro]` | The engine daemon's log for this workspace, or groovyscope's lines from Kiro CLI's logs |
 | `groovyscope trust [--revoke] [--list]` | Trust this workspace, so its `.groovyscope.yaml` may set `workspace.trust`, `jdk.home` and rule sets, and `classpath` may run its build tool ([security](docs/security.md)) |
 | `groovyscope init [--dry-run]` | Writes a starting `.groovyscope.yaml` (source roots, Groovy version) from the project's layout and build files; existing settings win |
-| `groovyscope classpath [--tool gradle\|maven] [--timeout N]` | Asks the project's Gradle (init script) or Maven build for its compile and test classpath and writes it to `workspace.classpathFile`; trusted workspaces only, since it runs the build scripts |
+| `groovyscope classpath [--tool gradle\|maven] [--timeout N]` | Asks the project's Gradle (init script) or Maven build for its compile and test classpath and writes it to `workspace.classpathFile` with a fingerprint of the build files, so a later dependency change shows as `stale`; a running daemon reloads it in place. Trusted workspaces only, since it runs the build scripts |
 | `groovyscope kiro init \| repair [--global] [--full] [--agent-format auto\|v2\|universal\|v3] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project. The agent keeps its format (V2, universal or V3) and its `tools: ["*"]`, so every MCP server you have stays usable |
 | `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif] [--import-sarif FILE]` | All findings, plus the build's SARIF findings (SpotBugs; `reports.sarif` or the default output when present); `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
 | `groovyscope review [PATHS] \| --changed [--base main] [--staged]` | Findings grouped by the practices checklist; with `--changed`, the branch reviewed as a merge request: blocking, should fix, nits on the changed lines, impact of changed declarations, risky constructs added, uncovered methods, verdict ([docs/ci.md](docs/ci.md)) |
@@ -160,7 +160,7 @@ closed-world), and parallel calls are queued safely on the one engine session.
 | `impact_of(symbol, change?)` | Direct and transitive callers, overrides, tests, dynamic sites, risk and suggested checks |
 | `check(paths?, profile?, include?, codes?, max_priority?, limit?, cursor?)` | Compile, lint, type-check and practice findings, worst first, with counts per code (`byCode`) and a `fixable` flag; `codes` keeps only those codes, `max_priority` 1 errors, 2 and warnings, 3 and info. Files whose imports cannot resolve are summarised once under `missingDependencies`. The build's SARIF findings (SpotBugs) are merged in and counted under `imported` |
 | `review(paths?, top?, max_priority?)` | The same findings grouped by the review checklist, with counts per code and the profiles governing the paths |
-| `review_changes(base?, staged?, top?)` | The branch reviewed as a merge request: changed files and lines from git, findings on the changed lines grouped `blocking`, `shouldFix` and `nits`, pre-existing findings as counts, `impact` of changed declarations, `risky` constructs added, `uncovered` methods in the change, and a one-sentence `verdict` |
+| `review_changes(base?, staged?, top?)` | The branch reviewed as a merge request: changed files and lines from git, findings on the changed lines grouped `blocking`, `shouldFix` and `nits`, pre-existing findings as counts, `impact` of changed declarations, `risky` constructs added, `uncovered` methods in the change, and a one-sentence `verdict`; plus `comments` (path, line, body, written for the author) and a `summaryComment` ready to post on a GitLab merge request |
 | `coverage_gaps(paths?, limit?, cursor?)` | Classes and methods no test executed, from the JaCoCo XML report, most missed lines first, with the overall line coverage |
 | `explain_code(symbol?, path?)` | What a class, method, field or file does, as facts: members with types, each method's parameters, return, branches, calls made (with confidence) and received, fields read and written, exceptions thrown and caught, the external world touched (http, file, sql, process, environment, clock, random, logging), public methods grouped by verb, and the classes it is used by and uses. The agent writes the prose from these, never from names |
 | `relationship_graph(symbols?, paths?, kinds?, depth?, level?, max_nodes?, drawio_path?, mermaid?)` | How classes relate: `extends`, `implements`, `has` (a field typed with another class), `uses` (a public method takes or returns one), `calls` (aggregated, weakest confidence). Seeded by symbols or files with a hop depth, capped best-connected first, or one class's methods with `level: method`. `drawio_path` writes a draw.io file laid out on an A4 page (calm palette, no overlaps, legend); `mermaid` adds a class diagram |
@@ -171,7 +171,8 @@ closed-world), and parallel calls are queued safely on the one engine session.
 | `profile_status(path)` | Target Groovy, compiling service, construct status on the runtime, descriptor parameters, test seams and protected code of a governed file |
 | `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |
 | `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing`, `metaClass` writes, `@Grab`, `Eval`, `execute()` |
-| `workspace_status()` | Daemon state, engine version, root, file count and trust flag |
+| `workspace_status()` | Daemon state, engine version, root, file count, trust flag, and the `classpath` state (`fresh`, `stale`, `missing`, `configured`, `none`) |
+| `refresh_classpath(timeout?)` | Exports the classpath again from the build after a dependency changed (`check` says `classpath.state: stale`); the engine picks it up on its next request. Runs the build, trusted workspaces only |
 
 ## Configuration
 

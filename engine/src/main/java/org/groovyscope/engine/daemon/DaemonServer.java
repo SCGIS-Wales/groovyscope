@@ -75,6 +75,9 @@ public final class DaemonServer implements Closeable {
     }
 
     private final Path socketPath;
+    /** How long the exit waits for connections accepted just before it. */
+    static final Duration EXIT_GRACE = Duration.ofSeconds(30);
+
     private final WorkspaceRegistry registry;
     private final EngineConfig config;
     private final Duration idleTimeout;
@@ -282,7 +285,7 @@ public final class DaemonServer implements Closeable {
         try (InputStream in = Channels.newInputStream(channel); OutputStream out = Channels.newOutputStream(channel)) {
             front = new GroovyscopeLanguageServer(
                     code -> closeQuietly(channel), socketPath.toAbsolutePath().getParent(), config, registry,
-                    this::requestExit);
+                    this::requestExit, registry::config, registry::reload);
             Launcher<LanguageClient> launcher = new LSPLauncher.Builder<LanguageClient>().setLocalService(front)
                     .setRemoteInterface(LanguageClient.class).setInput(in).setOutput(out)
                     .wrapMessages(org.groovyscope.engine.lsp.GroovyscopeLanguageServer.messageLogging()).create();
@@ -314,15 +317,32 @@ public final class DaemonServer implements Closeable {
         Duration idle = Duration.between(lastActivity.get(), Instant.now());
         if (idle.compareTo(idleTimeout) >= 0) {
             org.groovyscope.engine.log.EngineLog.info("%s", "idle for " + idle.toSeconds() + "s, exiting");
-            requestExit();
+            requestExit(true);
         }
     }
 
     /** Stops accepting and signals the owner to exit; safe to call more than once. */
     public void requestExit() {
+        requestExit(false);
+    }
+
+    /**
+     * @param graceful an idle exit: a client accepted between the idle check and {@code close()} is still being
+     *                 served, so the exit waits (bounded) for it to finish; an explicit shutdown does not wait
+     */
+    private void requestExit(boolean graceful) {
         if (exitRequested.compareAndSet(false, true)) {
             Thread thread = new Thread(() -> {
                 close();
+                long deadline = System.nanoTime() + (graceful ? EXIT_GRACE.toNanos() : 0L);
+                while (connections.get() > 0 && System.nanoTime() < deadline) {
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
                 onExit.run();
             }, "groovyscope-daemon-exit");
             thread.setDaemon(true);

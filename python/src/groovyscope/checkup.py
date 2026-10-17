@@ -14,11 +14,14 @@ from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
 from groovyscope import __version__, benchmark, daemon, doctor, kiro, kiro_agent, profiles
-from groovyscope.classpath import DEFAULT_FILE, GRADLE_FILES, detect_tool
+from groovyscope import classpath as classpath_state
+from groovyscope.classpath import DEFAULT_FILE
 from groovyscope.config import load_config
 
-BUILD_FILES = (*GRADLE_FILES, "pom.xml", "gradle/libs.versions.toml")
 MAX_MESSAGE = 220
+# How each classpath state shows in the report: stale is information because the engine still answers, with
+# library classes added since the export unresolved until the next `groovyscope classpath`.
+CLASSPATH_LEVELS = {"fresh": "ok", "configured": "ok", "stale": "info", "missing": "warn", "none": "info"}
 
 
 class Item(TypedDict):
@@ -109,6 +112,9 @@ def kiro_files_item(
     written_paths = kiro.apply_changes(kiro_home, changes)
     what = "installed" if not present else "refreshed"
     message = f"{what} in {kiro_home} ({len(written_paths)} file(s), backups kept)"
+    notes = [change["note"] for change in changes if change.get("note")]
+    if notes:
+        message += "; " + "; ".join(notes)
     return ({"level": "ok", "name": "kiro files", "message": message}, [f"Kiro files {message}"])
 
 
@@ -158,51 +164,16 @@ def workspace_items(root: Path, config_path: Path | None, environ: Mapping[str, 
                 "safe": False,
             }
         )
-    tool = detect_tool(root)
     classpath_file = root / Path(effective["workspace"].get("classpathFile") or DEFAULT_FILE)
     configured = bool(effective["workspace"].get("classpath"))
-    if classpath_file.is_file():
-        newest_build = max((root / name).stat().st_mtime for name in BUILD_FILES if (root / name).is_file())
-        if newest_build > classpath_file.stat().st_mtime:
-            items.append(
-                {
-                    "level": "info",
-                    "name": "classpath",
-                    "message": "a build file changed after the classpath was exported",
-                    "fix": "groovyscope classpath",
-                    "safe": False,
-                }
-            )
-        else:
-            entries = sum(
-                1
-                for line in classpath_file.read_text(encoding="utf-8").splitlines()
-                if line.strip() and not line.startswith("#")
-            )
-            items.append(
-                {"level": "ok", "name": "classpath", "message": f"{entries} entries from {classpath_file.name}"}
-            )
-    elif configured:
-        items.append({"level": "ok", "name": "classpath", "message": "workspace.classpath set in the configuration"})
-    elif tool is not None:
-        items.append(
-            {
-                "level": "warn",
-                "name": "classpath",
-                "message": f"no classpath yet ({tool} build found): library classes do not resolve and files with "
-                "library imports get one GS100 warning each" + ("" if trusted else "; needs `groovyscope trust` first"),
-                "fix": "groovyscope classpath",
-                "safe": False,
-            }
-        )
-    else:
-        items.append(
-            {
-                "level": "info",
-                "name": "classpath",
-                "message": "no build tool here; list jars under workspace.classpath if needed",
-            }
-        )
+    state = classpath_state.status(root, classpath_file, configured=configured)
+    item: Item = {"level": CLASSPATH_LEVELS[state["state"]], "name": "classpath", "message": state["message"]}
+    if state.get("fix"):
+        if not trusted:
+            item["message"] += "; needs `groovyscope trust` first"
+        item["fix"] = state["fix"]
+        item["safe"] = False
+    items.append(item)
     return items
 
 
@@ -242,11 +213,9 @@ def daemon_item(root: Path, environ: Mapping[str, str], config_hash: str | None)
     running = status.get("configHash") if isinstance(status, Mapping) else None
     if config_hash and isinstance(running, str) and running and running != config_hash:
         return {
-            "level": "warn",
+            "level": "info",
             "name": "daemon",
-            "message": "running with an older configuration",
-            "fix": "groovyscope daemon restart",
-            "safe": False,
+            "message": "running with an older configuration; the next request reloads it in place",
         }
     return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engineVersion', '?')})"}
 

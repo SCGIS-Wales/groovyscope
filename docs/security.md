@@ -46,6 +46,10 @@ from that list for name resolution runs no code from them; global AST transforma
 classpath still load only with `workspace.trust`, which itself needs the trust record. `groovyscope init`
 reads build files as text and runs nothing.
 
+The MCP tool `refresh_classpath` is the same export for the agent and is gated the same way: in an untrusted
+workspace it returns a refusal naming `groovyscope trust`, and it never runs on its own; the agent offers it
+when `check` reports the classpath as stale.
+
 ## What runs at agent start
 
 The groovy agent's start hook runs `groovyscope checkup --agent` in the project folder. It writes only files

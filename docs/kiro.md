@@ -85,7 +85,7 @@ and reported. `groovyscope doctor` shows the Kiro CLI version and the agent's fo
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
 > /code logs -l ERROR   # empty is good
-> /mcp                  # expect: groovyscope running 26 tools, next to your other servers
+> /mcp                  # expect: groovyscope running 27 tools, next to your other servers
 > /context show         # expect: steering/groovyscope.md among the context files
 > /tools                # the other servers' tools are listed too (available, prompting)
 ```
@@ -128,7 +128,8 @@ sharing the workspace daemon with the LSP side) adds twenty-six tools; the READM
 - "What breaks if I change the signature of `Greeter.greet`?" → `impact_of("app.Greeter.greet", change="signature")`
 - "Review the files I touched and fix what is safe" → `review(paths=[...])`, then `fix(paths=[...], apply=true)`;
   `check(codes=["CatchException"])` or `check(max_priority=1)` narrows a long list, and a
-  `missingDependencies` summary means `groovyscope classpath` has not been run
+  `missingDependencies` summary means `groovyscope classpath` has not been run, and `classpath.state: stale`
+  means a build file changed since: `refresh_classpath()` exports it again (trusted workspaces)
 - "Why is line 40 flagged?" → `explain("GS002")`
 - "Can I use `Set.of` in this plugin?" → `profile_status(path)`, which names the runtime's Groovy version and
   the constructs it has not proven
@@ -144,7 +145,18 @@ outside Kiro, run the MCP Inspector against it from the workspace root:
 npx @modelcontextprotocol/inspector groovyscope mcp
 ```
 
-`workspace_status` is the cheapest first call: it starts the daemon if needed and reports the engine version.
+`workspace_status` is the cheapest first call: it starts the daemon if needed and reports the engine version
+and whether the classpath still matches the build. Configuration changes reach a running engine on the next
+request: the MCP server compares the effective configuration (`.groovyscope.yaml`, the classpath file) with
+what the engine runs and sends a `groovyscope/reloadConfig` when they differ, so neither Kiro nor the daemon
+needs a restart after `groovyscope classpath` or an edit to the configuration.
+
+### Posting a review on GitLab
+
+`review_changes` returns `comments` (one per finding, with `path`, `line` and a `body` written to the author)
+and a `summaryComment`. With a GitLab MCP server in the same Kiro session the agent offers to post them as
+inline discussions on the merge request and the summary as a note; see [docs/prompts.md](prompts.md#1-review-this-branch-as-a-merge-request-reviewer)
+for the prompt and a server entry for `mcp.json`.
 
 ## Known rough edges
 

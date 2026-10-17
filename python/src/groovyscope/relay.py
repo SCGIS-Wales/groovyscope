@@ -27,8 +27,11 @@ async def pump(reader: asyncio.StreamReader, write: Write, on_eof: Close) -> Non
 
 
 async def relay(socket_file: Path, stdin: asyncio.StreamReader, write_out: Write, close_out: Close) -> int:
-    """Relay until the socket closes (stdin EOF half-closes the socket first). Returns 0."""
+    """Relay until the socket closes (stdin EOF half-closes the socket first). Returns 0, or 1 when the daemon
+    went away mid-session: the client then restarts the server, which is the only sound recovery. Only a failure
+    to connect at all raises, so the caller can fall back to running the engine directly."""
     sock_reader, sock_writer = await asyncio.open_unix_connection(str(socket_file))
+    code = 0
 
     async def to_socket(data: bytes) -> None:
         sock_writer.write(data)
@@ -40,14 +43,27 @@ async def relay(socket_file: Path, stdin: asyncio.StreamReader, write_out: Write
 
     stdin_task = asyncio.create_task(pump(stdin, to_socket, half_close_socket))
     socket_task = asyncio.create_task(pump(sock_reader, write_out, close_out))
-    await socket_task
+    try:
+        await socket_task
+    except OSError as exc:
+        print(
+            f"groovyscope: connection to the daemon lost ({exc}); the client should restart the server", file=sys.stderr
+        )
+        code = 1
     stdin_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
+    try:
         await stdin_task
+    except asyncio.CancelledError:
+        pass
+    except OSError as exc:
+        print(
+            f"groovyscope: connection to the daemon lost ({exc}); the client should restart the server", file=sys.stderr
+        )
+        code = 1
     sock_writer.close()
     with contextlib.suppress(OSError):
         await sock_writer.wait_closed()
-    return 0
+    return code
 
 
 async def run(socket_file: Path) -> int:

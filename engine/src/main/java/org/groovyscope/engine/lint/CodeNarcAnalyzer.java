@@ -182,7 +182,7 @@ public final class CodeNarcAnalyzer {
                 analyzer.setSource(new SourceString(text, path, path.substring(path.lastIndexOf('/') + 1)));
             }
             results = analyzer.analyze(ruleSet);
-        } catch (RuntimeException | LinkageError | StackOverflowError e) {
+        } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
             // A rule that breaks on exotic input (or overflows the stack on deep nesting) must not take the
             // server down; OutOfMemoryError is left to propagate.
             return List.of(new Diagnostic(uri, Range.of(0, 0, 0, 1), Severity.WARNING, SOURCE, "codenarc-failed",

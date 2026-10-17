@@ -34,6 +34,7 @@ import org.groovyscope.engine.callgraph.CallGraph;
 import org.groovyscope.engine.callgraph.ImpactAnalyzer;
 import org.groovyscope.engine.compile.CompilationResult;
 import org.groovyscope.engine.compile.GroovyCompiler;
+import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.index.AstIndex;
 import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.index.NodeEntry;
@@ -278,6 +279,22 @@ public final class LanguageServices {
         changes.incrementAndGet();
     }
 
+    /**
+     * Applies a new configuration: the workspace model takes it, every cache derived from the old one (quality
+     * services with their rule sets and analysers, the call graph, folded diagnostics) is dropped, and the
+     * snapshot is marked stale so the next query recompiles against the new classpath and settings.
+     */
+    public void reconfigure(EngineConfig replacement) {
+        workspace.reconfigure(replacement);
+        synchronized (lock) {
+            quality = null;
+            graph = null;
+            graphVersion = -1;
+            folded = null;
+        }
+        markDirty();
+    }
+
     public boolean isDirty() {
         return compiled != changes.get();
     }
@@ -311,7 +328,7 @@ public final class LanguageServices {
                 version++;
                 snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
                 persistSymbols(snapshot, sources);
-            } catch (RuntimeException | LinkageError | StackOverflowError e) {
+            } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
                 org.groovyscope.engine.log.EngineLog.error(e, "compile of %s failed", workspace.root());
                 // Recorded as a snapshot with the failure as a diagnostic, so later requests answer from it until
                 // something changes, instead of repeating the same failure on every request.

@@ -25,6 +25,7 @@ import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.groovyscope.engine.config.EngineConfig;
+import org.groovyscope.engine.daemon.WorkspaceRegistry;
 import org.groovyscope.engine.services.LanguageServices;
 
 /** Wires a {@link GroovyscopeLanguageServer} to a pair of streams and blocks until the client goes away. */
@@ -47,9 +48,16 @@ public final class LspServerRunner {
     public static GroovyscopeLanguageServer serve(InputStream in, OutputStream out, Path fallbackRoot,
             IntConsumer exitHandler, EngineConfig config, Function<Path, LanguageServices> provider)
             throws InterruptedException {
-        GroovyscopeLanguageServer server = provider == null
-                ? new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config)
-                : new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config, provider, null);
+        GroovyscopeLanguageServer server;
+        if (provider == null) {
+            server = new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config);
+        } else if (provider instanceof WorkspaceRegistry registry) {
+            // A reload must reach the registry, or workspaces opened later would start on the old configuration.
+            server = new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config, provider, null,
+                    registry::config, registry::reload);
+        } else {
+            server = new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config, provider, null);
+        }
         Launcher<LanguageClient> launcher = new LSPLauncher.Builder<LanguageClient>().setLocalService(server)
                 .setRemoteInterface(LanguageClient.class).setInput(in).setOutput(out)
                 .wrapMessages(MessageLogging.wrapper()).create();

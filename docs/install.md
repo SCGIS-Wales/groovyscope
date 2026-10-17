@@ -94,9 +94,12 @@ project plus the compiled class folders, or `mvn dependency:build-classpath` for
 a dependency that cannot be fetched is skipped, and paths that do not exist yet (not built) are reported and
 left out. Everything the build needs to configure itself (its Gradle version, a pinned Java toolchain, network
 access to its repositories) is needed here too: the command is the build, not a parser of it. The list lands in `workspace.classpathFile` (`.groovyscope/classpath.txt` by default; add it to
-`.gitignore`, it holds absolute paths), its entries join `workspace.classpath`, and a running daemon is stopped
-so the next request starts with the new classpath. Rerun it after dependency changes. Because the build
-scripts execute, the command is refused in a workspace you have not trusted ([security](security.md)).
+`.gitignore`, it holds absolute paths) with a fingerprint of every build file (root and nested
+`build.gradle`, `pom.xml`, `gradle.properties`, `libs.versions.toml`), its entries join `workspace.classpath`,
+and a running daemon reloads it in place. Rerun it after dependency changes: `checkup`, `check` and
+`workspace_status` report the classpath as `stale` once a build file is newer than the export, and the agent
+can run the export itself through `refresh_classpath`. Because the build scripts execute, both are refused in
+a workspace you have not trusted ([security](security.md)).
 
 Until a classpath is configured, imports of library classes fold into one `GS100` warning per file naming the
 missing packages, rather than one error per import and per use. `practices.severity: {GS100: off}` silences

@@ -105,6 +105,35 @@ class WorkspaceModelSpec extends Specification {
         model.sources().keySet() == ['file:///virtual/New.groovy'] as Set
     }
 
+    def 'an open Java document stays in the compile and oversized open documents are left out'() {
+        given:
+        def model = new WorkspaceModel(temp, EngineConfig.fromJson('{"workspace": {"maxFileBytes": 20}}'))
+
+        when:
+        model.open('file:///virtual/Helper.java', 'class Helper {}')
+        model.open('file:///virtual/Huge.groovy', 'class Huge { /* ' + ('x' * 100) + ' */ }')
+
+        then:
+        model.compileSources().keySet() == ['file:///virtual/Helper.java'] as Set
+        model.sources().keySet().empty
+        model.sourceUris() == ['file:///virtual/Huge.groovy'] as Set
+    }
+
+    def 'the classpath entries take part in the disk fingerprint'() {
+        given:
+        Path jar = temp.resolve('lib/dep.jar')
+        Files.createDirectories(jar.parent)
+        Files.write(jar, [1, 2, 3] as byte[])
+        def model = new WorkspaceModel(temp, EngineConfig.fromJson('{"workspace": {"classpath": ["lib/dep.jar"]}}'))
+        String before = model.diskFingerprint()
+
+        when:
+        Files.write(jar, [1, 2, 3, 4] as byte[])
+
+        then:
+        model.diskFingerprint() != before
+    }
+
     def 'uri and path conversions'() {
         expect:
         WorkspaceModel.toPath(WorkspaceModel.toUri(temp)) == temp.toAbsolutePath().normalize()

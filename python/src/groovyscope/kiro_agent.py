@@ -255,14 +255,28 @@ def merge_agent(existing: str | None, template: str, *, requested: str, run: Kir
         return {"text": dump(v2), "format": "v2", "note": note}
     if current_format == "universal" and v2_view(current) == v2 and existing is not None:
         return {"text": existing, "format": "universal", "note": ""}
-    upgraded = upgrade(dump(v2), run)
-    if upgraded is None:
+    return to_universal(dump(v2), existing if current_format == "universal" else None, run)
+
+
+def to_universal(v2_text: str, universal_existing: str | None, run: KiroRunner | None) -> AgentMerge:
+    """The universal form of a merged V2 agent through kiro-cli; without kiro-cli, an existing universal file is
+    left as it is (writing the V2 view would drop its permissions block and stamp, and the V3 engine would lose the
+    agent), and a new file is written as V2."""
+    upgraded = upgrade(v2_text, run)
+    if upgraded is not None:
+        return {"text": upgraded, "format": "universal", "note": ""}
+    if universal_existing is not None:
         return {
-            "text": dump(v2),
-            "format": "v2",
-            "note": "kiro-cli cannot write the universal format here; wrote v2 (loaded by the default V2 engine)",
+            "text": universal_existing,
+            "format": "universal",
+            "note": "agent left unchanged: kiro-cli is needed to update a universal agent file; run "
+            "`groovyscope kiro repair --global` in a terminal with kiro-cli on PATH",
         }
-    return {"text": upgraded, "format": "universal", "note": ""}
+    return {
+        "text": v2_text,
+        "format": "v2",
+        "note": "kiro-cli cannot write the universal format here; wrote v2 (loaded by the default V2 engine)",
+    }
 
 
 def mcp_servers(files: Sequence[Path]) -> list[str]:

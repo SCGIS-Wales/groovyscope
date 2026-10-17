@@ -72,3 +72,36 @@ def test_daemon_lifecycle_through_the_cli(tmp_path: Path, short_dir: Path, monke
         assert stopped.exit_code == 0, stopped.output
     assert "daemon stopped" in stopped.output
     assert runner.invoke(cli.main, ["--root", str(workspace), "daemon", "status"]).exit_code == 3
+
+
+@pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
+def test_configuration_changes_reach_the_running_daemon_in_place(
+    tmp_path: Path, short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "ws"
+    (workspace / "src" / "main" / "groovy").mkdir(parents=True)
+    (workspace / "src" / "main" / "groovy" / "Hello.groovy").write_text("class Hello { def hi() { 'hi' } }\n")
+    monkeypatch.setenv(daemon.SOCKET_DIR_ENV, str(short_dir))
+    monkeypatch.setenv(daemon.CACHE_DIR_ENV, str(tmp_path / "cache"))
+    monkeypatch.setenv("GROOVYSCOPE_DAEMON__IDLETIMEOUTMINUTES", "1")
+    runner = CliRunner()
+    try:
+        started = runner.invoke(cli.main, ["--root", str(workspace), "daemon", "start"])
+        assert started.exit_code == 0, started.output
+        socket_file = daemon.socket_path(workspace, dict(os.environ))
+        before = daemon.probe(socket_file) or {}
+        first = runner.invoke(cli.main, ["--root", str(workspace), "check", "--json"])
+        assert first.exit_code in {0, 1}, first.output
+        assert daemon.probe(socket_file) == before  # same daemon, same configuration
+
+        (workspace / ".groovyscope.yaml").write_text("practices:\n  enabled: false\n", encoding="utf-8")
+        second = runner.invoke(cli.main, ["--root", str(workspace), "check", "--json"])
+        assert second.exit_code in {0, 1}, second.output
+        after = daemon.probe(socket_file) or {}
+        assert after.get("configHash") != before.get("configHash")
+        assert "could not reload" not in second.output and "daemon restart" not in second.output
+        status = runner.invoke(cli.main, ["--root", str(workspace), "daemon", "status"])
+        assert re.search(r"running +yes", status.output)
+    finally:
+        stopped = runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])
+        assert stopped.exit_code == 0, stopped.output

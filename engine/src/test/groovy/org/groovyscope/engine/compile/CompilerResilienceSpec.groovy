@@ -93,6 +93,22 @@ class CompilerResilienceSpec extends Specification {
         services.diagnostics().values().flatten()*.code() == ['engine-crash']
     }
 
+    def 'a compiler bug (GroovyBugError is an AssertionError) is recorded and the next change recovers'() {
+        given:
+        def compiler = new FailingCompiler(failures: 1, failure: new AssertionError('BUG! exception in phase'))
+        def services = services(compiler)
+
+        when:
+        def first = services.diagnostics().values().flatten()*.code()
+        services.markDirty()
+        def second = services.diagnostics().values().flatten()*.code()
+
+        then:
+        first == ['engine-crash']
+        second == []
+        compiler.calls == 2
+    }
+
     def 'deeply nested code that overflows the parser stack is reported, not thrown'() {
         given:
         String nested = 'def x = ' + ('(' * 20_000) + '1' + (')' * 20_000) + '\n'

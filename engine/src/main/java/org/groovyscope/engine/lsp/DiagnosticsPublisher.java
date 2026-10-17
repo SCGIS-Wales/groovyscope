@@ -115,8 +115,9 @@ final class DiagnosticsPublisher {
             for (String uri : gone) {
                 target.publishDiagnostics(new PublishDiagnosticsParams(uri, List.of()));
             }
-        } catch (RuntimeException e) {
-            org.groovyscope.engine.log.EngineLog.warn("%s", "diagnostics failed: " + e);
+        } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
+            // Logged, never swallowed by the scheduler: a silent stop of diagnostics is the worst outcome.
+            org.groovyscope.engine.log.EngineLog.error(e, "diagnostics failed for %s", "workspace");
         }
     }
 
