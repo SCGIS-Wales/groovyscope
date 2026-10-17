@@ -19,7 +19,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Done when: CI green, release PR for 0.1.0 merged, wheel on PyPI (needs the repository transfer first).
   - [x] Repository transferred to `SCGIS-Wales/groovyscope` and remote re-pointed (2026-10-17)
   - [x] `v0.1.0` published to PyPI through `workflow.yml` (2026-10-17, trusted publishing + attestations)
-- [ ] **Stage 1: engine compile + index + LSP navigation** — branch `feat/engine-navigation`, PR open (2026-10-17).
+- [x] **Stage 1: engine compile + index + LSP navigation** — branch `feat/engine-navigation`, PR #10 merged 2026-10-17.
   Delivered on the branch: `config`, `workspace`, `compile` (three-pass strategy, filtered parent class loader,
   trust gate), `index`, `semantics` (confidence per answer), `services`, full LSP wiring (definition,
   typeDefinition, references, hover, documentSymbol, workspaceSymbol, completion, signatureHelp,
@@ -32,7 +32,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   prepareRename/rename, compile diagnostics). Fixture projects. Security tests for `@Grab`, `@ASTTest`
   and untrusted global AST transforms. Done when a references query on a fixture returns correct locations
   through Kiro's `code` tool.
-- [ ] **Stage 2: daemon + Python relay** — branch `feat/daemon-relay`.
+- [ ] **Stage 2: daemon + Python relay** — branch `feat/daemon-relay` (in progress since 2026-10-17).
   Unix domain socket daemon per workspace, idle timeout, SQLite index persistence, CDS archive;
   `daemon.py`, `relay.py`, `rpc.py`; `groovyscope daemon start|stop|status`. Done when two sessions share one
   JVM and the daemon exits on idle.
@@ -63,3 +63,4 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Dependabot PRs (#2-#7) bump pinned actions and the CycloneDX plugin across major versions; review before merging.
 - 2026-10-17: v0.1.0 released. Release PR #8 merged, publish workflow green (build, attest, PyPI, release assets).
   Stage 0 complete. Stage 1 started on `feat/engine-navigation`.
+- 2026-10-17: Stage 1 merged (PR #10). Stage 2 started on `feat/daemon-relay`.
