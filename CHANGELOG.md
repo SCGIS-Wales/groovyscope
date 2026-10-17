@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.5.0...v0.6.0) (2026-10-17)
+
+
+### Features
+
+* mcp server with nine tools and a dynamic code finder (stage 5) ([#18](https://github.com/SCGIS-Wales/groovyscope/issues/18)) ([6f6210f](https://github.com/SCGIS-Wales/groovyscope/commit/6f6210f2d1b00a5e73523fb7ece3880d634aaef1))
+* packaging extras: fetch, Temurin provisioning and a Homebrew tap (stage 6) ([#21](https://github.com/SCGIS-Wales/groovyscope/issues/21)) ([5885ecf](https://github.com/SCGIS-Wales/groovyscope/commit/5885ecf56f6465d3077b644785853aaa174bdf49))
+
+
+### Bug Fixes
+
+* macos-hermetic jdk provisioning test, docs polish and the benchmark protocol (stage 7) ([#22](https://github.com/SCGIS-Wales/groovyscope/issues/22)) ([2de6900](https://github.com/SCGIS-Wales/groovyscope/commit/2de6900d3b74d0f75fc1f046720711db12e10b24))
+
+
+### Documentation
+
+* mark stage 5 merged and stage 6 in progress ([f574c51](https://github.com/SCGIS-Wales/groovyscope/commit/f574c512821cc7f8a218c13b637475b6763ec35f))
+
 ## [0.5.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.4.0...v0.5.0) (2026-10-17)
 
 
