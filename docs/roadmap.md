@@ -59,12 +59,12 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   performance report spec over a generated workspace (timings printed, loose budgets).
   `callgraph/`, `ImpactAnalyzer` with STATIC | INFERRED | DYNAMIC_UNKNOWN confidence, callHierarchy and
   semanticTokens, `impact` CLI command, performance report on a 2,000-file fixture.
-- [ ] **Stage 5: MCP server** — branch `feat/mcp-server` (in progress since 2026-10-17).
+- [x] **Stage 5: MCP server** — branch `feat/mcp-server`, PR #18 merged 2026-10-17.
   `mcp_server.py` on the official `mcp` SDK (`MCPServer`, stdio) over a persistent `rpc.py` session to the
   daemon: find_symbol, goto_definition, find_references, call_graph, impact_of, check, format,
   find_dynamic_code, workspace_status. Compact paginated JSON through `render.py`. Engine gains
   `groovyscope/symbols`, `/definition`, `/references` and `/dynamicCode` plus `DynamicCodeFinder`.
-- [ ] **Stage 6: packaging extras** — branch `feat/packaging-extras`.
+- [ ] **Stage 6: packaging extras** — branch `feat/packaging-extras` (in progress since 2026-10-17).
   Homebrew tap, `fetch --from` fallback, opt-in Temurin provisioning, optional Maven Central publish.
 - [ ] **Stage 7: docs polish, benchmark, upstream watch** — branch `feat/docs-benchmark`.
   Complete docs, credit benchmark on a real repository, monthly check of apache/groovy PR #2936
@@ -89,3 +89,4 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   failed the release PR's macOS run. Stage 5 implemented locally: engine build green, 144 Python tests at
   98% coverage including an end-to-end `groovyscope mcp` test against the real daemon; Kiro CLI 2.32.0
   reports `groovyscope (groovy) initialized`, `/mcp` shows `groovyscope ● running 9 tools`, no error logs.
+- 2026-10-17: Stage 5 merged (PR #18). Stage 6 started on `feat/packaging-extras`.
