@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -35,6 +36,7 @@ from groovyscope.launch import MIN_JDK_FOR_AUTO_CDS, build_engine_command
 from groovyscope.render import compact_json, table
 
 LOG_ENV = "GROOVYSCOPE_LOG"
+LOG = logging.getLogger("groovyscope.cli")
 CONFIG_ENV = "GROOVYSCOPE_CONFIG_JSON"
 BASELINE_PATH = Path(".groovyscope") / "contract-baseline.json"
 LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
@@ -290,6 +292,8 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     if archive is not None:
         archive.parent.mkdir(parents=True, exist_ok=True)
     command = build_engine_command(Path(jdk["home"]), Path(jar["path"]), effective, [], cds_archive=archive)
+    obj["engine_version"] = jar["version"]
+    LOG.debug("engine command: %s", " ".join(command))
     return (command, effective)
 
 
@@ -341,14 +345,39 @@ def daemon_paths(root: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def run_through_daemon(root: Path, command: list[str], effective: dict[str, Any]) -> int | None:
+def config_hash() -> str:
+    """SHA-256 of the configuration handed to the engine, as the engine reports it in its status."""
+    return hashlib.sha256(os.environ.get(CONFIG_ENV, "").encode("utf-8")).hexdigest()
+
+
+def warn_if_stale(status: dict[str, Any]) -> None:
+    """A daemon started with another configuration keeps serving it; say so instead of failing silently."""
+    running = status.get("configHash")
+    if isinstance(running, str) and running and running != config_hash():
+        click.echo(
+            "groovyscope: the daemon was started with a different configuration (.groovyscope.yaml, profiles or "
+            "environment changed); run `groovyscope daemon restart` to apply it",
+            err=True,
+        )
+
+
+def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    """Start the workspace daemon when needed (replacing one from another engine version). Raises on failure."""
+    socket_file, log_file, cache = daemon_paths(obj["root"])
+    daemon_command = daemon_lifecycle.daemon_command(
+        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
+    )
+    status = daemon_lifecycle.ensure_running(
+        daemon_command, socket_file, log_file, dict(os.environ), expected_engine=obj.get("engine_version")
+    )
+    warn_if_stale(status)
+    return (socket_file, status)
+
+
+def run_through_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, Any]) -> int | None:
     """Start the daemon if needed and relay stdio to it. None when that is impossible (caller falls back)."""
     try:
-        socket_file, log_file, cache = daemon_paths(root)
-        daemon_command = daemon_lifecycle.daemon_command(
-            command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
-        )
-        daemon_lifecycle.ensure_running(daemon_command, socket_file, log_file, dict(os.environ))
+        socket_file, _ = ensure_daemon(obj, command, effective)
         return _RELAY(socket_file)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
@@ -374,12 +403,8 @@ def daemon_socket_for(obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     """Make sure the workspace daemon runs and return its socket with the effective configuration."""
     command, effective = resolve_engine(obj)
     hand_over_config(obj, effective)
-    socket_file, log_file, cache = daemon_paths(obj["root"])
-    daemon_command = daemon_lifecycle.daemon_command(
-        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
-    )
     try:
-        daemon_lifecycle.ensure_running(daemon_command, socket_file, log_file, dict(os.environ))
+        socket_file, _ = ensure_daemon(obj, command, effective)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
@@ -442,7 +467,7 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
     command, effective = resolve_engine(obj)
     hand_over_config(obj, effective)
     if effective["daemon"]["enabled"]:
-        code = run_through_daemon(obj["root"], command, effective)
+        code = run_through_daemon(obj, command, effective)
         if code is not None:
             sys.exit(code)
     _EXEC(command[0], [*command, "lsp", "--stdio", "--cache-dir", str(daemon_paths(obj["root"])[2])])
@@ -895,18 +920,24 @@ def daemon() -> None:
 @click.pass_obj
 def daemon_start(obj: dict[str, Any]) -> None:
     """Start the daemon (or report the one already running)."""
-    command, effective = resolve_engine(obj)
-    hand_over_config(obj, effective)
-    socket_file, log_file, cache = daemon_paths(obj["root"])
-    daemon_command = daemon_lifecycle.daemon_command(
-        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
-    )
+    socket_file, _ = daemon_socket_for(obj)
+    status = daemon_lifecycle.probe(socket_file) or {}
+    click.echo(f"daemon running on {socket_file} (engine {status.get('engine', '?')})")
+
+
+@daemon.command("restart")
+@click.pass_obj
+def daemon_restart(obj: dict[str, Any]) -> None:
+    """Stop the daemon and start it again with the current configuration (open editor sessions reconnect)."""
+    socket_file, _, _ = daemon_paths(obj["root"])
     try:
-        status = daemon_lifecycle.ensure_running(daemon_command, socket_file, log_file, dict(os.environ))
+        daemon_lifecycle.stop(socket_file)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"daemon running on {socket_file} (engine {status.get('engine', '?')})")
+    socket_file, _ = daemon_socket_for(obj)
+    status = daemon_lifecycle.probe(socket_file) or {}
+    click.echo(f"daemon restarted on {socket_file} (engine {status.get('engine', '?')})")
 
 
 @daemon.command("stop")

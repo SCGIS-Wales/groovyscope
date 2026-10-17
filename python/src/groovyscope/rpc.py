@@ -10,6 +10,8 @@ from typing import Any
 
 HEADER_END = b"\r\n\r\n"
 DEFAULT_TIMEOUT = 10.0
+MAX_FRAME_BYTES = 512 * 1024 * 1024  # a reply larger than this is refused rather than buffered
+MAX_HEADER_BYTES = 8192
 
 
 def encode(message: dict[str, Any]) -> bytes:
@@ -22,6 +24,9 @@ def split_frame(buffer: bytes) -> tuple[dict[str, Any] | None, bytes]:
     """Return ``(message, rest)`` when ``buffer`` holds a complete frame, else ``(None, buffer)``."""
     end = buffer.find(HEADER_END)
     if end < 0:
+        if len(buffer) > MAX_HEADER_BYTES:
+            msg = "frame header too long"
+            raise ValueError(msg)
         return (None, buffer)
     length = -1
     for line in buffer[:end].decode("ascii", "replace").split("\r\n"):
@@ -30,6 +35,9 @@ def split_frame(buffer: bytes) -> tuple[dict[str, Any] | None, bytes]:
             length = int(value.strip())
     if length < 0:
         msg = "frame without Content-Length"
+        raise ValueError(msg)
+    if length > MAX_FRAME_BYTES:
+        msg = f"frame of {length} bytes exceeds the {MAX_FRAME_BYTES}-byte limit"
         raise ValueError(msg)
     start = end + len(HEADER_END)
     if len(buffer) < start + length:
@@ -48,8 +56,8 @@ def _connect(socket_path: Path, timeout: float) -> socket.socket:
 def request(socket_path: Path, method: str, params: Any = None, timeout: float = DEFAULT_TIMEOUT) -> Any:
     """Send one request and return its result; notifications arriving first are skipped.
 
-    Raises ``OSError`` when the socket is unreachable, ``TimeoutError`` on silence, and ``RuntimeError``
-    when the server answers with an error.
+    Raises ``OSError`` when the socket is unreachable or the connection drops (``ConnectionError``),
+    ``TimeoutError`` on silence, and ``RuntimeError`` when the server answers with an error.
     """
     message = {"jsonrpc": "2.0", "id": 1, "method": method, "params": {} if params is None else params}
     with _connect(socket_path, timeout) as sock:
@@ -59,7 +67,7 @@ def request(socket_path: Path, method: str, params: Any = None, timeout: float =
             chunk = sock.recv(65536)
             if not chunk:
                 msg = f"connection closed before a reply to {method}"
-                raise RuntimeError(msg)
+                raise ConnectionError(msg)
             buffer += chunk
             while True:
                 parsed, buffer = split_frame(buffer)
@@ -99,7 +107,7 @@ def _read_frame(session: Session) -> dict[str, Any]:
         chunk = sock.recv(65536)
         if not chunk:
             msg = "engine closed the session"
-            raise RuntimeError(msg)
+            raise ConnectionError(msg)
         session["buffer"] += chunk
 
 

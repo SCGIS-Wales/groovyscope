@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import logging
 import os
+import stat
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -20,6 +23,9 @@ STATUS_METHOD = "groovyscope/status"
 SHUTDOWN_METHOD = "groovyscope/shutdownDaemon"
 START_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 15.0
+# sun_path is 104 bytes on macOS and the BSDs, 108 on Linux (including the terminating NUL).
+MAX_SOCKET_PATH = {"darwin": 103}.get(sys.platform, 107)
+LOG = logging.getLogger("groovyscope.daemon")
 
 Spawn = Callable[..., Any]
 Probe = Callable[[Path], "dict[str, Any] | None"]
@@ -77,6 +83,48 @@ def log_path(root: Path, environ: Mapping[str, str], platform: str = sys.platfor
     return cache_dir(environ, platform, home) / "daemon" / f"{workspace_key(root)}.log"
 
 
+def secure_dir(path: Path) -> None:
+    """Create ``path`` (and parents) private to this user, or refuse one another user could tamper with: the
+    daemon's socket and log live there, and a planted socket could feed edits to every client."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not hasattr(os, "getuid"):
+        return
+    info = path.stat()
+    if info.st_uid != os.getuid():
+        msg = f"{path} belongs to another user; set GROOVYSCOPE_SOCKET_DIR to a directory you own"
+        raise RuntimeError(msg)
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        LOG.debug("tightening permissions of %s to 0700", path)
+        path.chmod(0o700)
+
+
+def check_socket_path(socket_file: Path) -> None:
+    """Fail clearly instead of timing out when the path is too long for a Unix domain socket."""
+    if len(os.fsencode(str(socket_file))) > MAX_SOCKET_PATH:
+        msg = (
+            f"socket path {socket_file} is longer than {MAX_SOCKET_PATH} bytes; "
+            "set GROOVYSCOPE_SOCKET_DIR to a shorter directory"
+        )
+        raise RuntimeError(msg)
+
+
+@contextlib.contextmanager
+def start_lock(socket_file: Path) -> Iterator[None]:
+    """Serialise probe-and-start across processes, so two clients never start two daemons for one root."""
+    try:
+        import fcntl  # noqa: PLC0415 - POSIX only; Unix domain sockets are too
+    except ImportError:  # pragma: no cover - non-POSIX
+        yield
+        return
+    lock_file = socket_file.with_name(socket_file.name + ".lock")
+    with lock_file.open("a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def probe(socket_file: Path, timeout: float = 5.0) -> dict[str, Any] | None:
     """The daemon's status, or None when nothing answers on the socket."""
     if not socket_file.exists():
@@ -116,12 +164,15 @@ def start(
     sleep: Callable[[float], None] = time.sleep,
     timeout: float = START_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    """Spawn the daemon detached and wait until it answers on the socket. Returns its status."""
+    """Spawn the daemon detached and wait until it answers on the socket. Returns its status. Fails as soon as
+    the JVM exits instead of waiting for the timeout."""
     check = _probe(probe_fn)
-    socket_file.parent.mkdir(parents=True, exist_ok=True)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+    check_socket_path(socket_file)
+    secure_dir(socket_file.parent)
+    secure_dir(log_file.parent)
+    LOG.debug("starting daemon: %s", " ".join(command))
     with log_file.open("ab") as log:
-        spawn(
+        process = spawn(
             list(command),
             stdin=subprocess.DEVNULL,
             stdout=log,
@@ -134,10 +185,13 @@ def start(
     while True:
         status = check(socket_file)
         if status is not None:
+            LOG.debug("daemon answered on %s: %s", socket_file, status)
             return status
-        if time.monotonic() >= deadline:
+        exited = getattr(process, "poll", lambda: None)()
+        if exited is not None or time.monotonic() >= deadline:
             tail = log_file.read_text(encoding="utf-8", errors="replace")[-2000:] if log_file.exists() else ""
-            msg = f"daemon did not answer on {socket_file} within {timeout:.0f}s; log tail:\n{tail}"
+            reason = f"exited with code {exited}" if exited is not None else f"did not answer within {timeout:.0f}s"
+            msg = f"daemon on {socket_file} {reason}; log {log_file} ends with:\n{tail}"
             raise RuntimeError(msg)
         sleep(0.2)
 
@@ -150,14 +204,26 @@ def ensure_running(
     *,
     probe_fn: Probe | None = None,
     start_fn: Callable[..., dict[str, Any]] | None = None,
+    stop_fn: Callable[[Path], bool] | None = None,
+    expected_engine: str | None = None,
 ) -> dict[str, Any]:
-    """Probe first; start only when nothing answers."""
+    """Probe first; start only when nothing answers. A daemon running another engine version (left over from
+    before an upgrade) is stopped and replaced. Probe and start run under a lock, so concurrent clients share
+    one daemon."""
     check = _probe(probe_fn)
-    status = check(socket_file)
-    if status is not None:
-        return status
     launch = start if start_fn is None else start_fn
-    return launch(command, socket_file, log_file, environ, probe_fn=check)
+    halt = stop if stop_fn is None else stop_fn
+    check_socket_path(socket_file)
+    secure_dir(socket_file.parent)
+    with start_lock(socket_file):
+        status = check(socket_file)
+        if status is not None and expected_engine and status.get("engine") not in (None, expected_engine):
+            LOG.info("daemon runs engine %s, expected %s; restarting it", status.get("engine"), expected_engine)
+            halt(socket_file)
+            status = None
+        if status is not None:
+            return status
+        return launch(command, socket_file, log_file, environ, probe_fn=check)
 
 
 def stop(

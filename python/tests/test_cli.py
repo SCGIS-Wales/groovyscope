@@ -214,7 +214,7 @@ def test_lsp_relays_through_the_daemon(
     ensured: list[list[str]] = []
     relayed: list[Path] = []
     monkeypatch.setattr(
-        cli.daemon_lifecycle, "ensure_running", lambda cmd, _s, _l, _e: ensured.append(cmd) or {"engine": "x"}
+        cli.daemon_lifecycle, "ensure_running", lambda cmd, _s, _l, _e, **_k: ensured.append(cmd) or {"engine": "x"}
     )
     monkeypatch.setattr(cli, "_RELAY", lambda socket_file: relayed.append(socket_file) or 0)
     monkeypatch.setattr(cli, "_EXEC", lambda _p, _a: pytest.fail("must not exec when the daemon works"))
@@ -272,6 +272,22 @@ def test_daemon_commands(
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"]).exit_code == 3
     monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: False)
     assert "was not running" in runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "stop"]).output
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: True)
+    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9"})
+    monkeypatch.setattr(
+        cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9", "configHash": "older"}
+    )
+    restarted = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"])
+    assert restarted.exit_code == 0 and "daemon restarted" in restarted.output
+    assert "started with a different configuration" in restarted.output
+
+    def stop_fails(_s: object) -> bool:
+        msg = "did not stop"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "stop", stop_fails)
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"]).exit_code == 1
 
     def failing(*_a: object, **_k: object) -> dict[str, object]:
         msg = "cannot spawn"

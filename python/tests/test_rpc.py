@@ -85,7 +85,7 @@ def test_request_skips_notifications_and_returns_result(server: _Server, short_d
 def test_request_errors(server: _Server, short_dir: Path) -> None:
     with pytest.raises(RuntimeError, match="nope"):
         rpc.request(short_dir / "s.sock", "fail", timeout=5)
-    with pytest.raises(RuntimeError, match="closed before a reply"):
+    with pytest.raises(ConnectionError, match="closed before a reply"):
         rpc.request(short_dir / "s.sock", "hangup", timeout=5)
     with pytest.raises(OSError):
         rpc.request(short_dir / "missing.sock", "x", timeout=1)
@@ -183,7 +183,14 @@ def test_session_errors(session_server: _SessionServer, short_dir: Path) -> None
     try:
         with pytest.raises(RuntimeError, match="fail failed: nope"):
             rpc.call(session, "fail")
-        with pytest.raises(RuntimeError, match="engine closed the session"):
+        with pytest.raises(ConnectionError, match="engine closed the session"):
             rpc.call(session, "hangup")
     finally:
         rpc.close_session(session)
+
+
+def test_oversized_frames_are_refused() -> None:
+    with pytest.raises(ValueError, match="exceeds"):
+        rpc.split_frame(f"Content-Length: {rpc.MAX_FRAME_BYTES + 1}\r\n\r\n".encode())
+    with pytest.raises(ValueError, match="header too long"):
+        rpc.split_frame(b"x" * (rpc.MAX_HEADER_BYTES + 1))
