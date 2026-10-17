@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.6.2...v0.7.0) (2026-10-17)
+
+
+### Features
+
+* groovy practices knowledge base, runtime profiles and global kiro setup ([#32](https://github.com/SCGIS-Wales/groovyscope/issues/32)) ([9ebb20a](https://github.com/SCGIS-Wales/groovyscope/commit/9ebb20aac9e7d96be706c93d849b684e29693386))
+
+
+### Documentation
+
+* record the first credit benchmark run ([#30](https://github.com/SCGIS-Wales/groovyscope/issues/30)) ([30f70e5](https://github.com/SCGIS-Wales/groovyscope/commit/30f70e50f995d44a4edf5aa148a69eb800601f02))
+
 ## [0.6.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.6.1...v0.6.2) (2026-10-17)
 
 
