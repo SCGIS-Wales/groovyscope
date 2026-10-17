@@ -16,7 +16,18 @@ java {
 
 dependencies {
     implementation(libs.groovy)
+    implementation(libs.groovy.typecheckers)
     implementation(libs.lsp4j)
+    implementation(libs.sqlite.jdbc)
+    implementation(libs.codenarc) {
+        // CodeNarc ships against Groovy 5; the engine runs one Groovy, the one it analyses with.
+        exclude(group = "org.apache.groovy")
+    }
+    runtimeOnly("org.apache.groovy:groovy-xml:${libs.versions.groovy.get()}")
+    runtimeOnly("org.apache.groovy:groovy-json:${libs.versions.groovy.get()}")
+    runtimeOnly("org.apache.groovy:groovy-templates:${libs.versions.groovy.get()}")
+    runtimeOnly("org.apache.groovy:groovy-groovydoc:${libs.versions.groovy.get()}")
+    runtimeOnly("org.apache.groovy:groovy-ant:${libs.versions.groovy.get()}")
 
     testImplementation(libs.spock.core)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

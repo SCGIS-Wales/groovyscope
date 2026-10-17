@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -21,13 +24,22 @@ echo "fake java: $@"
 
 
 @pytest.fixture
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Environment without any GROOVYSCOPE_* or JAVA_HOME influence; PATH points at an empty dir."""
+def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
+    """Environment without any GROOVYSCOPE_* or JAVA_HOME influence; PATH points at an empty dir.
+
+    The cache directory is redirected too, so a JAR or JDK fetched on the developer's machine stays invisible.
+    """
     for name in list(os.environ):
         if name.startswith("GROOVYSCOPE_") or name == "JAVA_HOME":
             monkeypatch.delenv(name, raising=False)
-    env = {"PATH": "/nonexistent-bin", "HOME": os.environ.get("HOME", str(Path.home()))}
+    cache = tmp_path / "cache"
+    env = {
+        "PATH": "/nonexistent-bin",
+        "HOME": os.environ.get("HOME", str(Path.home())),
+        "GROOVYSCOPE_CACHE_DIR": str(cache),
+    }
     monkeypatch.setenv("PATH", env["PATH"])
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(cache))
     return env
 
 
@@ -60,3 +72,14 @@ def fake_jar_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture
+def short_dir() -> Iterator[Path]:
+    """A short path for Unix sockets; pytest's tmp_path on macOS exceeds the AF_UNIX length limit."""
+    path = Path("/tmp") / f"gst-{uuid.uuid4().hex[:8]}"  # noqa: S108 - sockets need a short path
+    path.mkdir()
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)

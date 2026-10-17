@@ -16,17 +16,32 @@ SAFETY_FLAGS: tuple[str, ...] = (
 )
 
 
+MIN_JDK_FOR_AUTO_CDS = 19
+
+
 def build_engine_command(
-    java_home: Path, jar: Path, config: Mapping[str, Any], engine_args: Sequence[str]
+    java_home: Path,
+    jar: Path,
+    config: Mapping[str, Any],
+    engine_args: Sequence[str],
+    *,
+    cds_archive: Path | None = None,
 ) -> list[str]:
-    """``java <jvm flags> -jar <jar> <engine args>`` with the heap taken from ``daemon.heap``."""
+    """``java <jvm flags> -jar <jar> <engine args>`` with the heap taken from ``daemon.heap``.
+
+    With ``cds_archive`` the JVM creates (first run) and then reuses a Class Data Sharing archive, which
+    shortens daemon start-up. Pass it only for JDK 19 or newer.
+    """
     daemon = config.get("daemon", {})
     heap = str(daemon.get("heap", "1g"))
+    sharing = ["-Xshare:auto"]
+    if cds_archive is not None:
+        sharing = ["-XX:+AutoCreateSharedArchive", f"-XX:SharedArchiveFile={cds_archive}"]
     return [
         str(java_executable(java_home)),
         f"-Xmx{heap}",
         "-XX:+UseSerialGC",
-        "-Xshare:auto",
+        *sharing,
         *SAFETY_FLAGS,
         "-jar",
         str(jar),

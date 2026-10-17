@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "groovyscope"
-version = "0.1.0"
+version = "0.6.0"
 description = "Groovy 5/6 code intelligence for AI coding agents: LSP and MCP front ends over one JVM engine"
 readme = "README.md"
 license = "Apache-2.0"
@@ -32,6 +32,7 @@ dependencies = [
   "click>=8.2,<9",
   "pyyaml>=6.0,<7",
   "jsonschema>=4.23,<5",
+  "mcp>=2.3,<3",
 ]
 
 [project.urls]
@@ -48,6 +49,7 @@ dev = [
   "pytest>=9.0,<10",
   "pytest-cov>=7.0,<8",
   "hypothesis>=6.140,<7",
+  "pytest-asyncio>=1.0,<2",
   "ruff>=0.14,<1",
   "mypy>=1.19,<3",
   "types-PyYAML>=6.0.12",
@@ -108,6 +110,7 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+asyncio_mode = "strict"
 markers = [
   "integration: boots the real engine JAR (skipped unless it is available)",
 ]

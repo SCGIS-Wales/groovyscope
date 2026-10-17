@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TypedDict
 
+from groovyscope import daemon
+
 JAR_DIR = Path(__file__).resolve().parent / "_jar"
 MANIFEST_NAME = "_manifest.json"
 JAR_ENV = "GROOVYSCOPE_JAR"
@@ -51,8 +53,13 @@ def write_manifest(jar_dir: Path, *, version: str, jar_name: str, sha256: str) -
     return manifest_path
 
 
-def locate_jar(environ: Mapping[str, str] | None = None, jar_dir: Path = JAR_DIR) -> JarInfo:
-    """Resolve the JAR to run. An explicit ``GROOVYSCOPE_JAR`` is trusted as-is; the bundled JAR is checksummed."""
+def locate_jar(
+    environ: Mapping[str, str] | None = None, jar_dir: Path = JAR_DIR, fetched_dir: Path | None = None
+) -> JarInfo:
+    """The JAR to run: ``GROOVYSCOPE_JAR`` (trusted as-is), the bundled JAR, then one from ``groovyscope fetch``.
+
+    Bundled and fetched JARs are checksummed against their manifest every time.
+    """
     env = os.environ if environ is None else environ
     override = env.get(JAR_ENV, "")
     if override:
@@ -69,17 +76,28 @@ def locate_jar(environ: Mapping[str, str] | None = None, jar_dir: Path = JAR_DIR
             "error": None,
         }
     manifest = read_manifest(jar_dir)
-    if manifest is None:
-        return _missing("no engine JAR bundled (development checkout? run scripts/bundle_jar.py)", source="bundled")
+    if manifest is not None:
+        return _verified(jar_dir, manifest, source="bundled")
+    fallback = fetched_dir if fetched_dir is not None else daemon.cache_dir(env) / "engine"
+    fetched = read_manifest(fallback)
+    if fetched is not None:
+        return _verified(fallback, fetched, source="fetched")
+    return _missing(
+        "no engine JAR bundled (development checkout? run scripts/bundle_jar.py, or `groovyscope fetch`)",
+        source="bundled",
+    )
+
+
+def _verified(jar_dir: Path, manifest: Mapping[str, Any], *, source: str) -> JarInfo:
     jar_path = jar_dir / str(manifest.get("jar", ""))
     expected = manifest.get("sha256")
     if not jar_path.is_file():
-        return _missing(f"manifest names {jar_path.name} but it is not present", source="bundled")
+        return _missing(f"manifest names {jar_path.name} but it is not present", source=source)
     actual = sha256_of(jar_path)
     verified = actual == expected
     return {
         "path": str(jar_path),
-        "source": "bundled",
+        "source": source,
         "version": manifest.get("version"),
         "expected_sha256": expected,
         "actual_sha256": actual,

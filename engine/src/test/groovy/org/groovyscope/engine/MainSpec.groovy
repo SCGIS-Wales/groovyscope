@@ -16,13 +16,20 @@
 package org.groovyscope.engine
 
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.function.IntConsumer
+import org.groovyscope.engine.config.EngineConfig
 import spock.lang.Specification
+import spock.lang.TempDir
 import spock.lang.Timeout
 
 @Timeout(30)
 class MainSpec extends Specification {
+
+    @TempDir
+    Path temp
 
     ByteArrayOutputStream outBytes = new ByteArrayOutputStream()
     ByteArrayOutputStream errBytes = new ByteArrayOutputStream()
@@ -30,9 +37,10 @@ class MainSpec extends Specification {
     PrintStream err = new PrintStream(errBytes, true, StandardCharsets.UTF_8)
     List<Integer> exits = []
     IntConsumer exitHandler = { int code -> exits << code }
+    Map<String, String> environment = [:]
 
     int run(String... args) {
-        Main.run(args, new ByteArrayInputStream(new byte[0]), out, err, Paths.get(''), exitHandler)
+        Main.run(args, new ByteArrayInputStream(new byte[0]), out, err, Paths.get(''), exitHandler, environment)
     }
 
     String stdout() { outBytes.toString(StandardCharsets.UTF_8) }
@@ -81,5 +89,59 @@ class MainSpec extends Specification {
 
         then:
         System.out.is(original)
+    }
+
+    def 'configuration comes from the environment or a file'() {
+        given:
+        Path file = temp.resolve('config.json')
+        Files.writeString(file, '{"workspace": {"trust": true, "sourceRoots": ["src"]}}')
+
+        expect:
+        Main.configFrom([], [(Main.CONFIG_ENV): '{"workspace": {"classpath": ["a.jar"]}}'], temp).classpath() == ['a.jar']
+        Main.configFrom(['--config', file.toString()], [:], temp).with { trust() && sourceRoots() == ['src'] }
+        Main.configFrom([], [:], temp) == EngineConfig.DEFAULTS
+        Main.configFrom([], null, temp) == EngineConfig.DEFAULTS
+    }
+
+    def 'bad configuration options exit 2 with a message'() {
+        expect:
+        run('lsp', '--stdio', '--config') == 2
+        stderr().contains('--config needs a value')
+
+        and:
+        run('lsp', '--stdio', '--config', temp.resolve('missing.json').toString()) == 2
+
+        and:
+        run('lsp', '--stdio', '--bogus') == 2
+        stderr().contains('unknown option: --bogus')
+    }
+
+    def 'daemon mode needs a socket and exits on its own when idle'() {
+        given:
+        Path socket = Paths.get('/tmp', "gs-main-${UUID.randomUUID().toString().take(8)}.sock")
+
+        expect:
+        run('daemon') == 2
+        stderr().contains('needs --socket')
+        run('daemon', '--socket', socket.toString(), '--idle-seconds', 'soon') == 2
+        stderr().contains('whole number')
+        run('daemon', '--socket', socket.toString(), '--idle-seconds', '0', '--cache-dir', temp.resolve('cache').toString()) == 0
+        !Files.exists(socket)
+    }
+
+    def 'lsp options accept a cache directory'() {
+        expect:
+        Main.parseOptions(['--cache-dir', 'cache'], [:], temp).cacheDir() == temp.resolve('cache')
+        Main.parseOptions([], [:], temp).idleSeconds() == Main.DEFAULT_IDLE_SECONDS
+        run('lsp', '--stdio', '--cache-dir', temp.resolve('cache').toString()) == 0
+    }
+
+    def 'invalid configuration JSON in the environment exits 2'() {
+        given:
+        environment[Main.CONFIG_ENV] = '{nope'
+
+        expect:
+        run('lsp', '--stdio') == 2
+        stderr().contains('invalid engine configuration JSON')
     }
 }

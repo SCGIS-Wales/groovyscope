@@ -11,6 +11,7 @@ cyclonedx = "3.5.1"
 
 [libraries]
 groovy = { module = "org.apache.groovy:groovy", version.ref = "groovy" }
+groovy-typecheckers = { module = "org.apache.groovy:groovy-typecheckers", version.ref = "groovy" }
 lsp4j = { module = "org.eclipse.lsp4j:org.eclipse.lsp4j", version.ref = "lsp4j" }
 # Declared now, wired in later stages (lint, format, daemon index persistence).
 codenarc = { module = "org.codenarc:CodeNarc", version.ref = "codenarc" }

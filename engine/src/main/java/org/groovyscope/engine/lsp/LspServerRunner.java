@@ -19,10 +19,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.services.LanguageClient;
+import org.groovyscope.engine.config.EngineConfig;
+import org.groovyscope.engine.services.LanguageServices;
 
 /** Wires a {@link GroovyscopeLanguageServer} to a pair of streams and blocks until the client goes away. */
 public final class LspServerRunner {
@@ -36,8 +39,17 @@ public final class LspServerRunner {
      * @return the server, so callers can inspect its state after the session ends
      */
     public static GroovyscopeLanguageServer serve(InputStream in, OutputStream out, Path fallbackRoot,
-            IntConsumer exitHandler) throws InterruptedException {
-        GroovyscopeLanguageServer server = new GroovyscopeLanguageServer(exitHandler, fallbackRoot);
+            IntConsumer exitHandler, EngineConfig config) throws InterruptedException {
+        return serve(in, out, fallbackRoot, exitHandler, config, null);
+    }
+
+    /** As above, with a provider of (possibly shared or cached) services per workspace root. */
+    public static GroovyscopeLanguageServer serve(InputStream in, OutputStream out, Path fallbackRoot,
+            IntConsumer exitHandler, EngineConfig config, Function<Path, LanguageServices> provider)
+            throws InterruptedException {
+        GroovyscopeLanguageServer server = provider == null
+                ? new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config)
+                : new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config, provider, null);
         Launcher<LanguageClient> launcher = LSPLauncher.createServerLauncher(server, in, out);
         server.connect(launcher.getRemoteProxy());
         try {

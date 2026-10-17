@@ -7,11 +7,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__
+from groovyscope import __version__, daemon
 from groovyscope.config import load_config
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover_jdk, jdk_status
 from groovyscope.kiro import present_files
+from groovyscope.provision import jdk_dir, provisioned_homes
 
 MINIMUM_PYTHON = (3, 12)
 
@@ -40,8 +41,11 @@ def jdk_check(config: Mapping[str, Any] | None, environ: Mapping[str, str]) -> t
     jdk_section = (config or {}).get("jdk", {})
     configured = jdk_section.get("home")
     minimum = int(jdk_section.get("minimum", 17))
-    info = discover_jdk(configured, environ, minimum=minimum)
+    provisioned = provisioned_homes(jdk_dir(environ))
+    info = discover_jdk(configured, environ, minimum=minimum, provisioned=provisioned)
     level, message = jdk_status(info, minimum, RECOMMENDED_JDK)
+    if level == "fail" and info is None and jdk_section.get("autoProvision"):
+        message += "; jdk.autoProvision is on, so the next `groovyscope lsp` will download Temurin"
     return ((level, "jdk", message), info)
 
 
@@ -49,8 +53,8 @@ def jar_check(environ: Mapping[str, str]) -> Check:
     info = locate_jar(environ)
     if info["error"]:
         return ("fail", "engine jar", info["error"])
-    if info["source"] == "bundled":
-        return ("ok", "engine jar", f"{info['path']} (version {info['version']}, checksum verified)")
+    if info["source"] in {"bundled", "fetched"}:
+        return ("ok", "engine jar", f"{info['path']} (version {info['version']}, {info['source']}, checksum verified)")
     return ("warn", "engine jar", f"{info['path']} from GROOVYSCOPE_JAR (not checksum verified)")
 
 
@@ -64,6 +68,14 @@ def kiro_check(root: Path) -> Check:
     return ("warn", "kiro files", "missing: " + ", ".join(missing))
 
 
+def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
+    details = daemon.info(root, environ)
+    if details["running"]:
+        engine = (details["status"] or {}).get("engine", "?")
+        return ("ok", "daemon", f"running on {details['socket']} (engine {engine})")
+    return ("info", "daemon", f"not running; starts with the first `groovyscope lsp` session (log: {details['log']})")
+
+
 def build_report(root: Path, config_path: Path | None, environ: Mapping[str, str]) -> list[Check]:
     config_result, config = config_check(root, config_path, environ)
     jdk_result, _ = jdk_check(config, environ)
@@ -74,6 +86,7 @@ def build_report(root: Path, config_path: Path | None, environ: Mapping[str, str
         jdk_result,
         jar_check(environ),
         kiro_check(root),
+        daemon_check(root, environ),
     ]
 
 
