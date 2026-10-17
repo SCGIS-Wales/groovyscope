@@ -52,14 +52,14 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   CodeNarc 4 in process with the bundled rulesets (prune unknown rules), Groovy 6 type-checker extensions,
   GrEclipse formatting via spotless-lib returning TextEdits, pull diagnostics, codeAction, `check` and
   `format` CLI commands, SARIF upload in CI.
-- [ ] **Stage 4: call graph + impact analysis** — branch `feat/callgraph-impact`, PR open (2026-10-17).
+- [x] **Stage 4: call graph + impact analysis** — branch `feat/callgraph-impact`, PR #15 merged 2026-10-17.
   Delivered on the branch: `CallGraph` and `ImpactAnalyzer` (direct, transitive, overrides, tests, dynamic
   unknowns, risk, suggested checks), LSP call hierarchy and semantic tokens, `groovyscope/impact` and
   `groovyscope/callGraph` requests, `groovyscope impact` and `groovyscope callgraph` commands, a
   performance report spec over a generated workspace (timings printed, loose budgets).
   `callgraph/`, `ImpactAnalyzer` with STATIC | INFERRED | DYNAMIC_UNKNOWN confidence, callHierarchy and
   semanticTokens, `impact` CLI command, performance report on a 2,000-file fixture.
-- [ ] **Stage 5: MCP server** — branch `feat/mcp-server`.
+- [ ] **Stage 5: MCP server** — branch `feat/mcp-server` (in progress since 2026-10-17).
   FastMCP server over `rpc.py`: find_symbol, goto_definition, find_references, call_graph, impact_of, check,
   format, find_dynamic_code, workspace_status. Compact paginated JSON through `render.py`.
 - [ ] **Stage 6: packaging extras** — branch `feat/packaging-extras`.
@@ -82,3 +82,4 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 - 2026-10-17: Stage 1 merged (PR #10). Stage 2 started on `feat/daemon-relay`.
 - 2026-10-17: Stage 2 merged (PR #11). Stage 3 started on `feat/lint-format`.
 - 2026-10-17: Stage 3 merged (PR #13). Stage 4 started on `feat/callgraph-impact`.
+- 2026-10-17: Stage 4 merged (PR #15). Stage 5 started on `feat/mcp-server`.
