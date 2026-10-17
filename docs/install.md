@@ -25,9 +25,9 @@ brew install SCGIS-Wales/tap/groovyscope
 groovyscope doctor
 ```
 
-The formula is rendered by `scripts/homebrew_formula.py` from the PyPI sdist of each release; the publish
-workflow opens a pull request on [SCGIS-Wales/homebrew-tap](https://github.com/SCGIS-Wales/homebrew-tap) when
-the `HOMEBREW_TAP_TOKEN` secret is present. The same formula works with Linuxbrew.
+The formula is rendered by `scripts/homebrew_formula.py` from the PyPI sdist of each release. A daily workflow
+in [SCGIS-Wales/homebrew-tap](https://github.com/SCGIS-Wales/homebrew-tap) moves it to each new release after
+`brew install` and `brew test` pass on macOS, so the tap trails PyPI by at most a day. The same formula works with Linuxbrew.
 
 ## macOS (uv and a Homebrew JDK)
 

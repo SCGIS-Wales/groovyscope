@@ -74,7 +74,7 @@ jobs:
           mkdir -p release
           cp python/dist/*.whl python/dist/*.tar.gz release/
           cp engine/build/libs/groovyscope-engine-*-all.jar release/
-          cp engine/build/reports/bom.json release/groovyscope-engine-sbom.cdx.json
+          cp engine/build/reports/cyclonedx/bom.json release/groovyscope-engine-sbom.cdx.json
           cp python/dist/groovyscope-python-sbom.cdx.json release/
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
@@ -159,58 +159,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh release upload "${{ inputs.tag }}" release/* --clobber
-
-  # Opens a pull request on SCGIS-Wales/homebrew-tap with the formula for this release. GITHUB_TOKEN cannot
-  # write to another repository, so the job needs HOMEBREW_TAP_TOKEN (a fine-grained PAT with contents and
-  # pull-requests write on the tap). Without it the job explains what to add and succeeds.
-  homebrew:
-    name: update the Homebrew tap
-    needs: pypi
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      TAP_REPO: SCGIS-Wales/homebrew-tap
-    steps:
-      - name: Check out ${{ inputs.tag }}
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          ref: ${{ inputs.tag }}
-          persist-credentials: false
-
-      - name: Explain the missing token
-        if: env.TAP_TOKEN == ''
-        run: |
-          echo "::notice title=Homebrew tap not updated::Add the HOMEBREW_TAP_TOKEN secret (fine-grained PAT, contents + pull requests write on ${TAP_REPO}) to open tap PRs automatically; or run scripts/homebrew_formula.py by hand."
-
-      - name: Render the formula once PyPI serves the release
-        if: env.TAP_TOKEN != ''
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/formula"
-          python3 scripts/homebrew_formula.py --version "${TAG#v}" --wait 900 --output "${RUNNER_TEMP}/formula/groovyscope.rb"
-
-      - name: Open a pull request on the tap
-        if: env.TAP_TOKEN != ''
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" "${RUNNER_TEMP}/tap"
-          cd "${RUNNER_TEMP}/tap"
-          mkdir -p Formula
-          cp "${RUNNER_TEMP}/formula/groovyscope.rb" Formula/groovyscope.rb
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "groovyscope-${version}"
-          git add Formula/groovyscope.rb
-          git commit -m "groovyscope ${version}"
-          git push --force origin "groovyscope-${version}"
-          gh pr create --repo "${TAP_REPO}" --head "groovyscope-${version}" --title "groovyscope ${version}" \
-            --body "Formula for https://github.com/SCGIS-Wales/groovyscope/releases/tag/${TAG} (sdist from PyPI, bundled engine JAR, openjdk@21)." \
-            || echo "::notice::a pull request for groovyscope-${version} already exists"
