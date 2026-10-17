@@ -57,17 +57,25 @@ jobs:
           cache-dependency-glob: python/uv.lock
           python-version: "3.12"
 
-      - name: Bundle the engine JAR and build the wheel and sdist
+      - name: Bundle the engine JAR and install the runtime dependencies
         run: |
           python3 scripts/bundle_jar.py
           cd python
           uv sync --frozen --no-dev
-          uv build
-          rm -f dist/.gitignore
 
+      # Before the build, and into its own folder, so the SBOM tool never sees the files that are attested and
+      # published. The tool is pinned.
       - name: Python SBOM
         working-directory: python
-        run: uvx --from cyclonedx-bom cyclonedx-py environment .venv --of JSON -o dist/groovyscope-python-sbom.cdx.json
+        run: |
+          mkdir -p ../sbom
+          uvx --from 'cyclonedx-bom==7.5.0' cyclonedx-py environment .venv --of JSON -o ../sbom/groovyscope-python-sbom.cdx.json
+
+      - name: Build the wheel and sdist
+        working-directory: python
+        run: |
+          uv build
+          rm -f dist/.gitignore
 
       - name: Collect release assets and checksums
         run: |
@@ -75,7 +83,7 @@ jobs:
           cp python/dist/*.whl python/dist/*.tar.gz release/
           cp engine/build/libs/groovyscope-engine-*-all.jar release/
           cp engine/build/reports/cyclonedx/bom.json release/groovyscope-engine-sbom.cdx.json
-          cp python/dist/groovyscope-python-sbom.cdx.json release/
+          cp sbom/groovyscope-python-sbom.cdx.json release/
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
 
@@ -158,4 +166,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "${{ inputs.tag }}" release/* --clobber
+          TAG: ${{ inputs.tag }}
+        run: gh release upload "$TAG" release/* --clobber
