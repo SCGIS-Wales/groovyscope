@@ -367,8 +367,11 @@ def test_kiro_init_global_merges_into_the_kiro_home(
 
 
 def test_checkup_and_benchmark_commands(
-    runner: CliRunner, tmp_path: Path, isolated_home: Path, clean_env: dict[str, str]
+    runner: CliRunner, tmp_path: Path, isolated_home: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))  # the matrix jobs run without a bundled engine
     (tmp_path / "build.gradle").write_text("", encoding="utf-8")
     report = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup"])
     assert report.exit_code == 0, report.output

@@ -231,8 +231,12 @@ def test_refresh_classpath_runs_the_export_only_in_a_trusted_workspace(
 
 
 def test_cli_reloads_a_daemon_running_an_older_configuration(
-    runner: CliRunner, tmp_path: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
     monkeypatch.setattr(
         cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9", "configHash": "old"}
     )
