@@ -24,6 +24,14 @@ echo "fake java: $@"
 
 
 @pytest.fixture(autouse=True)
+def no_real_kiro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never run the developer's kiro-cli; tests that need one inject a fake."""
+    from groovyscope import cli  # noqa: PLC0415 - fixture-local import keeps conftest light
+
+    monkeypatch.setattr(cli, "_KIRO", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def isolated_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Every test gets its own HOME and no KIRO_HOME, so the developer's ~/.kiro and runtime profiles stay unread."""
     home = tmp_path / "home"

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import difflib
 import json
+import shutil
 from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
+from groovyscope import kiro_agent
 from groovyscope.config import deep_merge
 
 # (template name inside the package, destination relative to the workspace root)
@@ -64,6 +66,7 @@ class KiroChange(TypedDict):
     action: str  # create | update | unchanged
     before: str | None
     after: str
+    note: NotRequired[str]
 
 
 def load_template(name: str) -> str:
@@ -111,19 +114,61 @@ def merge_content(
     return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
 
 
-def planned(base: Path, template_name: str, relative: str, template: str, *, force: bool) -> KiroChange:
+def planned(
+    base: Path,
+    template_name: str,
+    relative: str,
+    template: str,
+    *,
+    force: bool,
+    agent_format: str = "auto",
+    run: kiro_agent.KiroRunner | None = None,
+) -> KiroChange:
     destination = base / relative
     existing = destination.read_text(encoding="utf-8") if destination.is_file() else None
-    after = merge_content(
-        existing,
-        template,
-        is_json=relative.endswith(".json"),
-        force=force,
-        path=relative,
-        template_name=template_name,
-    )
+    note = ""
+    if template_name == "agents/groovy.json":
+        current = None if force else retire_keys(existing, template_name, relative)
+        merged = kiro_agent.merge_agent(current, template, requested=agent_format, run=run)
+        after, note = merged["text"], merged["note"]
+    else:
+        after = merge_content(
+            existing,
+            template,
+            is_json=relative.endswith(".json"),
+            force=force,
+            path=relative,
+            template_name=template_name,
+        )
     action = "create" if existing is None else "unchanged" if existing == after else "update"
-    return {"template": template_name, "path": relative, "action": action, "before": existing, "after": after}
+    change: KiroChange = {
+        "template": template_name,
+        "path": relative,
+        "action": action,
+        "before": existing,
+        "after": after,
+    }
+    if note:
+        change["note"] = note
+    return change
+
+
+def retire_keys(existing: str | None, template_name: str, path: str) -> str | None:
+    """The existing JSON with keys earlier groovyscope releases wrote removed (see RETIRED_KEYS)."""
+    if existing is None:
+        return None
+    try:
+        current: Any = json.loads(existing)
+    except json.JSONDecodeError as exc:
+        msg = f"{path} is not valid JSON ({exc.msg} at line {exc.lineno}); fix it or rerun with --force"
+        raise ValueError(msg) from exc
+    if not isinstance(current, dict):
+        msg = f"{path} must contain a JSON object; rerun with --force to replace it"
+        raise ValueError(msg)
+    retired = {key for key, value in RETIRED_KEYS.get(template_name, {}).items() if current.get(key) == value}
+    if not retired:
+        return existing
+    return json.dumps({k: v for k, v in current.items() if k not in retired}, indent=2, ensure_ascii=False) + "\n"
 
 
 def plan_changes(
@@ -133,6 +178,8 @@ def plan_changes(
     global_scope: bool = False,
     profile_guidance: str = "",
     lsp_only: bool = False,
+    agent_format: str = "auto",
+    run: kiro_agent.KiroRunner | None = None,
 ) -> list[KiroChange]:
     """Compute every write without touching the file system. ``base`` is the workspace root, or the Kiro home
     with ``global_scope``. ``lsp_only`` writes just the project's lsp.json (the rest comes from the global setup).
@@ -145,6 +192,8 @@ def plan_changes(
             relative,
             global_template(name, base) if global_scope else load_template(name),
             force=force,
+            agent_format=agent_format,
+            run=run,
         )
         for name, relative in files
     ]
@@ -161,17 +210,39 @@ def unified_diff(change: KiroChange) -> str:
     return "".join(difflib.unified_diff(before, after, fromfile=f"a/{label}", tofile=f"b/{label}"))
 
 
+def write_atomically(destination: Path, text: str) -> None:
+    """Write via a temporary file in the same folder and an atomic rename, so a crash never leaves half a file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.groovyscope-tmp")
+    temporary.write_text(text, encoding="utf-8")
+    try:
+        if destination.exists():
+            shutil.copymode(destination, temporary)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def backup_path(destination: Path) -> Path:
+    """``<name>.bak``, or ``<name>.bak.N`` when earlier backups exist, so no backup is ever overwritten."""
+    candidate = destination.with_name(destination.name + BACKUP_SUFFIX)
+    number = 1
+    while candidate.exists():
+        candidate = destination.with_name(f"{destination.name}{BACKUP_SUFFIX}.{number}")
+        number += 1
+    return candidate
+
+
 def apply_changes(root: Path, changes: Sequence[KiroChange], *, backup: bool = True) -> list[Path]:
-    """Write every create/update, backing up overwritten files to ``<name>.bak``. Returns written paths."""
+    """Write every create/update atomically, backing up overwritten files first. Returns written paths."""
     written: list[Path] = []
     for change in changes:
         if change["action"] == "unchanged":
             continue
         destination = root / change["path"]
-        destination.parent.mkdir(parents=True, exist_ok=True)
         if backup and change["before"] is not None:
-            destination.with_name(destination.name + BACKUP_SUFFIX).write_text(change["before"], encoding="utf-8")
-        destination.write_text(change["after"], encoding="utf-8")
+            write_atomically(backup_path(destination), change["before"])
+        write_atomically(destination, change["after"])
         written.append(destination)
     return written
 

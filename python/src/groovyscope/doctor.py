@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__, daemon, profiles
+from groovyscope import __version__, daemon, kiro_agent, profiles
 from groovyscope.config import load_config
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover, jdk_status
@@ -77,6 +77,32 @@ def kiro_check(root: Path, global_home: Path | None = None) -> Check:
     return ("warn", "kiro files", "missing: " + ", ".join(missing))
 
 
+def kiro_agent_check(root: Path, global_home: Path, run: kiro_agent.KiroRunner | None) -> Check:
+    """Which Kiro CLI is installed and which format the groovy agent is in (project first, then global)."""
+    version = kiro_agent.kiro_version(run)
+    label = f"kiro-cli {version}" if version else "kiro-cli not found on PATH"
+    for agent in (root / ".kiro" / "agents" / "groovy.json", global_home / "agents" / "groovy.json"):
+        if agent.is_file():
+            try:
+                found = kiro_agent.classify(agent.read_text(encoding="utf-8"), run)
+            except OSError as exc:
+                return ("warn", "kiro agent", f"{label}; cannot read {agent}: {exc}")
+            meaning = AGENT_FORMAT_MEANING.get(found, found)
+            level = "ok" if found in {"v2", "universal", "v3"} else "warn"
+            return (level, "kiro agent", f"{label}; {agent} is {found} ({meaning})")
+    return ("info", "kiro agent", f"{label}; no groovy agent yet (run `groovyscope kiro init --global`)")
+
+
+AGENT_FORMAT_MEANING = {
+    "v2": "loaded by the V2 engine, the Kiro CLI 2.x default",
+    "universal": "loaded by the V2 and V3 engines",
+    "universal-out-of-sync": "edited after its V3 rules were generated; run `groovyscope kiro repair`",
+    "v3": "loaded by the V3 engine only",
+    "unknown": "a format this groovyscope does not know; left as it is",
+    "external": "managed outside the project files; left as it is",
+}
+
+
 def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
     details = daemon.info(root, environ)
     if details["running"]:
@@ -95,7 +121,11 @@ def profiles_check(root: Path, config: Mapping[str, Any] | None, home: Path) -> 
 
 
 def build_report(
-    root: Path, config_path: Path | None, environ: Mapping[str, str], home: Path | None = None
+    root: Path,
+    config_path: Path | None,
+    environ: Mapping[str, str],
+    home: Path | None = None,
+    kiro: kiro_agent.KiroRunner | None = None,
 ) -> list[Check]:
     config_result, config = config_check(root, config_path, environ)
     jdk_result, _ = jdk_check(config, environ)
@@ -106,6 +136,7 @@ def build_report(
         jdk_result,
         jar_check(environ),
         kiro_check(root, kiro_home(environ, home or Path.home())),
+        kiro_agent_check(root, kiro_home(environ, home or Path.home()), kiro),
         profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
     ]

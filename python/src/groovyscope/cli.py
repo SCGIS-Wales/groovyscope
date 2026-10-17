@@ -14,7 +14,7 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, mcp_server, practices, profiles, provision, relay, rpc
+from groovyscope import __version__, kiro_agent, mcp_server, practices, profiles, provision, relay, rpc
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config
@@ -84,7 +84,7 @@ def version() -> None:
 @click.pass_obj
 def doctor(obj: dict[str, Any]) -> None:
     """Check the JDK, engine JAR, configuration and Kiro files; exit 1 on hard failures."""
-    report = build_report(obj["root"], obj["config_path"], dict(os.environ))
+    report = build_report(obj["root"], obj["config_path"], dict(os.environ), kiro=_KIRO())
     click.echo(table([(LEVEL_MARKS[level], name, message) for level, name, message in report]))
     if has_failures(report):
         sys.exit(1)
@@ -128,7 +128,14 @@ def profile_guidance_for(obj: dict[str, Any], *, global_scope: bool = False) -> 
 
 
 def run_kiro_merge(
-    obj: dict[str, Any], *, force: bool, backup: bool, dry_run: bool, global_scope: bool = False, full: bool = False
+    obj: dict[str, Any],
+    *,
+    force: bool,
+    backup: bool,
+    dry_run: bool,
+    global_scope: bool = False,
+    full: bool = False,
+    agent_format: str = "auto",
 ) -> None:
     home = kiro_home(dict(os.environ), Path.home())
     base = home if global_scope else obj["root"]
@@ -142,6 +149,8 @@ def run_kiro_merge(
             global_scope=global_scope,
             profile_guidance=profile_guidance_for(obj, global_scope=global_scope),
             lsp_only=lsp_only,
+            agent_format=agent_format,
+            run=_KIRO(),
         )
     except ValueError as exc:
         click.echo(str(exc), err=True)
@@ -150,6 +159,8 @@ def run_kiro_merge(
         click.echo(f"Kiro home: {base}")
     for change in changes:
         click.echo(f"{change['action']:9} {change['path']}")
+        if change.get("note"):
+            click.echo(f"          note: {change.get('note')}")
         if change["action"] != "unchanged":
             click.echo(unified_diff(change), nl=False)
     if dry_run:
@@ -171,30 +182,60 @@ def run_kiro_merge(
 
 GLOBAL_HELP = "Write the MCP server, groovy agent and steering to the Kiro home (~/.kiro, or $KIRO_HOME)."
 FULL_HELP = "In a project, write all files even when the global setup already provides the MCP server and agent."
+FORMAT_HELP = (
+    "Agent file format: auto keeps the existing file's format (new files are universal when kiro-cli can write it); "
+    "v2 for the V2 engine, universal for both engines, v3 for the V3 engine only."
+)
+FORMAT_CHOICE = click.Choice(list(kiro_agent.REQUESTABLE))
 
 
 @kiro.command("init")
 @click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
 @click.option("--full", is_flag=True, help=FULL_HELP)
+@click.option("--agent-format", type=FORMAT_CHOICE, default="auto", show_default=True, help=FORMAT_HELP)
 @click.option("--force", is_flag=True, help="Replace existing files instead of merging into them.")
 @click.option("--no-backup", is_flag=True, help="Do not write <file>.bak before overwriting.")
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
 def kiro_init(
-    obj: dict[str, Any], *, global_scope: bool, full: bool, force: bool, no_backup: bool, dry_run: bool
+    obj: dict[str, Any],
+    *,
+    global_scope: bool,
+    full: bool,
+    agent_format: str,
+    force: bool,
+    no_backup: bool,
+    dry_run: bool,
 ) -> None:
     """Write lsp.json, mcp.json, the groovy agent and the steering file (merging, never clobbering)."""
-    run_kiro_merge(obj, force=force, backup=not no_backup, dry_run=dry_run, global_scope=global_scope, full=full)
+    run_kiro_merge(
+        obj,
+        force=force,
+        backup=not no_backup,
+        dry_run=dry_run,
+        global_scope=global_scope,
+        full=full,
+        agent_format=agent_format,
+    )
 
 
 @kiro.command("repair")
 @click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
 @click.option("--full", is_flag=True, help=FULL_HELP)
+@click.option("--agent-format", type=FORMAT_CHOICE, default="auto", show_default=True, help=FORMAT_HELP)
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
-def kiro_repair(obj: dict[str, Any], *, global_scope: bool, full: bool, dry_run: bool) -> None:
-    """Re-merge groovyscope's entries after `/code init` or a manual edit removed them."""
-    run_kiro_merge(obj, force=False, backup=True, dry_run=dry_run, global_scope=global_scope, full=full)
+def kiro_repair(obj: dict[str, Any], *, global_scope: bool, full: bool, agent_format: str, dry_run: bool) -> None:
+    """Re-merge groovyscope's entries after `/code init`, a manual edit or a Kiro upgrade changed them."""
+    run_kiro_merge(
+        obj,
+        force=False,
+        backup=True,
+        dry_run=dry_run,
+        global_scope=global_scope,
+        full=full,
+        agent_format=agent_format,
+    )
 
 
 def cds_archive_for(
@@ -320,6 +361,7 @@ def exec_process(path: str, argv: Sequence[str]) -> None:
 
 
 _EXEC: ExecFn = exec_process
+_KIRO: Callable[[], kiro_agent.KiroRunner | None] = kiro_agent.kiro_runner
 _RELAY: Callable[[Path], int] = relay.main
 _RPC: Callable[..., Any] = rpc.request
 _MCP_SERVE: Callable[..., int] = mcp_server.serve
