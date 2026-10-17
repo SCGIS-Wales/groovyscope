@@ -51,6 +51,7 @@ public final class CodeNarcAnalyzer {
     public static final String BUNDLED_JENKINS = "org/groovyscope/engine/lint/jenkins.groovy";
 
     private static final java.util.Set<String> REFUSED = ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<String> WARNED = ConcurrentHashMap.newKeySet();
     private final Map<String, RuleSet> ruleSets = new ConcurrentHashMap<>();
     private final ResourceBundle messages;
 
@@ -79,6 +80,46 @@ public final class CodeNarcAnalyzer {
      */
     public RuleSet ruleSet(String path, Path root, String fallback) {
         return ruleSets.computeIfAbsent(resolve(path, root, fallback), CodeNarcAnalyzer::load);
+    }
+
+    /**
+     * The rule set at {@code path} with {@code lint.rules} overrides applied: a rule mapped to
+     * {@link org.groovyscope.engine.config.EngineConfig.Lint#RULE_OFF} is removed, any other value replaces the
+     * rule's priority (and so the severity of its findings). The overridden set is loaded afresh, so the shared
+     * unmodified set keeps its priorities. Names the rule set does not contain are ignored with one warning.
+     */
+    public RuleSet ruleSet(String path, Path root, String fallback, Map<String, Integer> overrides) {
+        if (overrides == null || overrides.isEmpty()) {
+            return ruleSet(path, root, fallback);
+        }
+        String resolved = resolve(path, root, fallback);
+        Map<String, Integer> sorted = new java.util.TreeMap<>(overrides);
+        return ruleSets.computeIfAbsent(resolved + "#" + sorted, key -> withOverrides(resolved, load(resolved), sorted));
+    }
+
+    static RuleSet withOverrides(String name, RuleSet loaded, Map<String, Integer> overrides) {
+        java.util.Set<String> unknown = new java.util.TreeSet<>(overrides.keySet());
+        List<Rule> kept = new ArrayList<>();
+        for (Object item : loaded.getRules()) {
+            if (!(item instanceof Rule rule)) {
+                continue;
+            }
+            Integer override = overrides.get(rule.getName());
+            unknown.remove(rule.getName());
+            if (override == null) {
+                kept.add(rule);
+            } else if (override != org.groovyscope.engine.config.EngineConfig.Lint.RULE_OFF) {
+                if (rule instanceof org.codenarc.rule.AbstractRule configurable) {
+                    configurable.setPriority(override);
+                }
+                kept.add(rule);
+            }
+        }
+        if (!unknown.isEmpty() && WARNED.add(name + "#" + unknown)) {
+            org.groovyscope.engine.log.EngineLog.warn("lint.rules names rule(s) not in %s, ignored: %s", name,
+                    String.join(", ", unknown));
+        }
+        return new org.codenarc.ruleset.ListRuleSet(kept);
     }
 
     private static RuleSet load(String resolved) {
@@ -199,6 +240,15 @@ public final class CodeNarcAnalyzer {
         }
         int end = Math.max(start + 1, text.length());
         return new Range(new Position(line, start), new Position(line, end));
+    }
+
+    /** The CodeNarc priority a lint finding's severity stands for (1 is most severe). */
+    public static int priorityOf(Diagnostic diagnostic) {
+        return switch (diagnostic.severity()) {
+            case ERROR -> 1;
+            case WARNING -> 2;
+            default -> 3;
+        };
     }
 
     static Severity severity(int priority) {

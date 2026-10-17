@@ -235,9 +235,9 @@ public final class PracticeFixes {
         return actions;
     }
 
-    static String typeName(ClassNode type, ModuleNode module) {
-        if (type.isPrimaryClassNode() || AUTO_IMPORTED.contains(type.getPackageName())
-                || type.getPackageName() == null) {
+    public static String typeName(ClassNode type, ModuleNode module) {
+        if (type.isPrimaryClassNode() || type.getPackageName() == null
+                || AUTO_IMPORTED.contains(type.getPackageName())) {
             return type.getNameWithoutPackage();
         }
         for (ImportNode existing : module.getImports()) {

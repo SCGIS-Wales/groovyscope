@@ -403,8 +403,30 @@ public final class LanguageServices {
         return snapshot;
     }
 
+    private record FoldedDiagnostics(long version, Map<String, List<Diagnostic>> diagnostics) {
+    }
+
+    private volatile FoldedDiagnostics folded;
+
+    /**
+     * Compile diagnostics per document. With no classpath configured, unresolved imports are folded into one
+     * {@code GS100} finding per file (see {@link org.groovyscope.engine.compile.MissingDependencies}); with a
+     * classpath they stay real errors.
+     */
     public Map<String, List<Diagnostic>> diagnostics() {
-        return snapshot().result().diagnostics();
+        Snapshot current = snapshot();
+        if (!workspace.classpath().isEmpty()) {
+            return current.result().diagnostics();
+        }
+        FoldedDiagnostics cached = folded;
+        if (cached == null || cached.version() != current.version()) {
+            cached = new FoldedDiagnostics(current.version(), Map.copyOf(
+                    org.groovyscope.engine.compile.MissingDependencies.fold(current.result().diagnostics(),
+                            current.result().sources(), org.groovyscope.engine.practices.PracticeFinder.severity(
+                                    org.groovyscope.engine.compile.MissingDependencies.CODE, workspace.config()))));
+            folded = cached;
+        }
+        return cached.diagnostics();
     }
 
     public Optional<Definition> definition(String uri, Position position) {
@@ -474,7 +496,7 @@ public final class LanguageServices {
         return references;
     }
 
-    private static Range nameRangeOfUsage(Snapshot current, NodeEntry usage, ASTNode declaration) {
+    static Range nameRangeOfUsage(Snapshot current, NodeEntry usage, ASTNode declaration) {
         String name = Symbols.nameOf(declaration);
         if (usage.role() == NodeEntry.Role.TYPE_USAGE || usage.role() == NodeEntry.Role.CONSTRUCTOR_CALL
                 || usage.role() == NodeEntry.Role.STATIC_CALL) {
@@ -568,6 +590,40 @@ public final class LanguageServices {
 
     public Optional<SignatureHelp> signatureHelp(String uri, Position position) {
         return SignatureSupport.signatureHelp(snapshot(), uri, position);
+    }
+
+    /**
+     * Implementations of the declaration under the cursor: overriding methods in workspace subclasses and
+     * implementations for a method, subclasses and implementors for a class or interface.
+     */
+    public List<Location> implementations(String uri, Position position) {
+        return DocumentSupport.implementations(snapshot(), uri, position);
+    }
+
+    /** Occurrences of the symbol under the cursor within the same document, declarations and writes marked. */
+    public List<org.groovyscope.engine.model.Highlight> highlights(String uri, Position position) {
+        return DocumentSupport.highlights(snapshot(), uri, position);
+    }
+
+    /** Foldable classes, methods, closures, multi-line comments and import groups of a document. */
+    public List<org.groovyscope.engine.model.FoldingRange> foldingRanges(String uri) {
+        Snapshot current = snapshot();
+        String text = workspace.text(uri);
+        ModuleNode module = current.result().modules().get(uri);
+        if (text != null && !text.equals(current.result().sources().get(uri))) {
+            module = null; // the text moved on since the compile; fold by text only rather than at stale lines
+        }
+        return DocumentSupport.foldingRanges(module, text);
+    }
+
+    /** Inferred-type hints for {@code def} locals whose declaration lies within {@code range}. */
+    public List<org.groovyscope.engine.model.InlayHint> inlayHints(String uri, Range range) {
+        Snapshot current = snapshot();
+        String text = current.result().sources().get(uri);
+        if (text == null) {
+            return List.of();
+        }
+        return DocumentSupport.inlayHints(current.result().modules().get(uri), new TextLines(text), range);
     }
 
     public RenamePreparation prepareRename(String uri, Position position) {

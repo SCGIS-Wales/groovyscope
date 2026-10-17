@@ -244,7 +244,9 @@ class LanguageServicesSpec extends Specification {
 
         then:
         diagnostics[uri(GREETER)].empty
-        diagnostics[uri(SPEC)].any { it.severity() == Diagnostic.Severity.ERROR }
+        // spock.lang is not on the (empty) classpath: the unresolved import folds into one GS100 warning
+        diagnostics[uri(SPEC)]*.code() == ['GS100']
+        diagnostics[uri(SPEC)][0].message().contains('spock.lang')
     }
 
     def 'an edit in an open document is reflected after marking dirty'() {
