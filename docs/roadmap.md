@@ -40,7 +40,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   the daemon with direct-exec fallback, real `daemon start|stop|status`, CDS archive flags, doctor daemon
   line; specs and tests including a real daemon lifecycle integration test. Per-file incremental
   invalidation deferred (full recompile inside the warm JVM is fast enough for now).
-- [ ] **Stage 3: CodeNarc + formatter + diagnostics** — branch `feat/lint-format`, PR open (2026-10-17).
+- [x] **Stage 3: CodeNarc + formatter + diagnostics** — branch `feat/lint-format`, PR #13 merged 2026-10-17.
   Delivered on the branch: CodeNarc 4 in process with bundled defensive and Jenkins profiles (engine
   resources mirror `config/codenarc`), lint findings as published and pulled diagnostics with quick fixes,
   Groovy 6 checkers appended to `@CompileStatic`/`@TypeChecked` classes via a compilation customizer, the
@@ -52,7 +52,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   CodeNarc 4 in process with the bundled rulesets (prune unknown rules), Groovy 6 type-checker extensions,
   GrEclipse formatting via spotless-lib returning TextEdits, pull diagnostics, codeAction, `check` and
   `format` CLI commands, SARIF upload in CI.
-- [ ] **Stage 4: call graph + impact analysis** — branch `feat/callgraph-impact`.
+- [ ] **Stage 4: call graph + impact analysis** — branch `feat/callgraph-impact` (in progress since 2026-10-17).
   `callgraph/`, `ImpactAnalyzer` with STATIC | INFERRED | DYNAMIC_UNKNOWN confidence, callHierarchy and
   semanticTokens, `impact` CLI command, performance report on a 2,000-file fixture.
 - [ ] **Stage 5: MCP server** — branch `feat/mcp-server`.
@@ -77,3 +77,4 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Stage 0 complete. Stage 1 started on `feat/engine-navigation`.
 - 2026-10-17: Stage 1 merged (PR #10). Stage 2 started on `feat/daemon-relay`.
 - 2026-10-17: Stage 2 merged (PR #11). Stage 3 started on `feat/lint-format`.
+- 2026-10-17: Stage 3 merged (PR #13). Stage 4 started on `feat/callgraph-impact`.
