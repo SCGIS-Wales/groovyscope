@@ -201,3 +201,10 @@ def test_baseline_save_and_check(runner: CliRunner, tmp_path: Path, engine: dict
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "baseline", "check"])
     assert result.exit_code == 1
     assert "a.groovy: parameter:X changed from string to list" in result.output
+
+
+def test_global_guidance_ignores_the_current_repositorys_profiles(tmp_path: Path, isolated_home: Path) -> None:
+    write(tmp_path / ".groovyscope" / "profiles" / "repo.yaml", "name: repo\nguidance: Repository rule.\n")
+    write(isolated_home / ".groovyscope" / "profiles" / "mine.yaml", "name: mine\nguidance: My rule.\n")
+    text = cli.profile_guidance_for({"root": tmp_path, "config_path": None}, global_scope=True)
+    assert "My rule." in text and "Repository rule." not in text

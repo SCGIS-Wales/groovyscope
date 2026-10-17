@@ -220,7 +220,13 @@ def profile_guidance_for(obj: dict[str, Any], *, global_scope: bool = False) -> 
     except (ValueError, OSError):
         return ""
     found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
-    return profiles.guidance(found, None if global_scope else obj["root"])
+    if global_scope:
+        # The global steering applies to every project, so only profiles kept outside this repository count.
+        root = obj["root"].resolve()
+        outside = [p for p in found["profiles"] if not Path(p["path"]).resolve().is_relative_to(root)]
+        found = {**found, "profiles": outside}
+        return profiles.guidance(found, None)
+    return profiles.guidance(found, obj["root"])
 
 
 def run_kiro_merge(
