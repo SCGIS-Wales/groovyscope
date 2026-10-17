@@ -29,7 +29,9 @@ repository you trust; library classes then resolve and the GS100 warnings go awa
 | What breaks if I change `<Class.method>` | `impact_of` | 0.2 to 0.4 |
 | Rename `<Class.member>` to `<name>` everywhere | `rename` (dry run, then apply) | 0.3 |
 | Why is line `<n>` of `<file>` flagged | `check`, `explain` | 0.2 |
-| Explain what `<Class>` does | `document_symbols`, `read_symbol`, `call_graph` | 0.3 to 0.6 |
+| Explain what `<Class>` does | `explain_code`, then `read_symbol` where needed | 0.3 to 0.5 |
+| Draw the class relationships around `<Class>` | `relationship_graph` with `drawio_path` | 0.2 to 0.4 |
+| Are the names in `<folder>` right | `check_naming`, then `rename` | 0.4 to 0.8 |
 | Can I use `<construct>` in this plugin | `profile_status` | 0.2 |
 
 "Run all" runs the first six and gives one combined summary.
@@ -158,9 +160,43 @@ from the catalogue in [docs/practices.md](practices.md).
 Explain what ResourceExecutionPlugin does, its main responsibilities and what it depends on.
 ```
 
-Calls `document_symbols` for the outline, `read_symbol` on the methods that matter, and `call_graph` for what
-they call. The agent should not read the whole file. (0.11.0 adds `explain_code` and a relationship graph
-you can open in draw.io.)
+Calls `explain_code(symbol="ResourceExecutionPlugin")`: every member with its type, each method's parameters
+and return, the calls it makes and receives, the fields it writes, the exceptions it throws and catches, the
+external world it touches (http, file, sql, process, environment, clock, random, logging), public methods
+grouped by their leading verb (the responsibilities), and the classes it is used by and uses. The agent writes
+the explanation from those facts and reads a method with `read_symbol` only where a fact needs the code. It
+never guesses from names: a method called `validate` that writes three fields is described as a method that
+writes three fields.
+
+## 11a. Draw the class relationships
+
+```text
+Draw the classes around OrderService, two hops, as a draw.io diagram at docs/order-service.drawio.
+```
+
+Calls `relationship_graph(symbols=["OrderService"], depth=2, drawio_path="docs/order-service.drawio")`. The
+file opens in diagrams.net (or the draw.io desktop and VS Code extensions): one A4 page, base classes and
+callers above what they use, a calm palette with one colour per package, hollow arrows for `extends`, dashed
+for `implements`, diamonds for `has`, dashed open arrows for `uses`, solid for `calls` with the call count,
+grey dotted edges for calls matched by name only, dashed boxes for tests and classes outside the workspace,
+and a legend. Ask for `level: method` to see one class's methods and what they call. When the graph is too
+big for a readable page the answer says so: narrow the seeds or lower the depth. `groovyscope graph` does
+the same from a terminal.
+
+## 11b. Check the names
+
+```text
+Are the classes, methods and variables in src/main/groovy/app named well? Propose renames.
+```
+
+Calls `check_naming(paths=[...])`: the GS020 to GS027 findings (booleans not phrased as questions, getters that
+change state, verbs and nouns swapped, names that say nothing, abbreviations, type prefixes, names that
+contradict their type, mixed vocabulary for one idea) and, for every class, field and method, the facts a
+reviewer uses to judge a name: the type, what the method writes and touches, how often it is called. The agent
+then says, per name, whether it describes what the thing is and does, and proposes a better one. Every rename
+you accept goes through `rename` (dry run, then apply; refused on name-only matches; the changed files are
+recompiled and the rename is rolled back if it leaves new errors). Your own shorthand goes under
+`naming.allowedAbbreviations`, your verb choices under `naming.vocabulary`.
 
 ## 12. Runtime profile questions
 
@@ -189,3 +225,7 @@ construct is proven there. RP001 and RP002 findings are blocking.
 - **Coverage gap.** A class or method with lines no test executed, from the JaCoCo report.
 - **RP codes.** Findings from a runtime profile: the code runs somewhere other than where it is built. See
   [docs/profiles.md](profiles.md).
+- **Externals.** The categories `explain_code` reports when a method touches the world outside the JVM: `http`,
+  `file`, `sql`, `process`, `environment`, `clock`, `random`, `concurrency`, `parsing`, `logging`, `exit`.
+- **Verified rename.** After an applied `rename`, the changed files are recompiled; a rename that adds compile
+  errors is rolled back and reported, so a same-named member elsewhere can never be renamed by accident.

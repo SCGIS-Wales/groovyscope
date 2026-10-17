@@ -630,6 +630,37 @@ classpath, hard external contracts. A runtime profile describes such a target, a
 not run, parameter-descriptor contracts, secret flows, network calls outside designated methods, frozen
 contracts against a recorded baseline. Profiles are data you supply; see [profiles.md](profiles.md).
 
+## 18. Naming
+
+A name is the only documentation every reader sees. groovyscope checks the parts of naming that the tree can
+settle; the agent judges the rest (does `resolveAssignments` resolve assignments?) from the facts
+`check_naming` gives it: the declared types, what a method writes, calls and touches, and who calls it.
+
+| Code | Checks | Example | Severity |
+|---|---|---|---|
+| GS020 | A boolean field, property, parameter or method whose name is not a question | `boolean valid` → `isValid` | warning |
+| GS021 | A `get...` method that assigns a field | `getToken()` that refreshes | warning |
+| GS022 | A class named with a verb, or a public method named without one | `class ValidateInput`, `orderTotal()` | info |
+| GS023 | A name that says nothing: `data`, `info`, `tmp`, `obj`, classes ending in `Manager`, `Helper`, `Util` | `def data = ...` | info |
+| GS024 | An abbreviation (`cfg`, `mgr`, `svc`) or a single letter outside a loop or closure | `def mgr = ...` | info |
+| GS025 | A type encoded in the name | `strName`, `m_count`, `arrItems` | info |
+| GS026 | A name that contradicts the type: a `Map` called `...List`, a `String` called `...Count` or `...Date`, a yes/no name on a non-boolean, a plural on a single value | `Map userList` | warning |
+| GS027 | Several verbs for one idea in a class (`get`, `fetch`, `load`), or a verb the project vocabulary replaces | `getUser` and `fetchAccount` | info |
+
+Configuration in `.groovyscope.yaml`:
+
+```yaml
+naming:
+  enabled: true
+  allowedAbbreviations: [cfg, svc]          # the team's own shorthand, never reported by GS024
+  vocabulary: {fetch: get, retrieve: get}   # one verb per idea; GS027 names the others
+```
+
+Test classes (`*Spec`, `*Test`, files under `src/test`) are checked for contradictions and booleans only; Spock
+feature names are free text. Loop indexes, closure parameters, catch parameters and `it` are never reported.
+Renames go through `rename` (a dry run first, static references only, a recompile after the write), never
+through text replacement.
+
 ## Caveats
 - **Release notes not fully retrieved:**
   - the full Groovy 5.1 release notes;

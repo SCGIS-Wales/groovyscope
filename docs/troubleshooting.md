@@ -32,6 +32,10 @@ hard failures.
 | `check` prints `... is not a SARIF log` on stderr | A file in `reports.sarif` or passed to `--import-sarif` is not SARIF 2.1; the other findings are still reported |
 | SARIF findings show an odd `path` | The tool reported a path relative to its own root; groovyscope matches it to a unique file under the source roots and otherwise keeps it as reported |
 | `benchmark path` fails with `could not unpack` | The home folder is not writable or full; pass `--to DIR` or set `GROOVYSCOPE_BENCHMARK_DIR` |
+| `graph` says `too many nodes for one readable page` | The scope is too wide for A4 at a readable font; seed with fewer symbols, lower `--depth`, raise `--max-nodes` only if you print on A3 |
+| `relationship_graph` answers `must end in .drawio` or `outside the workspace` | The draw.io file is written only inside the workspace with the `.drawio` extension; pass a path such as `docs/classes.drawio` |
+| `rename` answers `rolledBack: true` | The rename left new compile errors (often a same-named member in another class); the files were restored; check the symbol with `find_references` and rename by hand |
+| Too many GS02x naming findings | They are info level by default; list your shorthand under `naming.allowedAbbreviations`, your verbs under `naming.vocabulary`, or set `naming.enabled: false` |
 | Kiro's `/tools` lists only `code` and groovyscope under `--agent groovy` | Same cause as the hidden-servers warning; repair the agent |
 | An MCP `find_code` answer is `unknown kind` | The kinds are listed in the answer: `catch`, `throw`, `call`, `new`, `return-null`, `string-literal`, `annotation`, `def`, `empty-block`, `field`, `method` |
 | `read_symbol` answers `found: false` with `candidates` | The name matched nothing exactly; pick one of the candidates (`Class.name`, or `line` for an overload) |

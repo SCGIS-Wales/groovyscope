@@ -803,10 +803,7 @@ def review_command(
     """Review PATHS (or the whole workspace) against the practices checklist, or with --changed review the
     branch's changed Groovy files as a merge request reviewer: blocking, should fix, by design, impact, verdict."""
     socket_file, effective = daemon_socket_for(obj)
-    settings = tool_settings(effective)
-    tools = mcp_server.build_tools(
-        obj["root"], lambda method, params: engine_result(socket_file, method, params), settings, dict(os.environ)
-    )
+    tools = workspace_tools(obj, socket_file, effective)
     if changed:
         result = tools["review_changes"](base, staged, top)
     else:
@@ -915,6 +912,189 @@ def coverage_command(obj: dict[str, Any], *, paths: tuple[Path, ...], as_json: b
         )
     if not gaps:
         click.echo("no uncovered lines")
+
+
+@main.command("explain-code")
+@click.argument("target")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def explain_code_command(obj: dict[str, Any], target: str, as_json: bool) -> None:
+    """What TARGET does, as facts: TARGET is a class or member (pkg.Class, Class.method, Class#method) or a file."""
+    socket_file, effective = daemon_socket_for(obj)
+    tools = workspace_tools(obj, socket_file, effective)
+    is_file = (obj["root"] / target).is_file() or target.endswith((".groovy", ".gradle", ".java"))
+    result = tools["explain_code"](path=target) if is_file else tools["explain_code"](symbol=target)
+    if as_json:
+        click.echo(compact_json(result))
+    else:
+        for line in render_explanation(result):
+            click.echo(line)
+    if not result.get("found"):
+        click.echo(f"no declaration found for {target}", err=True)
+        sys.exit(2)
+
+
+def workspace_tools(obj: dict[str, Any], socket_file: Path, effective: dict[str, Any]) -> dict[str, Any]:
+    """The MCP tool functions bound to this workspace over the daemon socket, so CLI and agent answers match."""
+    return mcp_server.build_tools(
+        obj["root"],
+        lambda method, params: engine_result(socket_file, method, params),
+        tool_settings(effective),
+        dict(os.environ),
+    )
+
+
+def render_explanation(result: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for item in result.get("items", []):
+        kind = item.get("kind")
+        if kind == "method":
+            lines.append(
+                f"{item.get('class')}.{item['name']} ({item.get('visibility')} method, "
+                f"lines {item['lines'][0]}-{item['lines'][1]})"
+            )
+            lines.append(
+                f"  returns {item.get('returns')}; parameters: {', '.join(item.get('parameters') or []) or 'none'}"
+            )
+            lines.append(f"  branches {item.get('branches')}; called from {item.get('callerCount')} site(s)")
+            for key in ("calls", "writes", "reads", "throws", "catches", "externals"):
+                if item.get(key):
+                    shown = [c["target"] if isinstance(c, dict) else str(c) for c in item[key]]
+                    lines.append(f"  {key}: {', '.join(shown)}")
+            continue
+        if kind in {"field", "property"}:
+            lines.append(f"{item.get('class')}.{item['name']}: {item.get('type')} {kind} ({item.get('visibility')})")
+            continue
+        lines.append(
+            f"{item.get('kind')} {item['name']} ({item.get('path')}, lines {item['lines'][0]}-{item['lines'][1]})"
+        )
+        if item.get("extends") or item.get("implements"):
+            lines.append(
+                f"  extends {item.get('extends') or 'nothing'}; "
+                f"implements {', '.join(item.get('implements') or []) or 'nothing'}"
+            )
+        if item.get("fields"):
+            lines.append("  fields: " + ", ".join(f"{f['type']} {f['name']}" for f in item["fields"]))
+        for responsibility in item.get("responsibilities", []):
+            lines.append(f"  {responsibility['verb']}: {', '.join(responsibility['methods'])}")
+        for method in item.get("methods", []):
+            lines.append(
+                f"  {method.get('visibility')} {method.get('returns') or 'constructor'} {method['name']}("
+                f"{', '.join(method.get('parameters') or [])}) lines {method['lines'][0]}-{method['lines'][1]}, "
+                f"branches {method.get('branches')}, callers {method.get('callerCount')}"
+                + (f", writes {', '.join(method['writes'])}" if method.get("writes") else "")
+                + (f", externals {', '.join(method['externals'])}" if method.get("externals") else "")
+            )
+        if item.get("externals"):
+            lines.append(f"  touches: {', '.join(item['externals'])}")
+        lines.append(f"  used by: {', '.join(item.get('usedBy') or []) or 'nothing in the workspace'}")
+        lines.append(f"  uses: {', '.join(item.get('uses') or []) or 'nothing'}")
+    return lines
+
+
+@main.command("graph")
+@click.argument("symbols", nargs=-1)
+@click.option(
+    "--path", "paths", multiple=True, type=click.Path(path_type=Path), help="Seed with every class of a file."
+)
+@click.option(
+    "--kinds", default="", help="Comma-separated edge kinds: extends,implements,has,uses,calls (all by default)."
+)
+@click.option("--depth", default=1, show_default=True, help="Hops shown around the seeds.")
+@click.option("--level", type=click.Choice(["class", "method"]), default="class", show_default=True)
+@click.option("--max-nodes", default=60, show_default=True, help="Cap on nodes (best connected first).")
+@click.option(
+    "--format", "output_format", type=click.Choice(["drawio", "mermaid", "json"]), default="drawio", show_default=True
+)
+@click.option(
+    "--out",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Write here (drawio default: groovyscope-graph.drawio).",
+)
+@click.pass_obj
+def graph_command(
+    obj: dict[str, Any],
+    *,
+    symbols: tuple[str, ...],
+    paths: tuple[Path, ...],
+    kinds: str,
+    depth: int,
+    level: str,
+    max_nodes: int,
+    output_format: str,
+    out: Path | None,
+) -> None:
+    """The relationships between classes (extends, implements, has, uses, calls) seeded by SYMBOLS or --path, as a
+    draw.io file laid out on an A4 page, a Mermaid class diagram, or JSON."""
+    socket_file, effective = daemon_socket_for(obj)
+    tools = workspace_tools(obj, socket_file, effective)
+    wanted = [k.strip() for k in kinds.split(",") if k.strip()]
+    relative = [shown_path(obj["root"] / p, obj["root"]) for p in paths]
+    if output_format == "drawio":
+        target = out or Path("groovyscope-graph.drawio")
+        result = tools["relationship_graph"](
+            symbols=list(symbols),
+            paths=relative,
+            kinds=wanted,
+            depth=depth,
+            level=level,
+            max_nodes=max_nodes,
+            drawio_path=shown_path(obj["root"] / target, obj["root"]),
+        )
+        if result.get("error"):
+            click.echo(f"groovyscope: {result['error']}", err=True)
+            sys.exit(1)
+        click.echo(
+            f"{result['nodeCount']} class(es), {result['edgeCount']} relation(s) written to {result['written']} "
+            f"({result['page']['orientation']} A4, font {result['page']['font']}px)"
+        )
+        for problem in result.get("layoutProblems", []):
+            click.echo(f"layout: {problem}", err=True)
+        if result.get("layoutNote"):
+            click.echo(f"note: {result['layoutNote']}", err=True)
+        if result.get("truncated"):
+            click.echo("note: the graph was capped; raise --max-nodes or narrow the seeds", err=True)
+        return
+    result = tools["relationship_graph"](
+        symbols=list(symbols),
+        paths=relative,
+        kinds=wanted,
+        depth=depth,
+        level=level,
+        max_nodes=max_nodes,
+        mermaid=output_format == "mermaid",
+    )
+    if result.get("error"):
+        click.echo(f"groovyscope: {result['error']}", err=True)
+        sys.exit(1)
+    text = result["mermaid"] if output_format == "mermaid" else compact_json(result)
+    if out is not None:
+        write_atomically(out if out.is_absolute() else obj["root"] / out, text)
+        click.echo(f"written to {shown_path(out if out.is_absolute() else obj['root'] / out, obj['root'])}")
+    else:
+        click.echo(text, nl=output_format != "mermaid")
+
+
+@main.command("naming")
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output, with the declaration facts.")
+@click.pass_obj
+def naming_command(obj: dict[str, Any], *, paths: tuple[Path, ...], as_json: bool) -> None:
+    """Naming findings (GS020 to GS027) for PATHS or the workspace; --json adds the facts behind each name."""
+    socket_file, effective = daemon_socket_for(obj)
+    tools = workspace_tools(obj, socket_file, effective)
+    relative = [shown_path(obj["root"] / p, obj["root"]) for p in paths]
+    result = tools["check_naming"](relative or None, limit=int(effective["output"]["maxResults"]))
+    if as_json:
+        click.echo(compact_json(result))
+        return
+    for finding in result.get("items", []):
+        click.echo(
+            f"{finding['path']}:{finding['line']}:{finding['col']}: {finding['severity']} "
+            f"[{finding['code']}] {finding['message']}"
+        )
+    click.echo(f"{len(result.get('items', []))} naming finding(s); by code: {result.get('byCode', {})}")
 
 
 @main.command("format")

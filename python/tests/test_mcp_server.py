@@ -22,35 +22,6 @@ def symbol(name: str, kind: str = "method", path: str = "src/A.groovy") -> dict[
     return {"name": name, "kind": kind, "container": "app.A", "detail": f"void {name}()", "location": loc(path)}
 
 
-@pytest.fixture
-def engine() -> dict[str, Any]:
-    state: dict[str, Any] = {"calls": [], "responses": {}}
-    return state
-
-
-@pytest.fixture
-def local_tools(engine: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
-    """Tools whose workspace root is tmp_path, for the tools that write files."""
-
-    def call(method: str, params: dict[str, Any]) -> Any:
-        engine["calls"].append((method, params))
-        return engine["responses"].get(method, {})
-
-    return mcp_server.build_tools(tmp_path, call, {"maxResults": 3, "maxBytes": 16000}, {})
-
-
-@pytest.fixture
-def tools(engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    def call(method: str, params: dict[str, Any]) -> Any:
-        engine["calls"].append((method, params))
-        return engine["responses"].get(method, {})
-
-    monkeypatch.setattr(
-        mcp_server.daemon, "info", lambda _root, _environ: {"socket": "/s", "running": True, "status": {}, "log": "/l"}
-    )
-    return mcp_server.build_tools(ROOT, call, {"maxResults": 3, "maxBytes": 16000}, {})
-
-
 def test_find_symbol_filters_kinds_and_pages(tools: dict[str, Any], engine: dict[str, Any]) -> None:
     engine["responses"]["groovyscope/symbols"] = {
         "symbols": [
@@ -213,6 +184,9 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "review",
         "review_changes",
         "coverage_gaps",
+        "explain_code",
+        "relationship_graph",
+        "check_naming",
         "fix",
         "profile_status",
         "hover",
@@ -709,7 +683,7 @@ def test_review_changes_composes_findings_impact_and_risky_sites(
     monkeypatch.setattr(mcp_server.changes, "changed_files", refuse)
     assert tools["review_changes"]() == {"error": "git is not installed"}
     assert mcp_server.TOOL_INFO["review_changes"][1] is True
-    assert len(mcp_server.TOOL_INFO) == 23
+    assert len(mcp_server.TOOL_INFO) == 26
 
 
 SARIF_LOG = {

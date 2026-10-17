@@ -391,3 +391,116 @@ def test_check_imports_sarif_and_coverage_reads_jacoco(
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "coverage", "other"]).output.endswith(
         "no uncovered lines\n"
     )
+
+
+def test_explain_code_graph_and_naming_commands(
+    runner: CliRunner, tmp_path: Path, engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = (tmp_path / "src" / "A.groovy").as_uri()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "A.groovy").write_text("class A {}\n", encoding="utf-8")
+    facts = {
+        "kind": "class",
+        "name": "app.A",
+        "simpleName": "A",
+        "package": "app",
+        "uri": uri,
+        "startLine": 0,
+        "endLine": 9,
+        "modifiers": [],
+        "annotations": [],
+        "superClass": None,
+        "interfaces": [],
+        "fields": [
+            {
+                "name": "n",
+                "type": "int",
+                "visibility": "private",
+                "final": False,
+                "static": False,
+                "property": False,
+                "initialised": True,
+                "line": 1,
+            }
+        ],
+        "methods": [
+            {
+                "name": "run",
+                "signature": "void run()",
+                "visibility": "public",
+                "static": False,
+                "abstract": False,
+                "constructor": False,
+                "returns": "void",
+                "dynamicReturn": False,
+                "parameters": [],
+                "startLine": 2,
+                "endLine": 5,
+                "branches": 1,
+                "calls": [],
+                "callerCount": 0,
+                "callers": [],
+                "reads": [],
+                "writes": ["n"],
+                "throws": [],
+                "catches": [],
+                "externals": ["file"],
+            }
+        ],
+        "responsibilities": [{"verb": "run", "methods": ["run"]}],
+        "usedBy": [],
+        "uses": [],
+        "callerCount": 0,
+    }
+    responses = {
+        "groovyscope/explainCode": {"found": True, "items": [facts]},
+        "groovyscope/graph": {
+            "nodes": [
+                {
+                    "id": "app.A",
+                    "name": "A",
+                    "kind": "class",
+                    "package": "app",
+                    "uri": uri,
+                    "startLine": 0,
+                    "endLine": 9,
+                    "members": 2,
+                    "test": False,
+                }
+            ],
+            "edges": [],
+            "truncated": False,
+            "totalClasses": 1,
+        },
+        "groovyscope/check": {
+            "diagnostics": {uri: [diagnostic(1, 3, "groovyscope", "GS023", "says nothing")]},
+            "summary": {},
+        },
+    }
+    monkeypatch.setattr(cli, "_RPC", lambda _s, method, _p, _t: responses.get(method, {}))
+    explained = runner.invoke(cli.main, ["--root", str(tmp_path), "explain-code", "app.A"])
+    assert explained.exit_code == 0, explained.output
+    assert explained.output.startswith("class app.A (src/A.groovy, lines 1-10)")
+    assert "  public void run() lines 3-6, branches 1, callers 0, writes n, externals file" in explained.output
+    by_file = runner.invoke(cli.main, ["--root", str(tmp_path), "explain-code", "src/A.groovy", "--json"])
+    assert json.loads(by_file.output)["items"][0]["name"] == "app.A"
+    responses["groovyscope/explainCode"] = {"found": False, "items": []}
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "explain-code", "Nope"]).exit_code == 2
+    drawn = runner.invoke(cli.main, ["--root", str(tmp_path), "graph", "app.A", "--out", "out/classes.drawio"])
+    assert drawn.exit_code == 0, drawn.output
+    assert drawn.output.startswith("1 class(es), 0 relation(s) written to out/classes.drawio (")
+    assert (tmp_path / "out" / "classes.drawio").is_file()
+    mermaid = runner.invoke(
+        cli.main, ["--root", str(tmp_path), "graph", "--path", "src/A.groovy", "--format", "mermaid"]
+    )
+    assert mermaid.output.startswith("classDiagram\n    class A\n")
+    as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "graph", "--format", "json", "--kinds", "calls,has"])
+    assert json.loads(as_json.output)["nodeCount"] == 1
+    bad = runner.invoke(cli.main, ["--root", str(tmp_path), "graph", "--format", "json", "--kinds", "nope"])
+    assert bad.exit_code == 1 and "unknown edge kind" in bad.output
+    responses["groovyscope/explainCode"] = {"found": True, "items": [facts]}
+    naming = runner.invoke(cli.main, ["--root", str(tmp_path), "naming", "src/A.groovy"])
+    assert naming.exit_code == 0, naming.output
+    assert "src/A.groovy:2:5: info [GS023] says nothing" in naming.output and "by code: {'GS023': 1}" in naming.output
+    facts_json = runner.invoke(cli.main, ["--root", str(tmp_path), "naming", "src/A.groovy", "--json"])
+    assert json.loads(facts_json.output)["declarations"][0]["name"] == "A"

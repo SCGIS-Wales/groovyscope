@@ -50,6 +50,20 @@ inclusion: always
   variable that only looks like a type: report that as a defect.
 - Never list more than ten rows without a summary line first (counts per meaning, worst first).
 
+## Understanding and naming
+
+- "What does X do", "explain this class", "how does this work": call `groovyscope.explain_code` and write the
+  answer from its facts (members, calls and callers, fields written, exceptions, the external world touched,
+  the verb groups). Read a method with `read_symbol` only where a fact needs the code. Never describe
+  behaviour from a name alone.
+- A diagram helps when the question is about structure (what depends on what, what calls what): call
+  `groovyscope.relationship_graph` with `drawio_path` under `docs/` and tell the user to open the file in
+  diagrams.net; add `mermaid: true` when the answer itself should show the diagram.
+- "Are things named well", "review the naming": call `groovyscope.check_naming` on the files, then judge each
+  name against its facts (a `validate...` that writes fields, a boolean not phrased as a question, a plural on a
+  single value) and propose renames in a table: current, proposed, why. Apply an accepted rename only through
+  `groovyscope.rename` (dry run, then `apply: true`); it is verified by a recompile and rolled back on errors.
+
 ## Merge request review
 
 - "Review this branch", "review my merge request" or "review my changes": call `groovyscope.review_changes`
