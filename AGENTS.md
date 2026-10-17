@@ -32,7 +32,9 @@ Read `docs/roadmap.md` first: it says which stage is in progress and what "done"
   not call it as a reusable workflow: PyPI checks that the signing certificate names it). Its workflow runs
   on the release PR need manual approval in the Actions tab; the publish can also be run by hand with
   `gh workflow run workflow.yml --ref vX.Y.Z -f tag=vX.Y.Z`.
-- The Homebrew formula is rendered by `scripts/homebrew_formula.py` and lives in `SCGIS-Wales/homebrew-tap`;
+- The Homebrew formula is rendered by `scripts/homebrew_formula.py` and lives in `SCGIS-Wales/homebrew-tap`,
+  whose daily `groovyscope formula` workflow updates it from PyPI (run it by hand with
+  `gh workflow run groovyscope.yml --repo SCGIS-Wales/homebrew-tap`);
   test a change through a throwaway local tap (`brew tap-new --no-git local/test`, copy the formula into its
   `Formula/`, `brew install --build-from-source local/test/groovyscope`, `brew test`, then untap).
 - `docs/benchmark.md` is the credit benchmark protocol; runs cost Kiro credits, so never start one on a

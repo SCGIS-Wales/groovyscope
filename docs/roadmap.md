@@ -67,8 +67,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 - [x] **Stage 6: packaging extras** — branch `feat/packaging-extras`, PR #21 merged 2026-10-17.
   `groovyscope fetch [--from]` (checksum-verified release JAR into the cache, used when nothing is bundled),
   `groovyscope jdk install` and `jdk.autoProvision` (Temurin via the Adoptium API, verified, found by
-  discovery), `scripts/homebrew_formula.py` plus a `homebrew` job in `workflow.yml` that opens a PR on
-  `SCGIS-Wales/homebrew-tap` when `HOMEBREW_TAP_TOKEN` is set. Decisions: the GrEclipse formatter stays
+  discovery), `scripts/homebrew_formula.py`, rendered and tested by a daily workflow in
+  `SCGIS-Wales/homebrew-tap` that commits each new release (no cross-repository token). Decisions: the GrEclipse formatter stays
   out of the JAR (Spotless resolves Eclipse bundles from p2 at run time, which breaks "no runtime
   downloads"; vendoring them would double the wheel), so `format.engine: basic` remains the shipped
   formatter; Maven Central publishing of the engine JAR is skipped (no Central Portal account; the JAR is

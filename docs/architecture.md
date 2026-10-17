@@ -168,7 +168,8 @@ that both carry the JAR. One artefact serves Linux and macOS; the JDK is the onl
 
 Releases are cut by release-please on `main`; merging the release PR tags `vX.Y.Z` and dispatches
 `workflow.yml` (build, provenance attestations, PyPI through trusted publishing, release assets with SBOMs
-and checksums, and a Homebrew tap pull request when `HOMEBREW_TAP_TOKEN` is set). The workflow is
+and checksums). The Homebrew tap updates itself: a daily workflow in SCGIS-Wales/homebrew-tap renders the
+formula for the newest PyPI release, installs and tests it on macOS, and commits it. The publish workflow is
 dispatched rather than called as a reusable workflow because PyPI verifies that the signing certificate
 names the registered workflow file. The tap formula (`scripts/homebrew_formula.py`) installs the sdist into
 a virtualenv with uv and depends on `openjdk@21`; `groovyscope fetch` and `groovyscope jdk install` cover
