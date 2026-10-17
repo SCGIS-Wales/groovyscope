@@ -167,7 +167,7 @@ def test_session_answers_many_requests_on_one_connection(session_server: _Sessio
         assert rpc.call(session, "groovyscope/symbols", {"query": "g"}, timeout=5) == {"echo": {"query": "g"}}
         rpc.notify_session(session, "initialized")
         _wait_for(session_server, 5)
-        assert [m["method"] for m in session["notifications"]] == ["window/logMessage", "window/logMessage"]
+        assert session["notifications"] == 2  # counted, never stored
     finally:
         rpc.close_session(session)
         rpc.close_session(session)  # closing twice is harmless
