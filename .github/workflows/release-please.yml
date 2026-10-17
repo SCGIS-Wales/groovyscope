@@ -26,17 +26,21 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # Releases created with GITHUB_TOKEN do not fire `release: published` in other workflows,
-  # so the publish workflow is invoked directly as a reusable workflow.
+  # Releases created with GITHUB_TOKEN do not fire `release: published` in other workflows, and
+  # calling workflow.yml as a reusable workflow makes the Sigstore certificate name this file as the
+  # build config, which PyPI's trusted publisher (registered for workflow.yml) rejects. workflow_dispatch
+  # is one of the two events GITHUB_TOKEN may trigger, so the publish is dispatched as its own run.
   publish:
-    name: publish ${{ needs.release-please.outputs.tag_name }}
+    name: dispatch publish ${{ needs.release-please.outputs.tag_name }}
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    uses: ./.github/workflows/workflow.yml
-    with:
-      tag: ${{ needs.release-please.outputs.tag_name }}
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    secrets: inherit
+      actions: write
+    steps:
+      - name: Dispatch workflow.yml at the release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh workflow run workflow.yml --ref "$TAG" -f tag="$TAG"
