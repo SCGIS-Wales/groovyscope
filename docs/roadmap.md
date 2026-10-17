@@ -11,7 +11,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 
 ## Stages
 
-- [x] **Stage 0: foundation** — branch `feat/groovyscope-foundation`, PR: pending.
+- [x] **Stage 0: foundation** — branch `feat/groovyscope-foundation`, PR: api-py/groovyscope#1 (merged 2026-10-17).
   Monorepo scaffold, Java 21 engine skeleton serving the LSP lifecycle (LSP4J 1.0.0), Python package with
   `doctor`, `version`, `config validate`, `kiro init|repair`, `lsp --stdio`, placeholders for `mcp` and
   `daemon`, CI on Ubuntu and macOS, CodeQL, semantic PR titles, release-please, publish workflow with
@@ -50,4 +50,6 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 
 - 2026-10-17: Stage 0 implemented locally (engine build green, 99 Python tests green at 99% coverage, wheel
   built with the JAR bundled, `kiro init` verified in a temp workspace). Kiro CLI 2.32.0 `/code status` reports
-  `groovyscope (groovy) initialized (261ms)` against the installed wheel. PR to be opened.
+  `groovyscope (groovy) initialized (261ms)` against the installed wheel. PR #1 merged with CI green on Ubuntu and macOS.
+- 2026-10-17: release-please cannot open the 0.1.0 release PR until the repository setting "Allow GitHub
+  Actions to create and approve pull requests" is enabled (Settings > Actions > General > Workflow permissions).
