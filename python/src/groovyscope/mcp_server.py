@@ -148,11 +148,14 @@ def filter_findings(
     ]
 
 
-def summarise(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Findings without the per-file missing-dependency notes, plus counts per code and a one-line summary of
-    the files that miss dependencies (fix: `groovyscope classpath`)."""
+def summarise(
+    findings: list[dict[str, Any]], codes: Sequence[str] | None = None, max_priority: int | None = None
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The findings CODES and MAX_PRIORITY select, without the per-file missing-dependency notes, plus counts per
+    code and a one-line summary of the files that miss dependencies (always reported; fix: `groovyscope
+    classpath`)."""
     missing = [f for f in findings if f.get("code") == "GS100"]
-    rest = [f for f in findings if f.get("code") != "GS100"]
+    rest = filter_findings([f for f in findings if f.get("code") != "GS100"], codes, max_priority)
     counts: dict[str, int] = {}
     for finding in rest:
         counts[str(finding.get("code"))] = counts.get(str(finding.get("code")), 0) + 1
@@ -365,7 +368,7 @@ def quality_tools(
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
-        findings, extra = summarise(filter_findings(findings, codes, max_priority))
+        findings, extra = summarise(findings, codes, max_priority)
         findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
         result = paged(findings, limit, cursor)
         result["summary"] = raw.get("summary", {})
@@ -446,7 +449,7 @@ def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHAR
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
-        findings, extra = summarise(filter_findings(findings, None, max_priority))
+        findings, extra = summarise(findings, None, max_priority)
         groups = practices.review(findings, max(1, min(top, cap)))
         result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap], **extra}
         governed = governed_files(paths or [])

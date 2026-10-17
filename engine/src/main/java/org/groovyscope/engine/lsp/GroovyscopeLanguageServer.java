@@ -207,7 +207,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             for (Map.Entry<String, List<org.groovyscope.engine.model.Diagnostic>> entry : result.diagnostics().entrySet()) {
                 List<org.eclipse.lsp4j.Diagnostic> list = new java.util.ArrayList<>();
                 for (org.groovyscope.engine.model.Diagnostic diagnostic : entry.getValue()) {
-                    list.add(Converters.toLsp(diagnostic));
+                    list.add(Converters.toLsp(diagnostic, current.quality().fixable(diagnostic)));
                 }
                 converted.put(entry.getKey(), list);
             }
