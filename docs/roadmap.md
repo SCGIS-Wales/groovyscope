@@ -114,7 +114,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 
 - [ ] **Stage 10: dependable assistant for every Kiro action on Groovy code** — code on branch
   `feat/agent-capabilities`, PR #44 merged 2026-10-17; docs, steering and MCP instructions on branch
-  `docs/stage-10-agent-capabilities`; release PR #45 (0.9.0) open and waiting for the docs PR.
+  `docs/stage-10-agent-capabilities`, PR #46; release PR #45 (0.9.0) open and waiting for #46.
   Plan: `/Users/ssddgreg/.claude/plans/humming-crunching-badger.md` (approved).
   Delivered in #44 (engine 352 specs, Python 246 tests at 96.5%, all green locally on Corretto 21):
   - `groovyscope classpath` (Gradle init script / Maven, trusted workspaces only) writes
@@ -155,7 +155,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   2. Two budgeted prompts (~2 credits; 12.2 of 50 used this month): "find duplicated code in
      src/main/groovy/org/codenarc/report" (expects `find_duplicates`) and "list catch blocks that catch
      Exception and do not rethrow" (expects `find_code`).
-  3. Merge the docs PR only when every check is `pass` (Ubuntu, macOS, CodeQL, title; check each by name);
+  3. Merge PR #46 only when every check is `pass` (Ubuntu, macOS, CodeQL, title; check each by name);
      release-please then refreshes PR #45. Approve its runs
      (`gh api -X POST repos/SCGIS-Wales/groovyscope/actions/runs/<id>/approve`), same gate, merge, verify the
      0.9.0 publish and the tap.
@@ -227,6 +227,6 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
 - 2026-10-17: Stage 8 merged (PR #32, CI green on Ubuntu and macOS). v0.7.0 released through the dispatched
   `workflow.yml` (build, attestations, release assets, PyPI all green).
 - 2026-10-17: Stage 10 code merged (PR #44); release-please opened PR #45 (0.9.0). Docs, steering and MCP
-  instructions written on `docs/stage-10-agent-capabilities`; `classpath`, GS100, `find_duplicates`,
+  instructions written on `docs/stage-10-agent-capabilities` (PR #46); `classpath`, GS100, `find_duplicates`,
   `find_code` and `read_symbol` verified on a CodeNarc 4.0.0 checkout (numbers in the stage entry). Kiro CLI
   checks and the two budgeted prompts still need the owner's machine.
