@@ -144,6 +144,24 @@ public final class WorkspaceModel {
         return files;
     }
 
+    /**
+     * A cheap summary of what the compiler would read from disk: every compile file's path, size and modification
+     * time. It changes when a file is added, removed or edited outside the editor (an agent's write tool, git).
+     */
+    public String diskFingerprint() {
+        StringBuilder text = new StringBuilder();
+        for (Path file : discoverCompileFiles()) {
+            text.append(file).append('|');
+            try {
+                text.append(Files.size(file)).append('|').append(Files.getLastModifiedTime(file).toMillis());
+            } catch (IOException e) {
+                text.append("unreadable");
+            }
+            text.append('\n');
+        }
+        return Integer.toHexString(text.toString().hashCode()) + ":" + text.length();
+    }
+
     /** Groovy documents keyed by file URI: disk contents overlaid with open documents. Lint and format use these. */
     public Map<String, String> sources() {
         return read(discoverSourceFiles());

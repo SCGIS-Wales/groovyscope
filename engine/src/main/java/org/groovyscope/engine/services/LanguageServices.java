@@ -260,6 +260,19 @@ public final class LanguageServices {
         return workspace;
     }
 
+    private volatile String compiledFingerprint;
+
+    /**
+     * Marks the snapshot stale when files changed on disk since the last compile. Requests from the CLI and the
+     * MCP server call this first: they have no editor sending change notifications.
+     */
+    public void syncWithDisk() {
+        String recorded = compiledFingerprint;
+        if (recorded != null && !recorded.equals(workspace.diskFingerprint())) {
+            markDirty();
+        }
+    }
+
     /** Marks the snapshot stale; the next query recompiles. */
     public void markDirty() {
         changes.incrementAndGet();
@@ -275,6 +288,8 @@ public final class LanguageServices {
             // Captured before the sources are read: an edit that arrives while this compile runs leaves the
             // snapshot stale, so the next query recompiles instead of serving the pre-edit result.
             long target = changes.get();
+            // Taken before the sources are read, so an edit racing this compile shows up as a later change.
+            String fingerprint = workspace.diskFingerprint();
             Map<String, String> sources = workspace.compileSources();
             CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
             Map<String, ModuleNode> modules = new HashMap<>(result.modules());
@@ -289,6 +304,7 @@ public final class LanguageServices {
             version++;
             snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
             compiled = target;
+            compiledFingerprint = fingerprint;
             persistSymbols(snapshot, sources);
             return snapshot;
         }

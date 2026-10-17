@@ -473,6 +473,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                     org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.ServerNotInitialized,
                     "groovyscope engine has not been initialized (send initialize, or pass root)", null));
         }
+        current.syncWithDisk();
         return current;
     }
 

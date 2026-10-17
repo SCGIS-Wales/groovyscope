@@ -85,6 +85,17 @@ class ProfilesSpec extends Specification {
         !byLine.values().flatten().contains('GS010')
     }
 
+    def 'a node matching several spellings of one rule is reported once'() {
+        given:
+        List<Map> constructs = new Gson().fromJson(profileJson(), Map).constructs as List<Map>
+        def spelled = services(Fixtures.project('profile-sample'), profileJson(constructs: constructs.collect {
+            it.id == 'immutable-factories' ? it + [calls: ['Set.of', 'java.util.Set.of']] : it
+        }))
+
+        expect:
+        spelled.quality().practices(uri(DEMO)).count { it.diagnostic().range().start().line() == 20 } == 1
+    }
+
     def 'messages name the target, the service that compiles the file and the evidence'() {
         when:
         def messages = services.quality().practices(uri(DEMO)).collect { it.diagnostic().message() }

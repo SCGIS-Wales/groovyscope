@@ -84,6 +84,9 @@ public final class ProfileFinder {
         Finder finder = new Finder(profile, uri, relative, module, new TextLines(text), config,
                 descriptor.orElse(null), out);
         finder.run();
+        // A node can match several spellings of the same rule (Set.of and java.util.Set.of): report it once.
+        java.util.Set<Diagnostic> seen = new java.util.HashSet<>();
+        out.removeIf(practice -> !seen.add(practice.diagnostic()));
         return out;
     }
 

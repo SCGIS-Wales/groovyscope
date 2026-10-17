@@ -750,11 +750,14 @@ def profile_validate(files: tuple[Path, ...]) -> None:
 
 
 @profile_group.command("status")
-@click.argument("path", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.argument("path", type=click.Path(path_type=Path, dir_okay=False))
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_obj
 def profile_status(obj: dict[str, Any], path: Path, as_json: bool) -> None:
-    """What the governing runtime profile says about one file."""
+    """What the governing runtime profile says about one file (PATH relative to the workspace root)."""
+    if not (obj["root"] / path).is_file():
+        click.echo(f"groovyscope: {path} is not a file under {obj['root']}", err=True)
+        sys.exit(2)
     socket_file, _ = daemon_socket_for(obj)
     status = engine_call(
         socket_file, "groovyscope/profile", {"root": str(obj["root"]), "uri": to_uris(obj["root"], [path])[0]}

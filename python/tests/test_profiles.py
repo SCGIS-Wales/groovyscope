@@ -162,6 +162,8 @@ def test_profile_status_command(runner: CliRunner, tmp_path: Path, engine: dict[
     engine["responses"]["groovyscope/profile"] = {"governed": False}
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "profile", "status", str(source)])
     assert "plugins/DemoPlugin.groovy: not governed" in result.output
+    missing = runner.invoke(cli.main, ["--root", str(tmp_path), "profile", "status", "nope.groovy"])
+    assert missing.exit_code == 2 and "is not a file" in missing.output
 
 
 def test_baseline_save_and_check(runner: CliRunner, tmp_path: Path, engine: dict[str, Any]) -> None:
