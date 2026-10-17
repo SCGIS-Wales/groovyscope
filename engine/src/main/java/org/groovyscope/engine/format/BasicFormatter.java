@@ -47,6 +47,45 @@ public final class BasicFormatter {
 
     /** The formatted text. */
     public static String format(String text, EngineConfig.Format settings, List<Diagnostic> lintFindings) {
+        List<String> out = new ArrayList<>();
+        for (String line : formattedLines(text, settings, lintFindings)) {
+            if (line != null) {
+                out.add(line);
+            }
+        }
+        while (!out.isEmpty() && out.get(out.size() - 1).isEmpty()) {
+            out.remove(out.size() - 1);
+        }
+        return out.isEmpty() ? "" : String.join("\n", out) + "\n";
+    }
+
+    /**
+     * The formatter's edits restricted to the lines {@code firstLine..lastLine} (zero-based, inclusive): one edit per
+     * changed line, a dropped blank line deleted with its line break. The end-of-file newline is left alone.
+     */
+    public static List<TextEdit> rangeEdits(String text, EngineConfig.Format settings, List<Diagnostic> lintFindings,
+            int firstLine, int lastLine) {
+        List<String> formatted = formattedLines(text, settings, lintFindings);
+        TextLines lines = new TextLines(text);
+        List<TextEdit> edits = new ArrayList<>();
+        for (int i = Math.max(0, firstLine); i <= lastLine && i < formatted.size(); i++) {
+            String original = lines.line(i);
+            String replacement = formatted.get(i);
+            if (replacement == null) {
+                edits.add(new TextEdit(new org.groovyscope.engine.model.Range(
+                        new org.groovyscope.engine.model.Position(i, 0),
+                        new org.groovyscope.engine.model.Position(i + 1, 0)), ""));
+            } else if (!replacement.equals(original)) {
+                edits.add(new TextEdit(new org.groovyscope.engine.model.Range(
+                        new org.groovyscope.engine.model.Position(i, 0),
+                        new org.groovyscope.engine.model.Position(i, original.length())), replacement));
+            }
+        }
+        return edits;
+    }
+
+    /** Each input line formatted, or {@code null} where the line is dropped (a blank line over the limit). */
+    static List<String> formattedLines(String text, EngineConfig.Format settings, List<Diagnostic> lintFindings) {
         Set<Integer> semicolonLines = new HashSet<>();
         if (settings.removeSemicolons()) {
             for (Diagnostic finding : lintFindings) {
@@ -80,6 +119,7 @@ public final class BasicFormatter {
             if (line.isEmpty() && !insideString) {
                 blankRun++;
                 if (blankRun > Math.max(0, settings.maxBlankLines())) {
+                    out.add(null);
                     continue;
                 }
             } else {
@@ -87,10 +127,7 @@ public final class BasicFormatter {
             }
             out.add(line);
         }
-        while (!out.isEmpty() && out.get(out.size() - 1).isEmpty()) {
-            out.remove(out.size() - 1);
-        }
-        return out.isEmpty() ? "" : String.join("\n", out) + "\n";
+        return out;
     }
 
     /** A single whole-document edit when formatting changes anything; otherwise no edits. */

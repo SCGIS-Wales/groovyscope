@@ -67,9 +67,55 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param jenkinsRuleset path of the Jenkins profile, or {@code null} for the bundled one
      * @param failOnPriority {@code check} fails on violations with this priority or more severe (1 is worst)
      * @param publish whether lint findings are pushed as LSP diagnostics
+     * @param rules per-rule overrides on top of the loaded rule sets ({@code lint.rules}): rule name to a priority
+     *     (1 to 3), or {@link #RULE_OFF} to remove the rule
+     * @param publishMaxPriority pushed diagnostics include CodeNarc findings only with this priority or more severe
+     *     ({@code lint.publishMaxPriority}, 1 to 3); {@code check} and review requests are never filtered
      */
-    public record Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish) {
+    public record Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish,
+            Map<String, Integer> rules, int publishMaxPriority) {
+        /** The value of a {@link #rules} entry that removes the rule. */
+        public static final int RULE_OFF = 0;
+        /** Default of {@code lint.publishMaxPriority}. */
+        public static final int DEFAULT_PUBLISH_MAX_PRIORITY = 2;
         public static final Lint DEFAULTS = new Lint(null, null, 2, true);
+
+        public Lint {
+            rules = Map.copyOf(rules == null ? Map.of() : rules);
+            publishMaxPriority = Math.max(1, Math.min(3, publishMaxPriority));
+        }
+
+        /** The original four settings: no rule overrides, the default publish threshold. */
+        public Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish) {
+            this(ruleset, jenkinsRuleset, failOnPriority, publish, Map.of(), DEFAULT_PUBLISH_MAX_PRIORITY);
+        }
+
+        /**
+         * Parses {@code lint.rules}: each value is {@code "off"} or {@code {"priority": 1|2|3}}. Entries of any
+         * other shape are ignored with a warning.
+         */
+        static Map<String, Integer> parseRules(JsonElement element) {
+            Map<String, Integer> rules = new java.util.TreeMap<>();
+            if (element == null || !element.isJsonObject()) {
+                return rules;
+            }
+            for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+                JsonElement value = entry.getValue();
+                if (value.isJsonPrimitive() && "off".equalsIgnoreCase(value.getAsString())) {
+                    rules.put(entry.getKey(), RULE_OFF);
+                    continue;
+                }
+                JsonElement priority = value.isJsonObject() ? value.getAsJsonObject().get("priority") : null;
+                if (priority != null && priority.isJsonPrimitive() && priority.getAsJsonPrimitive().isNumber()
+                        && priority.getAsInt() >= 1 && priority.getAsInt() <= 3) {
+                    rules.put(entry.getKey(), priority.getAsInt());
+                } else {
+                    org.groovyscope.engine.log.EngineLog.warn("lint.rules.%s: expected \"off\" or {\"priority\": 1|2|3}; ignored",
+                            entry.getKey());
+                }
+            }
+            return rules;
+        }
     }
 
     /**
@@ -290,7 +336,9 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         string(lint.get("ruleset"), null),
                         string(lint.get("jenkinsRuleset"), null),
                         integer(lint.get("failOnPriority"), Lint.DEFAULTS.failOnPriority()),
-                        bool(lint.get("publish"), Lint.DEFAULTS.publish())),
+                        bool(lint.get("publish"), Lint.DEFAULTS.publish()),
+                        Lint.parseRules(lint.get("rules")),
+                        integer(lint.get("publishMaxPriority"), Lint.DEFAULT_PUBLISH_MAX_PRIORITY)),
                 new TypeCheck(
                         string(typecheck.get("nullChecker"), TypeCheck.DEFAULTS.nullChecker()),
                         bool(typecheck.get("sqlInjection"), TypeCheck.DEFAULTS.sqlInjection()),

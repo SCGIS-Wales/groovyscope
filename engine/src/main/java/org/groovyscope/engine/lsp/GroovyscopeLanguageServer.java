@@ -130,7 +130,13 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         capabilities.setSignatureHelpProvider(new SignatureHelpOptions(List.of("(", ",")));
         capabilities.setRenameProvider(new RenameOptions(true));
         capabilities.setDocumentFormattingProvider(Boolean.TRUE);
-        capabilities.setCodeActionProvider(new CodeActionOptions(List.of(CodeActionKind.QuickFix)));
+        capabilities.setDocumentRangeFormattingProvider(Boolean.TRUE);
+        capabilities.setImplementationProvider(Boolean.TRUE);
+        capabilities.setDocumentHighlightProvider(Boolean.TRUE);
+        capabilities.setFoldingRangeProvider(Boolean.TRUE);
+        capabilities.setInlayHintProvider(Boolean.TRUE);
+        capabilities.setCodeActionProvider(new CodeActionOptions(List.of(CodeActionKind.QuickFix,
+                GroovyscopeTextDocumentService.FIX_ALL_KIND, CodeActionKind.SourceOrganizeImports)));
         capabilities.setDiagnosticProvider(new DiagnosticRegistrationOptions(false, false));
         capabilities.setCallHierarchyProvider(Boolean.TRUE);
         capabilities.setSemanticTokensProvider(new SemanticTokensWithRegistrationOptions(

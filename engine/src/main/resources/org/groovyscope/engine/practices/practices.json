@@ -257,6 +257,20 @@
       "severity": "error"
     },
     {
+      "code": "GS100",
+      "kind": "groovyscope",
+      "group": "types",
+      "title": "Missing dependencies (no classpath configured)",
+      "why": "Without a classpath, imports of library classes cannot resolve, so the compiler reports every import and every use of those classes as an error, and navigation, types and impact analysis stop at the unknown classes. The real cause is one missing setting, not many broken lines.",
+      "bad": "import org.slf4j.Logger   // no workspace.classpath configured",
+      "good": "groovyscope classpath   // writes the project's resolved classpath for the engine",
+      "fix": "Run `groovyscope classpath` (or set `workspace.classpath` in .groovyscope.yaml) so the engine sees the project's dependencies.",
+      "groovy": "both",
+      "enforcedBy": [],
+      "section": "14-guidance-for-ai-agents-and-the-lsp",
+      "severity": "warning"
+    },
+    {
       "code": "NullChecker",
       "kind": "checker",
       "group": "boundaries",

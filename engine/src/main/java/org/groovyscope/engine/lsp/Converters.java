@@ -78,6 +78,44 @@ final class Converters {
         return converted;
     }
 
+    /** A diagnostic whose {@code data} says {@code {"fixable": true}} when a quick fix exists for it. */
+    static Diagnostic toLsp(org.groovyscope.engine.model.Diagnostic diagnostic, boolean fixable) {
+        Diagnostic converted = toLsp(diagnostic);
+        if (fixable) {
+            com.google.gson.JsonObject data = new com.google.gson.JsonObject();
+            data.addProperty("fixable", true);
+            converted.setData(data);
+        }
+        return converted;
+    }
+
+    static org.eclipse.lsp4j.DocumentHighlight highlight(org.groovyscope.engine.model.Highlight highlight) {
+        return new org.eclipse.lsp4j.DocumentHighlight(toLsp(highlight.range()),
+                highlight.write() ? org.eclipse.lsp4j.DocumentHighlightKind.Write
+                        : org.eclipse.lsp4j.DocumentHighlightKind.Read);
+    }
+
+    static org.eclipse.lsp4j.FoldingRange foldingRange(org.groovyscope.engine.model.FoldingRange range) {
+        org.eclipse.lsp4j.FoldingRange converted = new org.eclipse.lsp4j.FoldingRange(range.startLine(), range.endLine());
+        converted.setKind(switch (range.kind()) {
+            case COMMENT -> org.eclipse.lsp4j.FoldingRangeKind.Comment;
+            case IMPORTS -> org.eclipse.lsp4j.FoldingRangeKind.Imports;
+            case REGION -> org.eclipse.lsp4j.FoldingRangeKind.Region;
+        });
+        return converted;
+    }
+
+    static org.eclipse.lsp4j.InlayHint inlayHint(org.groovyscope.engine.model.InlayHint hint) {
+        org.eclipse.lsp4j.InlayHint converted = new org.eclipse.lsp4j.InlayHint(toLsp(hint.position()),
+                Either.forLeft(hint.label()));
+        converted.setKind(org.eclipse.lsp4j.InlayHintKind.Type);
+        return converted;
+    }
+
+    static org.groovyscope.engine.model.Range fromLsp(Range range) {
+        return new org.groovyscope.engine.model.Range(fromLsp(range.getStart()), fromLsp(range.getEnd()));
+    }
+
     static DiagnosticSeverity severity(org.groovyscope.engine.model.Diagnostic.Severity severity) {
         return switch (severity) {
             case ERROR -> DiagnosticSeverity.Error;
