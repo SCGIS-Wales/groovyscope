@@ -502,9 +502,53 @@ public final class LanguageServices {
 
     public List<Symbol> documentSymbols(String uri) {
         if (answerFromCache()) {
-            return cachedSymbols().stream().filter(s -> s.location().uri().equals(uri)).toList();
+            return nest(cachedSymbols().stream()
+                    .filter(s -> s.location() != null && s.location().uri().equals(uri)).toList());
         }
         return snapshot().symbols().documentSymbols(uri);
+    }
+
+    /**
+     * The cache stores a document's declarations flat; an outline is a tree. Each symbol becomes a child of the
+     * smallest other symbol whose range contains it, so a cached answer has the same shape as a compiled one.
+     */
+    static List<Symbol> nest(List<Symbol> flat) {
+        Map<Symbol, List<Symbol>> children = new java.util.LinkedHashMap<>();
+        List<Symbol> roots = new ArrayList<>();
+        for (Symbol symbol : flat) {
+            Symbol parent = null;
+            for (Symbol candidate : flat) {
+                if (candidate != symbol && encloses(candidate, symbol)
+                        && (parent == null || encloses(parent, candidate))) {
+                    parent = candidate;
+                }
+            }
+            if (parent == null) {
+                roots.add(symbol);
+            } else {
+                children.computeIfAbsent(parent, k -> new ArrayList<>()).add(symbol);
+            }
+        }
+        List<Symbol> result = new ArrayList<>();
+        for (Symbol root : roots) {
+            result.add(withChildren(root, children));
+        }
+        return result;
+    }
+
+    private static boolean encloses(Symbol outer, Symbol inner) {
+        Range a = outer.location().range();
+        Range b = inner.location().range();
+        return a.contains(b) && !a.equals(b);
+    }
+
+    private static Symbol withChildren(Symbol symbol, Map<Symbol, List<Symbol>> children) {
+        List<Symbol> nested = new ArrayList<>();
+        for (Symbol child : children.getOrDefault(symbol, List.of())) {
+            nested.add(withChildren(child, children));
+        }
+        return new Symbol(symbol.name(), symbol.kind(), symbol.container(), symbol.location(), symbol.selectionRange(),
+                symbol.detail(), nested);
     }
 
     public List<Symbol> workspaceSymbols(String query) {

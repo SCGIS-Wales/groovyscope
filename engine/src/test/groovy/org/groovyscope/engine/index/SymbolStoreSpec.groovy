@@ -73,15 +73,20 @@ class SymbolStoreSpec extends Specification {
         when: 'a fresh instance on the same workspace is asked before compiling'
         def cold = new LanguageServices(new WorkspaceModel(Fixtures.project('basic-app'), EngineConfig.DEFAULTS), new GroovyCompiler(), SymbolStore.open(db))
         def names = cold.workspaceSymbols('Greet')*.name()
-        def document = cold.documentSymbols(Fixtures.uri('basic-app', 'src/main/groovy/app/Greeter.groovy'))*.name()
+        def outline = cold.documentSymbols(Fixtures.uri('basic-app', 'src/main/groovy/app/Greeter.groovy'))
+        def document = outline*.name() + outline*.children().flatten()*.name()
 
         then:
         names.containsAll(['Greeter', 'GreeterSpec'])
         document.containsAll(['Greeter', 'greet', 'greeting'])
 
-        and: 'the background compile catches up'
+        and: 'cached and compiled outlines have the same shape: members nested under their class'
+        outline*.name() == ['Greeter']
+
+        and: 'the background compile catches up and answers the same way'
         waitFor { cold.hasCompiled() }
         cold.workspaceSymbols('Greeter')*.name().contains('Greeter')
+        cold.documentSymbols(Fixtures.uri('basic-app', 'src/main/groovy/app/Greeter.groovy'))*.name() == ['Greeter']
     }
 
     def 'a corrupt database is reported as an IOException'() {
