@@ -112,12 +112,50 @@ def engine_profiles(discovery: Discovery) -> list[dict[str, Any]]:
     return [loaded["profile"] for loaded in discovery["profiles"]]
 
 
-def guidance(discovery: Discovery) -> str:
-    """Steering text for the active profiles that carry guidance; empty when none do."""
+SKIPPED_DIRS = frozenset(
+    {".git", ".gradle", ".idea", ".kiro", ".groovyscope", "build", "node_modules", "target", "out"}
+)
+MAX_SCANNED_FILES = 100_000
+
+
+def project_files(root: Path) -> list[Path]:
+    """Files under ``root`` relative to it, skipping VCS, build and tool directories (bounded)."""
+    found: list[Path] = []
+    pending = [root]
+    while pending and len(found) < MAX_SCANNED_FILES:
+        current = pending.pop()
+        try:
+            entries = sorted(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir() and not entry.is_symlink():
+                if entry.name not in SKIPPED_DIRS:
+                    pending.append(entry)
+            elif entry.is_file():
+                found.append(entry.relative_to(root))
+    return found
+
+
+def applies(profile: Mapping[str, Any], files: Sequence[Path]) -> bool:
+    """Whether a project has anything the profile would govern: one of its marker files, or, without markers,
+    a file matching one of its activation globs."""
+    activation = profile.get("activation", {})
+    markers = set(activation.get("markers", []))
+    if markers:
+        return any(path.name in markers for path in files)
+    globs = [str(g) for g in activation.get("files", [])]
+    return any(path.match(glob) or path.match(glob.removeprefix("**/")) for path in files for glob in globs)
+
+
+def guidance(discovery: Discovery, project: Path | None = None) -> str:
+    """Steering text for the active profiles that carry guidance; empty when none do. With ``project``, only
+    profiles that apply to that project count, so a private profile's text never lands in an unrelated repository."""
+    files = project_files(project) if project is not None else []
     parts = [
         f"## {loaded['name']}\n\n{str(loaded['profile']['guidance']).strip()}\n"
         for loaded in discovery["profiles"]
-        if str(loaded["profile"].get("guidance", "")).strip()
+        if str(loaded["profile"].get("guidance", "")).strip() and (project is None or applies(loaded["profile"], files))
     ]
     if not parts:
         return ""

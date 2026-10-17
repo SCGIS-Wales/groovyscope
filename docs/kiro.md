@@ -24,7 +24,7 @@ project writes only `lsp.json`; `--full` writes everything into the project inst
 | `settings/mcp.json` | global, or project with `--full` | `mcpServers.groovyscope` entry: command `groovyscope mcp`, a two-minute tool timeout |
 | `agents/groovy.json` | global, or project with `--full` | A `groovy` agent with the `code` tool, the MCP server and tool approvals |
 | `steering/groovyscope.md` | global, or project with `--full` | Always-on policy: navigate through LSP/MCP, review and fix before finishing, the review checklist |
-| `steering/groovyscope-profiles.md` | same, only when a runtime profile has `guidance` | That guidance, per profile |
+| `steering/groovyscope-profiles.md` | same, only when a runtime profile has `guidance` (in a project: only a profile whose markers or files occur in it) | That guidance, per profile |
 
 **Nothing of yours is removed.** JSON files are merged: other MCP servers, other languages and the other keys
 of an existing `groovy` agent are kept, and only groovyscope's own entries are added or updated. The steering

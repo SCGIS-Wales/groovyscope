@@ -116,13 +116,15 @@ def kiro() -> None:
     """Install or repair the Kiro CLI integration files (workspace, or ~/.kiro with --global)."""
 
 
-def profile_guidance_for(obj: dict[str, Any]) -> str:
-    """Steering text from the active runtime profiles; empty when there are none or the config is invalid."""
+def profile_guidance_for(obj: dict[str, Any], *, global_scope: bool = False) -> str:
+    """Steering text from the active runtime profiles (in a project, only those that apply to it); empty when
+    there are none or the config is invalid."""
     try:
         effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError):
         return ""
-    return profiles.guidance(profiles.discover(obj["root"], effective.get("profiles", {}), Path.home()))
+    found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
+    return profiles.guidance(found, None if global_scope else obj["root"])
 
 
 def run_kiro_merge(
@@ -138,7 +140,7 @@ def run_kiro_merge(
             base,
             force=force,
             global_scope=global_scope,
-            profile_guidance=profile_guidance_for(obj),
+            profile_guidance=profile_guidance_for(obj, global_scope=global_scope),
             lsp_only=lsp_only,
         )
     except ValueError as exc:

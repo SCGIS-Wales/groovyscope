@@ -190,7 +190,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> check(Map<String, Object> params) {
         return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
             LanguageServices current = requireServices(params);
-            List<String> uris = stringList(params.get("uris"));
+            List<String> uris = targets(current, params);
             Object profile = params.get("profile");
             java.util.Set<String> include = new java.util.LinkedHashSet<>(stringList(params.get("include")));
             org.groovyscope.engine.model.CheckResult result = current.quality().check(uris,
@@ -224,7 +224,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
             LanguageServices current = requireServices(params);
             org.groovyscope.engine.services.QualityServices.FixResult result = current.quality().fix(
-                    stringList(params.get("uris")), new java.util.LinkedHashSet<>(stringList(params.get("codes"))));
+                    targets(current, params), new java.util.LinkedHashSet<>(stringList(params.get("codes"))));
             Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
             for (Map.Entry<String, List<org.groovyscope.engine.model.TextEdit>> entry : result.edits().entrySet()) {
                 List<org.eclipse.lsp4j.TextEdit> list = new java.util.ArrayList<>();
@@ -275,7 +275,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> format(Map<String, Object> params) {
         return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
             LanguageServices current = requireServices(params);
-            List<String> uris = stringList(params.get("uris"));
+            List<String> uris = targets(current, params);
             if (uris.isEmpty()) {
                 uris = new java.util.ArrayList<>(current.workspace().sources().keySet());
             }
@@ -433,7 +433,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             LanguageServices current = requireServices(params);
             List<Map<String, Object>> findings = new java.util.ArrayList<>();
             Map<String, Integer> counts = new LinkedHashMap<>();
-            for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : current.dynamicCode(stringList(params.get("uris")))) {
+            for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : current.dynamicCode(targets(current, params))) {
                 Map<String, Object> json = new LinkedHashMap<>();
                 json.put("kind", finding.kind());
                 json.put("symbol", finding.symbol());
@@ -475,6 +475,31 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         }
         current.syncWithDisk();
         return current;
+    }
+
+    /** The {@code uris} parameter with every directory replaced by the workspace sources under it. */
+    static List<String> targets(LanguageServices current, Map<String, Object> params) {
+        return expandDirectories(stringList(params.get("uris")), current.workspace().sources().keySet());
+    }
+
+    /**
+     * Directories expand to the known documents under them; a directory with none stays as it is, so the request
+     * matches nothing instead of falling back to the whole workspace.
+     */
+    static List<String> expandDirectories(List<String> uris, java.util.Collection<String> known) {
+        List<String> expanded = new java.util.ArrayList<>();
+        for (String uri : uris) {
+            Path path = org.groovyscope.engine.workspace.WorkspaceModel.toPath(uri);
+            if (path == null || !java.nio.file.Files.isDirectory(path)) {
+                expanded.add(uri);
+                continue;
+            }
+            String prefix = org.groovyscope.engine.workspace.WorkspaceModel.toUri(path);
+            String under = prefix.endsWith("/") ? prefix : prefix + "/";
+            List<String> inside = known.stream().filter(k -> k.startsWith(under)).sorted().toList();
+            expanded.addAll(inside.isEmpty() ? List.of(uri) : inside);
+        }
+        return expanded;
     }
 
     static List<String> stringList(Object value) {

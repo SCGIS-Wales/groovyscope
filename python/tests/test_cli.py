@@ -305,7 +305,9 @@ def test_kiro_init_global_merges_into_the_kiro_home(
     (settings / "mcp.json").write_text('{"mcpServers": {"other": {"command": "x"}}}', encoding="utf-8")
     profiles_dir = isolated_home / ".groovyscope" / "profiles"
     profiles_dir.mkdir(parents=True)
-    (profiles_dir / "p.yaml").write_text("name: p\nguidance: Stay on the proven path.\n", encoding="utf-8")
+    (profiles_dir / "p.yaml").write_text(
+        "name: p\nactivation: {markers: [plugin.json]}\nguidance: Stay on the proven path.\n", encoding="utf-8"
+    )
     dry = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init", "--global", "--dry-run"])
     assert dry.exit_code == 0, dry.output
     assert f"Kiro home: {isolated_home / '.kiro'}" in dry.output and "dry run: nothing written" in dry.output
@@ -324,6 +326,9 @@ def test_kiro_init_global_merges_into_the_kiro_home(
     assert sorted(p.name for p in (tmp_path / ".kiro").rglob("*") if p.is_file()) == ["lsp.json"]
     full = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "repair", "--full"])
     assert full.exit_code == 0 and (tmp_path / ".kiro" / "agents" / "groovy.json").is_file()
+    assert not (tmp_path / ".kiro" / "steering" / "groovyscope-profiles.md").exists()
+    (tmp_path / "plugin.json").write_text("{}", encoding="utf-8")
+    runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "repair", "--full"])
     assert (tmp_path / ".kiro" / "steering" / "groovyscope-profiles.md").is_file()
     monkeypatch.setenv("KIRO_HOME", str(tmp_path / "kh"))
     repaired = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "repair", "--global"])

@@ -85,6 +85,26 @@ def test_guidance_only_for_profiles_that_carry_it(tmp_path: Path) -> None:
     assert profiles.guidance({"profiles": [], "shadowed": [], "errors": []}) == ""
 
 
+def test_project_guidance_only_where_the_profile_applies(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    folder = home / ".groovyscope" / "profiles"
+    write(folder / "m.yaml", "name: m\nactivation: {markers: [plugin.json]}\nguidance: M\n")
+    write(folder / "g.yaml", "name: g\nactivation: {files: ['**/*Job.groovy']}\nguidance: G\n")
+    write(folder / "n.yaml", "name: n\nguidance: N\n")
+    unrelated = tmp_path / "unrelated"
+    write(unrelated / "src" / "App.groovy", "class App {}\n")
+    write(unrelated / "build" / "plugin.json", "{}")  # build output does not count
+    write(unrelated / "node_modules" / "x" / "NightlyJob.groovy", "")
+    found = profiles.discover(unrelated, {}, home)
+    assert profiles.guidance(found, unrelated) == ""
+    assert "## m" in profiles.guidance(found) and "## n" in profiles.guidance(found)
+    plugins = tmp_path / "plugins"
+    write(plugins / "a" / "plugin.json", "{}")
+    write(plugins / "jobs" / "NightlyJob.groovy", "")
+    text = profiles.guidance(profiles.discover(plugins, {}, home), plugins)
+    assert "## m" in text and "## g" in text and "## n" not in text
+
+
 def test_contract_drift_lists_removed_and_changed_items_only() -> None:
     baseline = {"a.groovy": {"parameter:X": "string", "seam:s": "package-private"}, "gone.groovy": {"class:G": "class"}}
     current = {"a.groovy": {"parameter:X": "list", "parameter:NEW": "string"}}
