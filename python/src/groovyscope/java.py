@@ -63,8 +63,13 @@ def candidate_homes(
     platform: str,
     which: Which,
     runner: Runner,
+    provisioned: Sequence[Path] = (),
 ) -> list[tuple[str, Path]]:
-    """Possible JDK homes in priority order, each tagged with where it came from."""
+    """Possible JDK homes in priority order, each tagged with where it came from.
+
+    ``provisioned`` are JDKs groovyscope unpacked itself (``groovyscope jdk install``); they come last so an
+    installed JDK keeps winning.
+    """
     candidates: list[tuple[str, Path]] = []
     if configured:
         candidates.append(("config jdk.home", Path(configured).expanduser()))
@@ -79,6 +84,7 @@ def candidate_homes(
     on_path = which("java")
     if on_path:
         candidates.append(("PATH", Path(on_path).resolve().parent.parent))
+    candidates.extend(("provisioned", home) for home in provisioned)
     return candidates
 
 
@@ -101,12 +107,14 @@ def discover_jdk(
     which: Which = shutil.which,
     runner: Runner = default_runner,
     minimum: int = MINIMUM_JDK,
+    provisioned: Sequence[Path] = (),
 ) -> JdkInfo | None:
     """First candidate meeting ``minimum``; otherwise the newest JDK found (so callers can explain); else None."""
     env = os.environ if environ is None else environ
     seen: set[Path] = set()
     best: JdkInfo | None = None
-    for source, home in candidate_homes(configured, env, platform=platform, which=which, runner=runner):
+    homes = candidate_homes(configured, env, platform=platform, which=which, runner=runner, provisioned=provisioned)
+    for source, home in homes:
         resolved = home.resolve() if home.exists() else home
         if resolved in seen:
             continue
@@ -125,7 +133,10 @@ def discover_jdk(
 def jdk_status(info: JdkInfo | None, minimum: int = MINIMUM_JDK, recommended: int = RECOMMENDED_JDK) -> tuple[str, str]:
     """``(level, message)`` where level is ``ok``, ``warn`` or ``fail``."""
     if info is None:
-        return ("fail", f"no JDK found; install JDK {recommended} (see docs/install.md)")
+        return (
+            "fail",
+            f"no JDK found; install JDK {recommended} (see docs/install.md) or run `groovyscope jdk install`",
+        )
     if info["version"] < minimum:
         return ("fail", f"JDK {info['version']} at {info['home']} is below the minimum {minimum}")
     if info["version"] < recommended:

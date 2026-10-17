@@ -24,13 +24,22 @@ echo "fake java: $@"
 
 
 @pytest.fixture
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Environment without any GROOVYSCOPE_* or JAVA_HOME influence; PATH points at an empty dir."""
+def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
+    """Environment without any GROOVYSCOPE_* or JAVA_HOME influence; PATH points at an empty dir.
+
+    The cache directory is redirected too, so a JAR or JDK fetched on the developer's machine stays invisible.
+    """
     for name in list(os.environ):
         if name.startswith("GROOVYSCOPE_") or name == "JAVA_HOME":
             monkeypatch.delenv(name, raising=False)
-    env = {"PATH": "/nonexistent-bin", "HOME": os.environ.get("HOME", str(Path.home()))}
+    cache = tmp_path / "cache"
+    env = {
+        "PATH": "/nonexistent-bin",
+        "HOME": os.environ.get("HOME", str(Path.home())),
+        "GROOVYSCOPE_CACHE_DIR": str(cache),
+    }
     monkeypatch.setenv("PATH", env["PATH"])
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(cache))
     return env
 
 

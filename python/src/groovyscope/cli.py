@@ -14,8 +14,9 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, mcp_server, relay, rpc
+from groovyscope import __version__, mcp_server, provision, relay, rpc
 from groovyscope import daemon as daemon_lifecycle
+from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config
 from groovyscope.doctor import build_report, has_failures
 from groovyscope.edits import apply_edits, changed_line_count
@@ -152,6 +153,27 @@ def cds_archive_for(
     return daemon_lifecycle.cache_dir(environ) / "cds" / f"engine-{jar_sha256[:16]}.jsa"
 
 
+def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo | None:
+    """A JDK meeting ``jdk.minimum``; with ``jdk.autoProvision`` on, Temurin is downloaded when none is found."""
+    minimum = int(effective["jdk"]["minimum"])
+    provisioned = provision.provisioned_homes(provision.jdk_dir(environ))
+    jdk = discover_jdk(effective["jdk"].get("home"), environ, minimum=minimum, provisioned=provisioned)
+    if jdk is not None and jdk["version"] >= minimum:
+        return jdk
+    if not effective["jdk"].get("autoProvision"):
+        return None
+    feature = max(minimum, provision.DEFAULT_FEATURE)
+    click.echo(
+        f"groovyscope: no JDK {minimum}+ found; jdk.autoProvision is on, downloading Temurin {feature}", err=True
+    )
+    try:
+        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature)
+    except (OSError, ValueError, KeyError) as exc:
+        click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
+        return None
+    return {"home": installed["home"], "version": installed["version"], "source": "provisioned"}
+
+
 def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     """Resolve configuration, JDK and JAR; exit 1 with a message on any failure."""
     try:
@@ -159,9 +181,8 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     except (ValueError, OSError) as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
-    minimum = int(effective["jdk"]["minimum"])
-    jdk = discover_jdk(effective["jdk"].get("home"), dict(os.environ), minimum=minimum)
-    if jdk is None or jdk["version"] < minimum:
+    jdk = resolve_jdk(effective, dict(os.environ))
+    if jdk is None:
         click.echo("groovyscope: no suitable JDK found; run `groovyscope doctor`", err=True)
         sys.exit(1)
     jar = locate_jar(dict(os.environ))
@@ -510,6 +531,48 @@ def mcp(obj: dict[str, Any]) -> None:
     """Serve groovyscope's MCP tools on stdio (what .kiro/settings/mcp.json runs)."""
     socket_file, effective = daemon_socket_for(obj)
     sys.exit(_MCP_SERVE(obj["root"], socket_file, effective["output"], dict(os.environ)))
+
+
+@main.command()
+@click.option(
+    "--from",
+    "source",
+    default=None,
+    help="URL (https) or local path of the engine JAR. Default: the GitHub Release matching this package.",
+)
+@click.option("--sha256", default=None, help="Expected SHA-256; otherwise SHA256SUMS.txt next to the JAR is used.")
+@click.option("--engine-version", default=__version__, show_default=True, help="Engine version being fetched.")
+def fetch(source: str | None, sha256: str | None, engine_version: str) -> None:
+    """Fetch the engine JAR into the cache for installs that do not bundle one (checksum verified)."""
+    environ = dict(os.environ)
+    destination = fetch_engine.fetched_dir(environ)
+    chosen = source or fetch_engine.default_source(engine_version)
+    try:
+        result = fetch_engine.fetch_jar(chosen, version=engine_version, destination=destination, sha256=sha256)
+    except (OSError, ValueError) as exc:
+        click.echo(f"groovyscope: fetch failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"fetched {result['path']} (version {result['version']}, sha256 {result['sha256'][:16]}...)")
+    click.echo(f"from {result['source']}")
+
+
+@main.group()
+def jdk() -> None:
+    """Provision a Temurin JDK when none is installed (never done unless asked or jdk.autoProvision is on)."""
+
+
+@jdk.command("install")
+@click.option("--feature", type=int, default=provision.DEFAULT_FEATURE, show_default=True, help="Java feature release.")
+def jdk_install(feature: int) -> None:
+    """Download the latest Temurin JDK of a feature release from Adoptium, verify it, unpack it into the cache."""
+    environ = dict(os.environ)
+    try:
+        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature)
+    except (OSError, ValueError, KeyError) as exc:
+        click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"installed Temurin {installed['release']} at {installed['home']}")
+    click.echo("groovyscope will use it when no other JDK meets jdk.minimum; `groovyscope doctor` shows which wins")
 
 
 @main.group()

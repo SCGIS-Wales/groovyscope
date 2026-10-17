@@ -39,7 +39,15 @@ uv tool install groovyscope     # or: pipx install groovyscope
 groovyscope doctor
 ```
 
-Platform notes, including JDK setup on Ubuntu and macOS, are in [docs/install.md](docs/install.md).
+On macOS (and Linuxbrew) the tap brings the JDK along:
+
+```bash
+brew install SCGIS-Wales/tap/groovyscope
+```
+
+No JDK and no package manager? `groovyscope jdk install` downloads a checksum-verified Temurin JDK into
+groovyscope's cache, and `jdk.autoProvision: true` in `.groovyscope.yaml` does the same on first use. Both are
+opt-in; nothing is downloaded otherwise. Platform notes are in [docs/install.md](docs/install.md).
 
 ## Use with Kiro CLI
 
@@ -58,6 +66,8 @@ kiro-cli --agent groovy
 | Command | What it does |
 |---|---|
 | `groovyscope doctor` | Checks Python, configuration, JDK, the bundled engine JAR (SHA-256) and Kiro files |
+| `groovyscope fetch [--from URL\|PATH] [--sha256 HEX]` | Installs a release engine JAR into the cache for packages that bundle none; refuses anything whose checksum cannot be verified |
+| `groovyscope jdk install [--feature 21]` | Downloads and verifies a Temurin JDK into the cache (opt-in; `jdk.autoProvision` automates it) |
 | `groovyscope version` | Package and engine versions |
 | `groovyscope config validate [--show]` | Validates `.groovyscope.yaml` + `GROOVYSCOPE_*` overrides against the schema |
 | `groovyscope kiro init \| repair` | Installs or re-merges the Kiro integration files |

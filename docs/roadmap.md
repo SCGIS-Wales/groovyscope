@@ -65,7 +65,14 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   find_dynamic_code, workspace_status. Compact paginated JSON through `render.py`. Engine gains
   `groovyscope/symbols`, `/definition`, `/references` and `/dynamicCode` plus `DynamicCodeFinder`.
 - [ ] **Stage 6: packaging extras** — branch `feat/packaging-extras` (in progress since 2026-10-17).
-  Homebrew tap, `fetch --from` fallback, opt-in Temurin provisioning, optional Maven Central publish.
+  `groovyscope fetch [--from]` (checksum-verified release JAR into the cache, used when nothing is bundled),
+  `groovyscope jdk install` and `jdk.autoProvision` (Temurin via the Adoptium API, verified, found by
+  discovery), `scripts/homebrew_formula.py` plus a `homebrew` job in `workflow.yml` that opens a PR on
+  `SCGIS-Wales/homebrew-tap` when `HOMEBREW_TAP_TOKEN` is set. Decisions: the GrEclipse formatter stays
+  out of the JAR (Spotless resolves Eclipse bundles from p2 at run time, which breaks "no runtime
+  downloads"; vendoring them would double the wheel), so `format.engine: basic` remains the shipped
+  formatter; Maven Central publishing of the engine JAR is skipped (no Central Portal account; the JAR is
+  attached to every GitHub Release with provenance).
 - [ ] **Stage 7: docs polish, benchmark, upstream watch** — branch `feat/docs-benchmark`.
   Complete docs, credit benchmark on a real repository, monthly check of apache/groovy PR #2936
   (GROOVY-12411); v1.0.0.
@@ -90,3 +97,9 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   98% coverage including an end-to-end `groovyscope mcp` test against the real daemon; Kiro CLI 2.32.0
   reports `groovyscope (groovy) initialized`, `/mcp` shows `groovyscope ● running 9 tools`, no error logs.
 - 2026-10-17: Stage 5 merged (PR #18). Stage 6 started on `feat/packaging-extras`.
+- 2026-10-17: Stage 6 implemented locally: 163 Python tests at 97% coverage; `groovyscope fetch` pulled the
+  v0.5.0 JAR from the GitHub Release and verified it against SHA256SUMS.txt; `groovyscope jdk install`
+  downloaded Temurin 21.0.12.1 from Adoptium, verified it, and `doctor` reported it as provisioned; the
+  formula for 0.5.0 was merged into SCGIS-Wales/homebrew-tap (PR #1 there) and
+  `brew install SCGIS-Wales/tap/groovyscope` plus `brew test` pass on macOS. Automatic tap updates need the
+  `HOMEBREW_TAP_TOKEN` repository secret.

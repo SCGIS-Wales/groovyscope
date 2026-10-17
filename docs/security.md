@@ -18,6 +18,11 @@ task, never from silent inference over the workspace contents.
 
 - The wheel bundles the engine JAR with a SHA-256 manifest; `doctor` verifies it. `GROOVYSCOPE_JAR` bypasses
   the check and `doctor` says so.
+- Nothing is downloaded at runtime unless asked. `groovyscope fetch` installs a release JAR only when its
+  SHA-256 matches `--sha256` or the release's `SHA256SUMS.txt`, over `https://` only, and the result is
+  checksummed again on every start. `groovyscope jdk install` (and `jdk.autoProvision`, off by default) takes
+  the latest Temurin build from the Adoptium API and verifies the checksum the API publishes before unpacking.
+- The Homebrew formula installs the PyPI sdist (bundled JAR, same checksums) and Homebrew's `openjdk@21`.
 - Releases publish to PyPI through trusted publishing (OIDC, no API tokens) with provenance attestations for
   the wheel, sdist and JAR, plus CycloneDX SBOMs on the GitHub Release.
 - Third-party GitHub Actions are pinned to commit SHAs; Dependabot keeps them and the Gradle and uv
