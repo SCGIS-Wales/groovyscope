@@ -123,3 +123,6 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   instead; 0.3.0, 0.4.0 and 0.5.0 were published by manual dispatch the same day.
 - 2026-10-17: Stage 6 merged (PR #21). Stage 7 on `feat/docs-benchmark`: docs polish, benchmark protocol,
   upstream watch entry (groovy-lsp merged upstream, unreleased).
+- 2026-10-17: Stage 7 merged (PR #22). v0.6.0 released: the release-please run dispatched `workflow.yml`
+  and every job passed (build, attestations, PyPI, release assets, Homebrew tap job, which skipped with a
+  notice because `HOMEBREW_TAP_TOKEN` is not set). Roadmap complete except the benchmark run.
