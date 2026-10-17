@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,7 +33,7 @@ def test_daemon_lifecycle_through_the_cli(tmp_path: Path, short_dir: Path, monke
 
         status = runner.invoke(cli.main, ["--root", str(workspace), "daemon", "status"])
         assert status.exit_code == 0, status.output
-        assert "running  yes" in status.output
+        assert re.search(r"running +yes", status.output)
 
         env = {**os.environ, "GROOVYSCOPE_LOG": "info"}
         process = subprocess.Popen(

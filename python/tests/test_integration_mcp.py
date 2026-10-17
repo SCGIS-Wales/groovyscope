@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import cli, daemon
+from groovyscope import cli, daemon, mcp_server
 from tests.test_integration_lsp import engine_available
 
 pytestmark = pytest.mark.integration
@@ -47,7 +47,10 @@ def call_tool(process: subprocess.Popen[bytes], request_id: int, name: str, argu
     )
     result = receive(process, request_id)
     assert result.get("isError") is not True, result
-    return result["structuredContent"]
+    assert "structuredContent" not in result  # one copy of the answer, not two
+    text = result["content"][0]["text"]
+    assert "\n" not in text and '": ' not in text  # compact JSON, no pretty printing
+    return json.loads(text)
 
 
 @pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
@@ -91,8 +94,22 @@ def test_mcp_tools_end_to_end(tmp_path: Path, short_dir: Path, monkeypatch: pyte
         send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
 
         send(process, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-        names = {tool["name"] for tool in receive(process, 2)["tools"]}
-        assert {"find_symbol", "impact_of", "check", "format", "find_dynamic_code", "workspace_status"} <= names
+        tools = {tool["name"]: tool for tool in receive(process, 2)["tools"]}
+        assert set(tools) == set(mcp_server.TOOL_INFO)
+        assert tools["hover"]["annotations"]["readOnlyHint"] is True
+        assert tools["fix"]["annotations"]["readOnlyHint"] is False and tools["fix"]["title"] == "Apply safe fixes"
+
+        hover = call_tool(process, 20, "hover", {"path": "src/main/groovy/app/Greeter.groovy", "line": 4, "col": 12})
+        assert hover["found"] and "greet" in hover["markdown"]
+        outline = call_tool(process, 21, "document_symbols", {"path": "src/main/groovy/app/Greeter.groovy"})
+        assert outline["symbols"][0]["name"] == "Greeter" and outline["symbols"][0]["children"][0]["name"] == "greet"
+        renamed = call_tool(
+            process,
+            22,
+            "rename",
+            {"path": "src/main/groovy/app/Greeter.groovy", "line": 4, "col": 24, "new_name": "person"},
+        )
+        assert renamed["renamed"] is False and renamed["files"][0]["path"] == "src/main/groovy/app/Greeter.groovy"
 
         status = call_tool(process, 3, "workspace_status", {})
         assert status["daemon"]["running"] is True and status["engine"]["daemon"] is True

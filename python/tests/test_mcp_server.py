@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -212,6 +213,10 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "review",
         "fix",
         "profile_status",
+        "hover",
+        "type_definition",
+        "document_symbols",
+        "rename",
     }
     result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
     structured = result[1] if isinstance(result, tuple) else result
@@ -397,3 +402,62 @@ def test_session_caller_reconnects_once_after_the_engine_went_away(monkeypatch: 
     no_retry, _ = mcp_server.session_caller(Path("/a.sock"), None, open_session=lambda _p: {"name": "first"})
     with pytest.raises(ConnectionError):
         no_retry("groovyscope/status", {})
+
+
+def test_insight_tools_and_rename(
+    tools: dict[str, Any], local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+) -> None:
+    engine["responses"]["groovyscope/hover"] = {"markdown": "`String greet(String name)`"}
+    assert tools["hover"]("src/A.groovy", 4, 6) == {"found": True, "markdown": "`String greet(String name)`"}
+    assert engine["calls"][-1] == (
+        "groovyscope/hover",
+        {"root": "/ws", "uri": "file:///ws/src/A.groovy", "line": 3, "character": 5},
+    )
+    engine["responses"]["groovyscope/hover"] = None
+    assert tools["hover"]("src/A.groovy", 1, 1) == {"found": False}
+    engine["responses"]["groovyscope/typeDefinition"] = {"symbol": symbol("String", "class"), "confidence": "STATIC"}
+    assert tools["type_definition"]("src/A.groovy", 1, 1)["symbol"]["name"] == "String"
+    engine["responses"]["groovyscope/typeDefinition"] = None
+    assert tools["type_definition"]("src/A.groovy", 1, 1) == {"found": False}
+    member = symbol("greet")
+    klass = {**symbol("A", "class"), "children": [{**member, "children": [symbol("local", "variable")]}]}
+    engine["responses"]["groovyscope/documentSymbols"] = {"symbols": [klass]}
+    outline = tools["document_symbols"]("src/A.groovy", depth=1)
+    assert outline["symbols"][0]["name"] == "A" and outline["symbols"][0]["members"] == 1 and not outline["truncated"]
+    deep = tools["document_symbols"]("src/A.groovy", depth=3)
+    assert deep["symbols"][0]["children"][0]["children"][0]["name"] == "local"
+
+    engine["responses"]["groovyscope/rename"] = {"refused": "matched by name only"}
+    assert local_tools["rename"]("A.groovy", 1, 1, "b") == {"renamed": False, "refused": "matched by name only"}
+    target = tmp_path / "A.groovy"
+    target.write_text("int a = 1\nprintln a\n", encoding="utf-8")
+    first = {"range": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 5}}, "newText": "b"}
+    second = {"range": {"start": {"line": 1, "character": 8}, "end": {"line": 1, "character": 9}}, "newText": "b"}
+    engine["responses"]["groovyscope/rename"] = {
+        "edits": {target.as_uri(): [first, second], "file:///etc/hosts.groovy": [first]}
+    }
+    dry = local_tools["rename"]("A.groovy", 1, 5, "b")
+    assert dry["files"] == [{"path": "A.groovy", "edits": 2, "linesChanged": 2}] and "skipped" in dry
+    assert target.read_text(encoding="utf-8") == "int a = 1\nprintln a\n"
+    applied = local_tools["rename"]("A.groovy", 1, 5, "b", apply=True)
+    assert applied["renamed"] is True and target.read_text(encoding="utf-8") == "int b = 1\nprintln b\n"
+
+
+def test_results_are_compact_and_annotated(engine: dict[str, Any]) -> None:
+    engine["responses"]["groovyscope/symbols"] = {"symbols": [symbol("Greeter", "class")]}
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        return engine["responses"].get(method, {})
+
+    server = mcp_server.build_server(ROOT, call, {"maxResults": 50, "maxBytes": 16000}, {})
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    assert tools["check"].annotations.read_only_hint is True and tools["check"].annotations.open_world_hint is False
+    assert tools["rename"].annotations.read_only_hint is False and tools["rename"].title == "Rename a symbol"
+    result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
+    text = result.content[0].text
+    assert "\n" not in text and json.loads(text)["items"][0]["name"] == "Greeter"
+    assert result.structured_content is None
+    structured = mcp_server.build_server(ROOT, call, {"maxResults": 50, "structured": True}, {})
+    again = asyncio.run(structured.call_tool("find_symbol", {"query": "gree"}))
+    assert again.structured_content["items"][0]["name"] == "Greeter"
+    assert mcp_server.clip("x" * 10, 4) == "xxx…" and mcp_server.clip(5, 1) == 5
