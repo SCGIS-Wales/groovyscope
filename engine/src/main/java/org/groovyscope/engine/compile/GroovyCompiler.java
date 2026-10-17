@@ -36,7 +36,9 @@ import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
 import org.codehaus.groovy.control.ErrorCollector;
 import org.codehaus.groovy.control.Phases;
+import org.codehaus.groovy.control.ResolveVisitor;
 import org.codehaus.groovy.control.SourceUnit;
+import org.codehaus.groovy.control.StaticImportVisitor;
 import org.codehaus.groovy.control.messages.ExceptionMessage;
 import org.codehaus.groovy.control.messages.Message;
 import org.codehaus.groovy.control.messages.SimpleMessage;
@@ -63,9 +65,10 @@ import org.groovyscope.engine.model.Range;
  *
  * <p>Dropping a file can break the files that use its classes, and those break theirs: in a deep hierarchy the
  * retries end up dropping most of the workspace. When the retries drop more files than the first attempt
- * reported, the first attempt's trees are kept instead: that attempt saw every class at once, so every name
- * that could resolve did, and only the genuinely broken files are partial. Diagnostics then come from the
- * first attempt only, since later attempts mostly report the classes that the drops removed.
+ * reported, the first attempt's trees are kept instead: that attempt saw every class at once. Groovy stopped it
+ * after the first failing step, so the rest of semantic analysis is run on its trees here, and every name
+ * that can resolve does; only the genuinely broken files are partial. Diagnostics then come from the first
+ * attempt only, since later attempts mostly report the classes that the drops removed.
  */
 public final class GroovyCompiler {
 
@@ -162,7 +165,7 @@ public final class GroovyCompiler {
         for (Map.Entry<String, SourceUnit> unit : first.units.entrySet()) {
             ModuleNode module = modules.get(unit.getKey());
             if (module != null) {
-                scopeVariables(unit.getValue(), module);
+                finishSemanticAnalysis(first.unit, unit.getValue(), module);
             }
         }
         // Only the first attempt's errors are real: later attempts report the classes their drops removed.
@@ -226,7 +229,7 @@ public final class GroovyCompiler {
                     "compiler-crash", "the Groovy compiler failed: " + e)));
             closeQuietly(resolutionLoader);
             return new Attempt(Map.of(), Map.of(), crash, Set.copyOf(sources.keySet()), unit.getPhase(), true, true,
-                    null);
+                    null, null);
         } finally {
             // Transformations have run; their loader is done. The resolution loader stays open: classpath types in
             // the trees are decompiled lazily, so whoever keeps these trees keeps it (see release()).
@@ -251,13 +254,37 @@ public final class GroovyCompiler {
         for (SourceUnit source : units.values()) {
             collect(source.getErrorCollector(), sources.keySet(), diagnostics, broken);
         }
-        return new Attempt(modules, units, diagnostics, broken, unit.getPhase(), failed, false, resolutionLoader);
+        return new Attempt(modules, units, diagnostics, broken, unit.getPhase(), failed, false, resolutionLoader, unit);
     }
 
     /** Closes the class loader of an attempt whose trees are discarded. */
     private static void release(Attempt attempt) {
         if (attempt != null && attempt.loader != null) {
             closeQuietly(attempt.loader);
+        }
+    }
+
+    /**
+     * Groovy checks for errors after every step of a phase, so when one file fails to resolve its class
+     * headers, no file gets its method bodies resolved. This runs the rest of semantic analysis on one file of
+     * that failed unit: a fresh {@link ResolveVisitor} resolves header and body (and scopes variables first),
+     * then {@link StaticImportVisitor} rewrites static-import and class-qualified references. Errors are
+     * ignored: the first attempt's diagnostics are the ones reported.
+     */
+    private static void finishSemanticAnalysis(CompilationUnit unit, SourceUnit source, ModuleNode module) {
+        for (ClassNode classNode : module.getClasses()) {
+            try {
+                ResolveVisitor resolver = new ResolveVisitor(unit);
+                resolver.setClassNodeResolver(unit.getClassNodeResolver());
+                resolver.startResolving(classNode, source);
+                new StaticImportVisitor(classNode, source).visitClass(classNode);
+            } catch (RuntimeException | LinkageError e) {
+                try {
+                    new VariableScopeVisitor(source).visitClass(classNode);
+                } catch (RuntimeException | LinkageError ignored) {
+                    // Scoping is best effort on a file that did not fully compile.
+                }
+            }
         }
     }
 
@@ -367,6 +394,6 @@ public final class GroovyCompiler {
 
     record Attempt(Map<String, ModuleNode> modules, Map<String, SourceUnit> units,
             Map<String, List<Diagnostic>> diagnostics, Set<String> brokenUris, int phaseReached, boolean failed,
-            boolean crashed, GroovyClassLoader loader) {
+            boolean crashed, GroovyClassLoader loader, CompilationUnit unit) {
     }
 }

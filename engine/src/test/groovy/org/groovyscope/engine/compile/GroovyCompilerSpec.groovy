@@ -89,6 +89,8 @@ class GroovyCompilerSpec extends Specification {
             'file:///w/Sub2.groovy'   : 'class Sub2 extends Sub1 { }',
             'file:///w/Sub3.groovy'   : 'class Sub3 extends Sub2 { String twice() { name() + name() } }',
             'file:///w/User.groovy'   : 'class User { String run(Sub3 s) { def local = s.twice(); local } }',
+            'file:///w/Util.groovy'   : 'class Util { static String shout(String s) { s.toUpperCase() } }',
+            'file:///w/Caller.groovy' : 'class Caller { String go(String s) { def x = Util.shout(s); x } }',
         ]
 
         when:
@@ -105,6 +107,12 @@ class GroovyCompilerSpec extends Specification {
         sub3.superClass.name == 'Sub2'
         sub3.superClass.superClass.superClass.name == 'Base'
         user.methods.find { it.name == 'run' }.parameters[0].type.name == 'Sub3'
+
+        and: 'method bodies are resolved too: a class-qualified call has a class receiver, not a variable'
+        def go = result.modules()['file:///w/Caller.groovy'].classes[0].methods.find { it.name == 'go' }
+        def call = go.code.statements[0].expression.rightExpression
+        call.objectExpression instanceof org.codehaus.groovy.ast.expr.ClassExpression
+        call.objectExpression.type.name == 'Util'
     }
 
     def 'trees stay usable after compiling: classpath types are decompiled lazily'() {

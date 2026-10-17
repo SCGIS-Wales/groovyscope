@@ -77,9 +77,15 @@ import would keep every file from reaching `CANONICALIZATION`. The engine theref
 Dropping a file breaks the files that use its classes, which then break theirs. In a deep hierarchy (a base
 class with hundreds of subclasses, as in CodeNarc's rules) that cascade would drop most of the workspace. When
 the rounds drop any file the first round did not report, the engine keeps the first round's trees instead:
-that round saw every class at once, so every resolvable name resolved, and only the genuinely broken files
-are partial. Variable scoping is then run over those trees, and only the first round's errors are reported,
-since later rounds mostly report the classes their own drops removed.
+that round saw every class at once. Groovy checks for errors after every step of a phase, so it stopped that
+round after resolving class headers; the engine runs the rest of semantic analysis on those trees itself (a
+fresh `ResolveVisitor` for headers, bodies and variable scopes, then `StaticImportVisitor`). Every name that
+can resolve does, and only the genuinely broken files are partial. Only the first round's errors are
+reported, since later rounds mostly report the classes their own drops removed.
+
+Classpaths are often incomplete (JUnit 4 without Hamcrest, say). A classpath type whose members mention a
+missing class is treated as having no readable members, so the affected call stays unresolved instead of
+failing the request.
 
 Joint Groovy/Java projects: with `workspace.javaSources` (on by default), `.java` files under the source
 roots (`src/main/java` and `src/test/java` are among the defaults) join the compile, read by Groovy's parser,
@@ -148,6 +154,8 @@ deliberately loose so shared runners do not fail the build.
 ## Known limits
 
 - GDK extension methods on JDK types (for example `String.size()`) are not resolved.
+- Overloads with the same number of parameters are not told apart by argument type (that needs the static
+  type checker, which runs only at a later phase); a call matches each such overload.
 - Default-argument overloads and methods added by AST transformations are not visible before class
   generation, which the engine never runs.
 - The whole workspace is recompiled after an edit (debounced) inside the warm daemon. Per-file invalidation

@@ -81,7 +81,14 @@ public final class Resolver {
         if (cache.containsKey(entry)) {
             return Optional.ofNullable(cache.get(entry));
         }
-        Resolution resolution = compute(entry);
+        Resolution resolution;
+        try {
+            resolution = compute(entry);
+        } catch (LinkageError e) {
+            // A classpath type references a class missing from the configured classpath: leave this entry
+            // unresolved rather than failing the whole request (call graph, references, impact).
+            resolution = null;
+        }
         cache.put(entry, resolution);
         return Optional.ofNullable(resolution);
     }
