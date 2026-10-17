@@ -17,6 +17,7 @@ package org.groovyscope.engine.lsp;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.eclipse.lsp4j.CallHierarchyItem;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
 import org.eclipse.lsp4j.Diagnostic;
@@ -141,6 +142,30 @@ final class Converters {
                 : symbol.location().range();
         Location location = new Location(symbol.location().uri(), toLsp(range));
         return new WorkspaceSymbol(symbol.name(), symbolKind(symbol.kind()), Either.forLeft(location), symbol.container());
+    }
+
+    /** A call hierarchy item carrying enough data to find the declaration again. */
+    static CallHierarchyItem callHierarchyItem(Symbol symbol) {
+        Range range = toLsp(symbol.location().range());
+        Range selection = symbol.selectionRange() != null ? toLsp(symbol.selectionRange()) : range;
+        CallHierarchyItem item = new CallHierarchyItem(symbol.name(), symbolKind(symbol.kind()), symbol.location().uri(),
+                range, selection);
+        item.setDetail(symbol.detail());
+        return item;
+    }
+
+    /** The symbol a call hierarchy item was made from (name, kind, uri and range are what matter). */
+    static Symbol symbolOf(CallHierarchyItem item) {
+        org.groovyscope.engine.model.Range range = new org.groovyscope.engine.model.Range(
+                fromLsp(item.getRange().getStart()), fromLsp(item.getRange().getEnd()));
+        return new Symbol(item.getName(), org.groovyscope.engine.model.SymbolKind.METHOD, null,
+                new org.groovyscope.engine.model.Location(item.getUri(), range), null, item.getDetail(), List.of());
+    }
+
+    static String key(Symbol symbol) {
+        return symbol.location() == null
+                ? "external:" + symbol.container() + "#" + symbol.name() + "#" + symbol.detail()
+                : symbol.location().uri() + "#" + symbol.location().range();
     }
 
     static CompletionItem completionItem(Completion completion) {

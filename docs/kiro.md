@@ -31,7 +31,8 @@ or `"@builtin"` to the agent's `tools`.
 ## What the `code` tool can ask today
 
 Go to definition, type definition, find references, hover, document symbols, workspace symbol search,
-completion, signature help, rename (with a prepare step that refuses dynamic targets) and diagnostics. The
+completion, signature help, rename (with a prepare step that refuses dynamic targets), call hierarchy,
+semantic tokens, formatting, quick fixes and diagnostics (pushed and pulled, compile plus lint). The
 engine reads the effective `.groovyscope.yaml` from the `GROOVYSCOPE_CONFIG_JSON` variable that
 `groovyscope lsp` sets, so `workspace.sourceRoots`, `workspace.classpath`, `workspace.exclude` and
 `workspace.trust` apply.

@@ -18,14 +18,16 @@ Python owns the installer, CLI, configuration and MCP bridge. Every semantic ans
 
 ## Status
 
-Stage 3 of 7 (lint, type-check, format). The engine compiles the workspace with the Groovy compiler and
+Stage 4 of 7 (call graph and impact). The engine compiles the workspace with the Groovy compiler and
 serves go to definition, type definition, find references, hover, document and workspace symbols,
-completion, signature help, rename with a dry-run prepare step, and diagnostics. Every answer carries a
-confidence (`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename refuses rather than guesses when a call site
-can only be matched by name. One JVM per workspace stays warm across sessions, with a symbol cache for cold
-starts. CodeNarc 4 runs in process with a defensive profile, Groovy 6's checkers run on statically typed
-classes, lint findings arrive as diagnostics with quick fixes, and a conservative formatter is bundled.
-Impact analysis and the MCP server follow; see [docs/roadmap.md](docs/roadmap.md).
+completion, signature help, rename with a dry-run prepare step, call hierarchy, semantic tokens and
+diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename refuses
+rather than guesses when a call site can only be matched by name. One JVM per workspace stays warm across
+sessions, with a symbol cache for cold starts. CodeNarc 4 runs in process with a defensive profile, Groovy
+6's checkers run on statically typed classes, lint findings arrive as diagnostics with quick fixes, a
+conservative formatter is bundled, and `impact` answers "what breaks if I change this?" with direct and
+transitive callers, overrides, tests and the dynamic call sites to review. The MCP server follows; see
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Install
 
@@ -60,6 +62,8 @@ kiro-cli --agent groovy
 | `groovyscope kiro init \| repair` | Installs or re-merges the Kiro integration files |
 | `groovyscope check [PATHS] [--profile default\|jenkins] [--include lint,compile,typecheck] [--json]` | CodeNarc lint, compile and Groovy type-check findings; exits 1 at or above `lint.failOnPriority` |
 | `groovyscope format [PATHS] [--apply] [--json]` | Bundled formatter (whitespace hygiene, safe CodeNarc-driven fixes); exits 1 when files would change unless `--apply` |
+| `groovyscope impact TARGET [--change signature\|rename\|delete\|behaviour] [--json]` | Direct and transitive callers, overrides, tests, name-only sites, risk and suggested checks for a declaration (`pkg.Class.method`, `Class#method`, or `path:line:col`) |
+| `groovyscope callgraph TARGET [--direction in\|out] [--depth N] [--json]` | Callers of, or calls made by, a declaration with per-edge confidence |
 | `groovyscope lsp --stdio` | Serves LSP on stdio through the warm daemon (what Kiro spawns); falls back to a direct JVM |
 | `groovyscope daemon start \| stop \| status` | Manages the per-workspace daemon (idle exit after `daemon.idleTimeoutMinutes`) |
 | `groovyscope mcp` | Planned (Stage 5); exits 3 today |

@@ -22,6 +22,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
+import org.eclipse.lsp4j.CallHierarchyIncomingCall;
+import org.eclipse.lsp4j.CallHierarchyIncomingCallsParams;
+import org.eclipse.lsp4j.CallHierarchyItem;
+import org.eclipse.lsp4j.CallHierarchyOutgoingCall;
+import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams;
+import org.eclipse.lsp4j.CallHierarchyPrepareParams;
 import org.eclipse.lsp4j.CodeAction;
 import org.eclipse.lsp4j.CodeActionKind;
 import org.eclipse.lsp4j.CodeActionParams;
@@ -50,6 +56,8 @@ import org.eclipse.lsp4j.PrepareRenameResult;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.ReferenceParams;
 import org.eclipse.lsp4j.RenameParams;
+import org.eclipse.lsp4j.SemanticTokens;
+import org.eclipse.lsp4j.SemanticTokensParams;
 import org.eclipse.lsp4j.SignatureHelp;
 import org.eclipse.lsp4j.SignatureHelpParams;
 import org.eclipse.lsp4j.SymbolInformation;
@@ -64,6 +72,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either3;
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseError;
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.groovyscope.engine.model.CallSite;
 import org.groovyscope.engine.model.Completion;
 import org.groovyscope.engine.model.Definition;
 import org.groovyscope.engine.model.Diagnostic;
@@ -303,6 +312,68 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
             }
             return new DocumentDiagnosticReport(new RelatedFullDocumentDiagnosticReport(items));
         });
+    }
+
+    @Override
+    public CompletableFuture<List<CallHierarchyItem>> prepareCallHierarchy(CallHierarchyPrepareParams params) {
+        return CompletableFutures.computeAsync(cancel -> ready()
+                .callHierarchyItem(params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))
+                .map(symbol -> List.of(Converters.callHierarchyItem(symbol)))
+                .orElse(List.of()));
+    }
+
+    @Override
+    public CompletableFuture<List<CallHierarchyIncomingCall>> callHierarchyIncomingCalls(CallHierarchyIncomingCallsParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            Symbol target = Converters.symbolOf(params.getItem());
+            Map<String, List<CallSite>> byCaller = new java.util.LinkedHashMap<>();
+            for (CallSite site : ready().incomingCalls(target)) {
+                byCaller.computeIfAbsent(Converters.key(site.caller()), k -> new ArrayList<>()).add(site);
+            }
+            List<CallHierarchyIncomingCall> calls = new ArrayList<>();
+            for (List<CallSite> sites : byCaller.values()) {
+                Symbol caller = sites.get(0).caller();
+                if (caller.location() == null) {
+                    continue;
+                }
+                List<Range> ranges = new ArrayList<>();
+                for (CallSite site : sites) {
+                    ranges.add(Converters.toLsp(site.site().range()));
+                }
+                calls.add(new CallHierarchyIncomingCall(Converters.callHierarchyItem(caller), ranges));
+            }
+            return calls;
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<CallHierarchyOutgoingCall>> callHierarchyOutgoingCalls(CallHierarchyOutgoingCallsParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            Symbol container = Converters.symbolOf(params.getItem());
+            Map<String, List<CallSite>> byCallee = new java.util.LinkedHashMap<>();
+            for (CallSite site : ready().outgoingCalls(container)) {
+                byCallee.computeIfAbsent(Converters.key(site.callee()), k -> new ArrayList<>()).add(site);
+            }
+            List<CallHierarchyOutgoingCall> calls = new ArrayList<>();
+            for (List<CallSite> sites : byCallee.values()) {
+                Symbol callee = sites.get(0).callee();
+                if (callee.location() == null) {
+                    continue;
+                }
+                List<Range> ranges = new ArrayList<>();
+                for (CallSite site : sites) {
+                    ranges.add(Converters.toLsp(site.site().range()));
+                }
+                calls.add(new CallHierarchyOutgoingCall(Converters.callHierarchyItem(callee), ranges));
+            }
+            return calls;
+        });
+    }
+
+    @Override
+    public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+        return CompletableFutures.computeAsync(cancel ->
+                new SemanticTokens(ready().semanticTokens(params.getTextDocument().getUri())));
     }
 
     @Override

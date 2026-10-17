@@ -27,7 +27,7 @@ Packages under `org.groovyscope.engine`:
 | `daemon` | 2 | Unix domain socket server, one front end per connection, shared `WorkspaceRegistry`, idle watchdog, `groovyscope/status` and `groovyscope/shutdownDaemon`. |
 | `lint`, `typecheck`, `format` | 3 | CodeNarc 4 in process (rule sets cached per path, findings cached per document hash); Groovy's static type checker over the workspace with the Groovy 6 checkers added to every `@CompileStatic`/`@TypeChecked` annotation; the bundled `basic` formatter returning one whole-document edit. |
 | `services.QualityServices` | 3 | `check`, `format`, quick fixes and the merged compile + lint diagnostics the LSP publishes. |
-| `callgraph` | 4 | Call graph and impact analysis with per-edge confidence. |
+| `callgraph` | 4 | `CallGraph` (every call as an edge from its containing method, script or class initialiser to each resolved target, built once per snapshot) and `ImpactAnalyzer` (direct and transitive callers, overrides in both directions, tests, name-only sites, risk score, suggested checks). |
 
 Keeping the engine API free of LSP4J types outside `lsp` lets the front end be swapped for, or contribute to,
 Apache Groovy's own `groovy-lsp` (GROOVY-12411) if it ships.
@@ -103,6 +103,27 @@ analysis (Stage 4) will report those sites for manual review.
 - **CLI.** `groovyscope check` and `groovyscope format` talk to the daemon through the custom
   `groovyscope/check` and `groovyscope/format` requests (passing the workspace root, since those connections
   skip `initialize`) and return compact JSON on request.
+
+## Call graph and impact (Stage 4)
+
+The call graph is derived from the index: every method-name, static-call and constructor-call entry is
+resolved and becomes an edge from its container to each candidate target with the resolver's confidence.
+Impact analysis walks that graph. Direct callers are the static and inferred edges into the declaration;
+transitive callers follow static and inferred edges only, up to five levels; `DYNAMIC_UNKNOWN` edges are
+listed separately as sites to review and never counted as resolved. Overrides are same-name, same-arity
+methods in subclasses and superclasses. Tests are callers living under `src/test` or in classes named
+`*Spec` / `*Test`. The risk score is a transparent heuristic (8 per direct caller, 2 per transitive, 10 per
+override, 15 per dynamic site, 10 for public, 10 for rename or delete) capped at 100 and mapped to low,
+medium or high. For classes, fields and properties, "callers" are the references that resolve to them.
+
+Over LSP the same data backs `callHierarchy/incomingCalls` and `outgoingCalls`, and `semanticTokens/full`
+is served from the index (declarations plus the usages that resolve to them). The agent-facing requests are
+`groovyscope/impact` and `groovyscope/callGraph`, used by `groovyscope impact` and `groovyscope callgraph`,
+which accept a qualified name (`pkg.Class.method`, `Class#method`, `Class`) or `path:line:col`.
+
+A performance spec generates a synthetic workspace (300 classes in CI, `-Dgroovyscope.perf.files=2000` for
+the full run) and prints cold compile, warm references and single-file re-check timings; its budgets are
+deliberately loose so shared runners do not fail the build.
 
 ## Known limits of Stage 1
 

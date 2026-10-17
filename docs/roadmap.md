@@ -52,7 +52,11 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   CodeNarc 4 in process with the bundled rulesets (prune unknown rules), Groovy 6 type-checker extensions,
   GrEclipse formatting via spotless-lib returning TextEdits, pull diagnostics, codeAction, `check` and
   `format` CLI commands, SARIF upload in CI.
-- [ ] **Stage 4: call graph + impact analysis** — branch `feat/callgraph-impact` (in progress since 2026-10-17).
+- [ ] **Stage 4: call graph + impact analysis** — branch `feat/callgraph-impact`, PR open (2026-10-17).
+  Delivered on the branch: `CallGraph` and `ImpactAnalyzer` (direct, transitive, overrides, tests, dynamic
+  unknowns, risk, suggested checks), LSP call hierarchy and semantic tokens, `groovyscope/impact` and
+  `groovyscope/callGraph` requests, `groovyscope impact` and `groovyscope callgraph` commands, a
+  performance report spec over a generated workspace (timings printed, loose budgets).
   `callgraph/`, `ImpactAnalyzer` with STATIC | INFERRED | DYNAMIC_UNKNOWN confidence, callHierarchy and
   semanticTokens, `impact` CLI command, performance report on a 2,000-file fixture.
 - [ ] **Stage 5: MCP server** — branch `feat/mcp-server`.

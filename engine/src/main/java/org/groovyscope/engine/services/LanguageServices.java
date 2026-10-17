@@ -29,6 +29,8 @@ import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.expr.VariableExpression;
+import org.groovyscope.engine.callgraph.CallGraph;
+import org.groovyscope.engine.callgraph.ImpactAnalyzer;
 import org.groovyscope.engine.compile.CompilationResult;
 import org.groovyscope.engine.compile.GroovyCompiler;
 import org.groovyscope.engine.index.AstIndex;
@@ -36,8 +38,10 @@ import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.index.NodeEntry;
 import org.groovyscope.engine.index.SymbolStore;
 import org.groovyscope.engine.index.TextLines;
+import org.groovyscope.engine.model.CallSite;
 import org.groovyscope.engine.model.Completion;
 import org.groovyscope.engine.model.Confidence;
+import org.groovyscope.engine.model.ImpactReport;
 import org.groovyscope.engine.model.Definition;
 import org.groovyscope.engine.model.Diagnostic;
 import org.groovyscope.engine.model.Hover;
@@ -100,6 +104,134 @@ public final class LanguageServices {
     }
 
     private volatile QualityServices quality;
+    private volatile CallGraph graph;
+    private volatile long graphVersion = -1;
+
+    /** The call graph of the current snapshot, built on first use and kept until the next compile. */
+    public CallGraph callGraph() {
+        Snapshot current = snapshot();
+        synchronized (lock) {
+            if (graph == null || graphVersion != current.version()) {
+                graph = CallGraph.build(current.index(), current.resolver(), current.symbols());
+                graphVersion = current.version();
+            }
+            return graph;
+        }
+    }
+
+    private ImpactAnalyzer impactAnalyzer(Snapshot current) {
+        return new ImpactAnalyzer(current.index(), current.resolver(), callGraph(), current.symbols());
+    }
+
+    /** The impact of changing the declaration under the cursor. */
+    public Optional<ImpactReport> impact(String uri, Position position, ImpactReport.Change change) {
+        Snapshot current = snapshot();
+        return current.index().nodeAt(uri, position)
+                .flatMap(entry -> current.resolver().resolve(entry))
+                .filter(resolution -> current.index().declarationEntry(resolution.primary()).isPresent())
+                .map(resolution -> impactAnalyzer(current).analyze(resolution.primary(), change));
+    }
+
+    /**
+     * The impact of changing every declaration a name denotes: {@code pkg.Class}, {@code pkg.Class.member},
+     * {@code Class#member} or a bare {@code Class}; overloads each get a report.
+     */
+    public List<ImpactReport> impactOf(String qualifiedName, ImpactReport.Change change) {
+        Snapshot current = snapshot();
+        List<ImpactReport> reports = new ArrayList<>();
+        for (ASTNode declaration : findDeclarations(current, qualifiedName)) {
+            reports.add(impactAnalyzer(current).analyze(declaration, change));
+        }
+        return reports;
+    }
+
+    /** Declarations a dotted or hash-separated name refers to. */
+    public List<ASTNode> findDeclarations(Snapshot current, String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            return List.of();
+        }
+        int hash = trimmed.indexOf('#');
+        String classPart = hash >= 0 ? trimmed.substring(0, hash) : trimmed;
+        String memberPart = hash >= 0 ? trimmed.substring(hash + 1) : null;
+        List<ClassNode> classes = classesNamed(current, classPart);
+        if (classes.isEmpty() && memberPart == null && classPart.contains(".")) {
+            int dot = classPart.lastIndexOf('.');
+            classes = classesNamed(current, classPart.substring(0, dot));
+            memberPart = classPart.substring(dot + 1);
+        }
+        List<ASTNode> found = new ArrayList<>();
+        for (ClassNode classNode : classes) {
+            if (memberPart == null || memberPart.isBlank()) {
+                found.add(classNode);
+                continue;
+            }
+            for (org.codehaus.groovy.ast.MethodNode method : classNode.getDeclaredMethods(memberPart)) {
+                if (!method.isSynthetic()) {
+                    found.add(method);
+                }
+            }
+            org.codehaus.groovy.ast.PropertyNode property = classNode.getProperty(memberPart);
+            if (property != null) {
+                found.add(property);
+            } else {
+                org.codehaus.groovy.ast.FieldNode field = classNode.getDeclaredField(memberPart);
+                if (field != null) {
+                    found.add(field);
+                }
+            }
+        }
+        return found;
+    }
+
+    private static List<ClassNode> classesNamed(Snapshot current, String name) {
+        Optional<ClassNode> exact = current.index().classNamed(name);
+        if (exact.isPresent()) {
+            return List.of(exact.get());
+        }
+        return current.index().classesWithSimpleName(name);
+    }
+
+    /** The declaration (method, constructor, class) at a position, for call hierarchy, or empty. */
+    public Optional<Symbol> callHierarchyItem(String uri, Position position) {
+        Snapshot current = snapshot();
+        return current.index().nodeAt(uri, position)
+                .flatMap(entry -> current.resolver().resolve(entry))
+                .map(Resolution::primary)
+                .filter(node -> node instanceof org.codehaus.groovy.ast.MethodNode || node instanceof ClassNode)
+                .filter(node -> current.index().declarationEntry(node).isPresent())
+                .map(node -> current.symbols().of(node));
+    }
+
+    /** The declaration node a symbol (from {@link #callHierarchyItem}) stands for, or empty. */
+    public Optional<ASTNode> declarationOf(Symbol symbol) {
+        Snapshot current = snapshot();
+        if (symbol == null || symbol.location() == null) {
+            return Optional.empty();
+        }
+        for (NodeEntry entry : current.index().entries(symbol.location().uri())) {
+            if (entry.isDeclaration() && entry.range().equals(symbol.location().range())
+                    && Symbols.nameOf(entry.node()) != null && Symbols.nameOf(entry.node()).equals(symbol.name())) {
+                return Optional.of(entry.node());
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Calls into the given declaration. */
+    public List<CallSite> incomingCalls(Symbol symbol) {
+        return declarationOf(symbol).map(node -> callGraph().incoming(node)).orElse(List.of());
+    }
+
+    /** Calls made from within the given declaration. */
+    public List<CallSite> outgoingCalls(Symbol symbol) {
+        return declarationOf(symbol).map(node -> callGraph().outgoing(node)).orElse(List.of());
+    }
+
+    /** Semantic tokens for a document, LSP-encoded. */
+    public List<Integer> semanticTokens(String uri) {
+        return SemanticTokensSupport.encode(snapshot(), uri);
+    }
 
     /** Lint, type-check, format and quick fixes over this workspace, sharing its caches. */
     public QualityServices quality() {
