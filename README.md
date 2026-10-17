@@ -18,9 +18,12 @@ Python owns the installer, CLI, configuration and MCP bridge. Every semantic ans
 
 ## Status
 
-Stage 0 of 7 (foundation). The engine serves the LSP lifecycle and the package installs, configures Kiro and
-diagnoses the environment. Navigation, lint, format, impact analysis and the MCP server follow stage by stage;
-see [docs/roadmap.md](docs/roadmap.md).
+Stage 1 of 7 (navigation). The engine compiles the workspace with the Groovy compiler and serves go to
+definition, type definition, find references, hover, document and workspace symbols, completion, signature
+help, rename with a dry-run prepare step, and compile diagnostics. Every answer carries a confidence
+(`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename refuses rather than guesses when a call site can only be
+matched by name. Lint, format, impact analysis and the MCP server follow stage by stage; see
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Install
 

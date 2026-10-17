@@ -23,6 +23,7 @@ import java.util.function.IntConsumer;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.services.LanguageClient;
+import org.groovyscope.engine.config.EngineConfig;
 
 /** Wires a {@link GroovyscopeLanguageServer} to a pair of streams and blocks until the client goes away. */
 public final class LspServerRunner {
@@ -36,8 +37,8 @@ public final class LspServerRunner {
      * @return the server, so callers can inspect its state after the session ends
      */
     public static GroovyscopeLanguageServer serve(InputStream in, OutputStream out, Path fallbackRoot,
-            IntConsumer exitHandler) throws InterruptedException {
-        GroovyscopeLanguageServer server = new GroovyscopeLanguageServer(exitHandler, fallbackRoot);
+            IntConsumer exitHandler, EngineConfig config) throws InterruptedException {
+        GroovyscopeLanguageServer server = new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config);
         Launcher<LanguageClient> launcher = LSPLauncher.createServerLauncher(server, in, out);
         server.connect(launcher.getRemoteProxy());
         try {

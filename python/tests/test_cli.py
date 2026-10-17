@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -124,10 +125,15 @@ def test_lsp_execs_the_engine(
     monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
     monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
     monkeypatch.setenv("GROOVYSCOPE_DAEMON__HEAP", "2g")
+    monkeypatch.setenv(cli.CONFIG_ENV, "")
     captured: list[tuple[str, Sequence[str]]] = []
     monkeypatch.setattr(cli, "_EXEC", lambda path, argv: captured.append((path, argv)))
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
+    handed_over = json.loads(os.environ[cli.CONFIG_ENV])
+    assert handed_over["daemon"]["heap"] == "2g"
+    assert handed_over["root"] == str(tmp_path.resolve())
+    assert handed_over["workspace"]["trust"] is False
     path, argv = captured[0]
     assert path.endswith("/bin/java")
     assert argv[0] == path
