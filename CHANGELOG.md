@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.3.0...v0.4.0) (2026-10-17)
+
+
+### Features
+
+* lint, type-check and format (stage 3) ([#13](https://github.com/SCGIS-Wales/groovyscope/issues/13)) ([cdf61d5](https://github.com/SCGIS-Wales/groovyscope/commit/cdf61d5772f6c6534518fc78dce81430f9f072cb))
+
+
+### Documentation
+
+* mark stage 3 merged and stage 4 in progress ([e053092](https://github.com/SCGIS-Wales/groovyscope/commit/e0530926021cbc4180e77726fcfc58d16eeab47d))
+
 ## [0.3.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.2.0...v0.3.0) (2026-10-17)
 
 
