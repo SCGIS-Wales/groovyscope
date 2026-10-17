@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.7.0...v0.7.1) (2026-10-17)
+
+
+### Dependencies
+
+* bump actions/checkout from 5.1.0 to 7.0.1 ([#33](https://github.com/SCGIS-Wales/groovyscope/issues/33)) ([50f3778](https://github.com/SCGIS-Wales/groovyscope/commit/50f3778b0de4c2e244ae9ee1fb5b3ab0d101fd6c))
+* bump actions/download-artifact from 6.0.0 to 8.0.2 ([#34](https://github.com/SCGIS-Wales/groovyscope/issues/34)) ([7996b49](https://github.com/SCGIS-Wales/groovyscope/commit/7996b49f159a97257c46d84fe19291c346ab3f59))
+* bump actions/setup-java from 5.7.0 to 6.1.0 ([#35](https://github.com/SCGIS-Wales/groovyscope/issues/35)) ([0b21a33](https://github.com/SCGIS-Wales/groovyscope/commit/0b21a33e4d927120ede72adb66620bba2ffd7ce0))
+
+
+### Documentation
+
+* mark stage 8 done after the 0.7.0 release ([#36](https://github.com/SCGIS-Wales/groovyscope/issues/36)) ([82b9c6d](https://github.com/SCGIS-Wales/groovyscope/commit/82b9c6d09a3f0fbb864926ea15ebbef15f2653c0))
+
 ## [0.7.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.6.2...v0.7.0) (2026-10-17)
 
 
