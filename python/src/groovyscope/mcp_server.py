@@ -5,6 +5,7 @@ Every tool returns compact JSON (relative paths, line:col, kinds, pagination) an
 
 from __future__ import annotations
 
+import logging
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -17,6 +18,7 @@ from groovyscope.edits import changed_line_count, file_edits, uri_path, write_do
 from groovyscope.render import page
 
 SERVER_NAME = "groovyscope"
+LOG = logging.getLogger("groovyscope.mcp")
 INSTRUCTIONS = (
     "Groovy code intelligence for this workspace. Use these tools instead of grep, sed, head or tail to "
     "locate Groovy symbols. Every answer carries a confidence; DYNAMIC_UNKNOWN means matched by name only. "
@@ -409,17 +411,47 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     return server
 
 
-def serve(root: Path, socket_file: Path, output: Mapping[str, Any], environ: Mapping[str, str]) -> int:
+def session_caller(
+    socket_file: Path,
+    reconnect: Callable[[], Path] | None = None,
+    *,
+    open_session: Callable[[Path], rpc.Session] | None = None,
+) -> tuple[Call, Callable[[], None]]:
+    """A ``call`` bound to one engine session that, when the engine has gone away (daemon stopped, JVM killed,
+    upgraded), restarts it through ``reconnect`` and retries the request once. Also returns a closer."""
+    opener = rpc.open_session if open_session is None else open_session
+    state: dict[str, Any] = {"session": opener(socket_file)}
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        try:
+            return rpc.call(state["session"], method, params, timeout=600.0)
+        except OSError as exc:
+            if reconnect is None:
+                raise
+            LOG.info("engine session lost (%s); reconnecting", exc)
+            rpc.close_session(state["session"])
+            state["session"] = opener(reconnect())
+            return rpc.call(state["session"], method, params, timeout=600.0)
+
+    def close() -> None:
+        rpc.close_session(state["session"])
+
+    return (call, close)
+
+
+def serve(
+    root: Path,
+    socket_file: Path,
+    output: Mapping[str, Any],
+    environ: Mapping[str, str],
+    reconnect: Callable[[], Path] | None = None,
+) -> int:
     """Open one engine session, run the MCP server on stdio until the client disconnects, close the session."""
-    session = rpc.open_session(socket_file)
+    # No LSP initialize: every groovyscope/* request names its root, and an initialized session would make
+    # the engine lint the whole workspace and push diagnostics for every file to a client that ignores them.
+    call, close = session_caller(socket_file, reconnect)
     try:
-        # No LSP initialize: every groovyscope/* request names its root, and an initialized session would make
-        # the engine lint the whole workspace and push diagnostics for every file to a client that ignores them.
-
-        def call(method: str, params: dict[str, Any]) -> Any:
-            return rpc.call(session, method, params, timeout=600.0)
-
         build_server(root, call, output, environ).run(transport="stdio")
     finally:
-        rpc.close_session(session)
+        close()
     return 0

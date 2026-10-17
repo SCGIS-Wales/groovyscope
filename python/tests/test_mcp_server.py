@@ -369,3 +369,31 @@ def test_writes_stay_inside_the_workspace_and_keep_line_endings(
     assert set(result["rejected"].values()) == {"not a Groovy source inside the workspace"}
     with pytest.raises(ValueError, match="outside the workspace"):
         local_tools["fix"](paths=["../elsewhere.groovy"])
+
+
+def test_session_caller_reconnects_once_after_the_engine_went_away(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[Path] = []
+    attempts: list[str] = []
+
+    def call(session: dict[str, Any], method: str, _params: Any = None, timeout: float | None = None) -> Any:
+        attempts.append(session["name"])
+        if session["name"] == "first":
+            msg = "engine closed the session"
+            raise ConnectionError(msg)
+        return {"ok": method}
+
+    monkeypatch.setattr(mcp_server.rpc, "call", call)
+    monkeypatch.setattr(mcp_server.rpc, "close_session", lambda _s: None)
+    names = iter(["first", "second"])
+
+    def opener(path: Path) -> dict[str, Any]:
+        opened.append(path)
+        return {"name": next(names)}
+
+    caller, close = mcp_server.session_caller(Path("/a.sock"), lambda: Path("/b.sock"), open_session=opener)
+    assert caller("groovyscope/status", {}) == {"ok": "groovyscope/status"}
+    assert opened == [Path("/a.sock"), Path("/b.sock")] and attempts == ["first", "second"]
+    close()
+    no_retry, _ = mcp_server.session_caller(Path("/a.sock"), None, open_session=lambda _p: {"name": "first"})
+    with pytest.raises(ConnectionError):
+        no_retry("groovyscope/status", {})

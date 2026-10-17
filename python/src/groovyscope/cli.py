@@ -760,7 +760,15 @@ _RPC_LIST = _rpc_list
 def mcp(obj: dict[str, Any]) -> None:
     """Serve groovyscope's MCP tools on stdio (what .kiro/settings/mcp.json runs)."""
     socket_file, effective = daemon_socket_for(obj)
-    sys.exit(_MCP_SERVE(obj["root"], socket_file, effective["output"], dict(os.environ)))
+
+    def reconnect() -> Path:
+        try:
+            return daemon_socket_for(obj)[0]
+        except SystemExit as exc:
+            msg = "the engine daemon could not be restarted; run `groovyscope doctor`"
+            raise ConnectionError(msg) from exc
+
+    sys.exit(_MCP_SERVE(obj["root"], socket_file, effective["output"], dict(os.environ), reconnect))
 
 
 @main.command()

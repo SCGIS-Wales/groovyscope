@@ -176,17 +176,28 @@ def test_mcp_command_serves_over_the_daemon(
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
     monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
-    served: list[tuple[Path, Path, dict[str, Any], dict[str, str]]] = []
+    served: list[tuple[Path, Path, dict[str, Any], dict[str, str], Any]] = []
     monkeypatch.setattr(
         cli,
         "_MCP_SERVE",
-        lambda root, socket_file, output, environ: served.append((root, socket_file, output, environ)) or 0,
+        lambda root, socket_file, output, environ, reconnect: (
+            served.append((root, socket_file, output, environ, reconnect)) or 0
+        ),
     )
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "mcp"])
     assert result.exit_code == 0, result.output
     assert served[0][0] == tmp_path.resolve()
     assert served[0][1].suffix == ".sock"
     assert served[0][2]["maxResults"] == 50
+    assert served[0][4]().suffix == ".sock"
+
+    def failing(*_a: object, **_k: object) -> dict[str, object]:
+        msg = "no JVM"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", failing)
+    with pytest.raises(ConnectionError, match="could not be restarted"):
+        served[0][4]()
 
 
 def test_configure_logging_levels() -> None:
