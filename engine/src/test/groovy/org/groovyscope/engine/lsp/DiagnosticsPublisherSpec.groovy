@@ -54,4 +54,47 @@ class DiagnosticsPublisherSpec extends Specification {
         services.markDirty()
         publisher.shutdown()
     }
+
+    def 'shutdown during a publish never interrupts the writing thread and stops before the next notification'() {
+        given:
+        def services = Fixtures.services('practices-sample')
+        def entered = new java.util.concurrent.CountDownLatch(1)
+        def release = new java.util.concurrent.CountDownLatch(1)
+        def interrupted = new java.util.concurrent.atomic.AtomicBoolean(false)
+        def sent = new java.util.concurrent.atomic.AtomicInteger()
+        def client = new RecordingLanguageClient() {
+            @Override
+            void publishDiagnostics(PublishDiagnosticsParams params) {
+                if (sent.incrementAndGet() == 1) {
+                    entered.countDown()
+                    try {
+                        release.await(30, java.util.concurrent.TimeUnit.SECONDS)
+                        interrupted.set(Thread.currentThread().isInterrupted())
+                    } catch (InterruptedException e) {
+                        interrupted.set(true)
+                    }
+                }
+            }
+        }
+        def publisher = new DiagnosticsPublisher({ services }, { client })
+
+        when: 'a publish is writing its first notification when shutdown arrives'
+        publisher.schedule(0)
+        assert entered.await(60, java.util.concurrent.TimeUnit.SECONDS)
+        publisher.shutdown()
+        release.countDown()
+        Thread.sleep(300)
+
+        then:
+        !interrupted.get()
+        sent.get() == 1
+        publisher.isShutdown()
+
+        when: 'more work is scheduled after shutdown'
+        publisher.schedule(0)
+        Thread.sleep(100)
+
+        then:
+        sent.get() == 1
+    }
 }
