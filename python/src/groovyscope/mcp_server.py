@@ -13,7 +13,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from groovyscope import daemon, practices, rpc
+from groovyscope import daemon, diagnostics, practices, rpc
 from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
 from groovyscope.render import page
 
@@ -407,7 +407,7 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     """An MCP server exposing the tools of {@link build_tools}."""
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
     for name, function in build_tools(root, call, output, environ).items():
-        server.tool(name=name, description=function.__doc__)(function)
+        server.tool(name=name, description=function.__doc__)(diagnostics.timed(name, function, LOG))
     return server
 
 

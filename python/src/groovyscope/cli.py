@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -15,7 +16,18 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, kiro_agent, mcp_server, practices, profiles, provision, relay, rpc, trust
+from groovyscope import (
+    __version__,
+    diagnostics,
+    kiro_agent,
+    mcp_server,
+    practices,
+    profiles,
+    provision,
+    relay,
+    rpc,
+    trust,
+)
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config, load_config_with_notes
@@ -44,10 +56,25 @@ LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
 ExecFn = Callable[[str, Sequence[str]], Any]
 
 
-def configure_logging(environ: dict[str, str] | None = None) -> None:
+def configure_logging(
+    environ: dict[str, str] | None = None, *, level: str | None = None, log_file: Path | None = None
+) -> None:
+    """``--debug``/``--verbose`` win over ``GROOVYSCOPE_LOG``; the default is warnings only."""
     env = os.environ if environ is None else environ
-    level_name = env.get(LOG_ENV, "warning").upper()
-    logging.basicConfig(level=getattr(logging, level_name, logging.WARNING), stream=sys.stderr, format="%(message)s")
+    diagnostics.configure(diagnostics.level_of(level or env.get(LOG_ENV)), log_file)
+
+
+def apply_config_logging(obj: dict[str, Any], effective: dict[str, Any]) -> None:
+    """``logging.level``/``logging.file`` from the configuration apply when no flag or GROOVYSCOPE_LOG chose already,
+    so the LSP and MCP processes Kiro starts honour .groovyscope.yaml. Flags reach the engine the same way."""
+    section = effective.setdefault("logging", {})
+    if obj.get("log_level"):
+        section["level"] = obj["log_level"]
+    if obj.get("log_file"):
+        section["file"] = str(obj["log_file"])
+    if not obj.get("log_level") and not os.environ.get(LOG_ENV):
+        file_setting = section.get("file")
+        diagnostics.configure(diagnostics.level_of(section.get("level")), Path(file_setting) if file_setting else None)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -66,11 +93,34 @@ def configure_logging(environ: dict[str, str] | None = None) -> None:
     default=None,
     help="Workspace root (default: current directory).",
 )
+@click.option("--debug", is_flag=True, help="Debug logging here and in the engine (implies --verbose).")
+@click.option("-v", "--verbose", is_flag=True, help="Report each step (JDK, JAR, configuration, daemon, downloads).")
+@click.option(
+    "--log-file",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Also append log records to this file (the engine writes there too).",
+)
 @click.pass_context
-def main(ctx: click.Context, config_path: Path | None, root: Path | None) -> None:
+def main(
+    ctx: click.Context,
+    *,
+    config_path: Path | None,
+    root: Path | None,
+    debug: bool,
+    verbose: bool,
+    log_file: Path | None,
+) -> None:
     """Groovy 5/6 code intelligence for AI coding agents."""
-    configure_logging()
-    ctx.obj = {"config_path": config_path, "root": (root or Path.cwd()).resolve()}
+    level = "debug" if debug else "info" if verbose else None
+    configure_logging(level=level, log_file=log_file)
+    ctx.obj = {
+        "config_path": config_path,
+        "root": (root or Path.cwd()).resolve(),
+        "log_level": level,
+        "log_file": log_file,
+    }
+    LOG.debug("groovyscope %s on Python %s, root %s", __version__, sys.version.split()[0], ctx.obj["root"])
 
 
 @main.command()
@@ -83,13 +133,57 @@ def version() -> None:
 
 
 @main.command()
+@click.option(
+    "--bundle",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Also write a zip for a bug report: this report, versions, configuration, daemon log, Kiro's groovyscope "
+    "log lines (no source code, no profile contents, no Kiro chat).",
+)
 @click.pass_obj
-def doctor(obj: dict[str, Any]) -> None:
-    """Check the JDK, engine JAR, configuration and Kiro files; exit 1 on hard failures."""
+def doctor(obj: dict[str, Any], bundle: Path | None) -> None:
+    """Check the JDK, engine JAR, configuration, Kiro files and profiles; exit 1 on hard failures."""
     report = build_report(obj["root"], obj["config_path"], dict(os.environ), kiro=_KIRO())
     click.echo(table([(LEVEL_MARKS[level], name, message) for level, name, message in report]))
+    if bundle is not None:
+        try:
+            effective: dict[str, Any] | None = load_config(obj["root"], obj["config_path"], dict(os.environ))
+        except (ValueError, OSError):
+            effective = None
+        manifest = read_manifest()
+        written = diagnostics.bundle(
+            bundle,
+            doctor_lines=diagnostics.lines_of(report),
+            versions={"groovyscope": __version__, "engine": (manifest or {}).get("version")},
+            effective_config=effective,
+            daemon_log=daemon_paths(obj["root"])[1],
+            environ=dict(os.environ),
+        )
+        click.echo(f"diagnostics bundle written to {written}")
     if has_failures(report):
         sys.exit(1)
+
+
+@main.command()
+@click.option("-n", "--lines", default=200, show_default=True, help="How many lines to show.")
+@click.option("--follow", "-f", "follow_log", is_flag=True, help="Keep printing new lines (Ctrl-C to stop).")
+@click.option("--kiro", "from_kiro", is_flag=True, help="Show groovyscope lines from Kiro CLI's LSP and MCP logs.")
+@click.pass_obj
+def logs(obj: dict[str, Any], lines: int, follow_log: bool, from_kiro: bool) -> None:
+    """Show the engine daemon's log for this workspace (where engine debug output goes), or Kiro's view."""
+    if from_kiro:
+        for name, found in diagnostics.kiro_lines(dict(os.environ), lines).items():
+            click.echo(f"== {diagnostics.kiro_log_dir(dict(os.environ)) / name}")
+            for line in found:
+                click.echo(line)
+        return
+    log_file = daemon_paths(obj["root"])[1]
+    click.echo(f"== {log_file}", err=True)
+    for line in diagnostics.tail(log_file, lines):
+        click.echo(line)
+    if follow_log:
+        with contextlib.suppress(KeyboardInterrupt):
+            diagnostics.follow(log_file, click.echo)
 
 
 @main.group()
@@ -257,6 +351,7 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
     for note in found["notes"]:
         click.echo(f"groovyscope: {note}", err=True)
     jdk = found["jdk"]
+    LOG.debug("JDK: %s", jdk)
     if jdk is not None and jdk["version"] >= minimum:
         return jdk
     if not effective["jdk"].get("autoProvision"):
@@ -284,11 +379,14 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
         sys.exit(1)
     for note in notes:
         click.echo(f"groovyscope: {note}", err=True)
+    apply_config_logging(obj, effective)
+    LOG.debug("configuration: %s", json.dumps(effective, sort_keys=True, default=str))
     jdk = resolve_jdk(effective, dict(os.environ))
     if jdk is None:
         click.echo("groovyscope: no suitable JDK found; run `groovyscope doctor`", err=True)
         sys.exit(1)
     jar = locate_jar(dict(os.environ))
+    LOG.debug("engine JAR: %s", jar)
     if jar["error"] or jar["path"] is None:
         click.echo(f"groovyscope: {jar['error']}", err=True)
         sys.exit(1)
