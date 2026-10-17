@@ -12,7 +12,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from groovyscope import daemon, rpc
+from groovyscope import daemon, practices, rpc
 from groovyscope.edits import apply_edits, changed_line_count
 from groovyscope.render import page
 
@@ -20,7 +20,9 @@ SERVER_NAME = "groovyscope"
 INSTRUCTIONS = (
     "Groovy code intelligence for this workspace. Use these tools instead of grep, sed, head or tail to "
     "locate Groovy symbols. Every answer carries a confidence; DYNAMIC_UNKNOWN means matched by name only. "
-    "Paths are workspace-relative; lines and columns are 1-based."
+    "Paths are workspace-relative; lines and columns are 1-based. Before finishing a change, call review on the "
+    "changed files and fix what it reports (fix applies the safe mechanical fixes); explain says why a code matters. "
+    "When impact_of is asked about a change, report its transitive callers and tests too, not only direct callers."
 )
 Call = Callable[[str, dict[str, Any]], Any]
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
@@ -241,7 +243,7 @@ def quality_tools(
         limit: int | None = None,
         cursor: int = 0,
     ) -> dict[str, Any]:
-        """Lint (CodeNarc), compile and type-check findings for PATHS (whole workspace when empty), worst first."""
+        """Lint, compile, type-check and practice (GS) findings for PATHS (whole workspace when empty), worst first."""
         params: dict[str, Any] = {
             "root": str(root),
             "uris": [to_uri(root, p) for p in paths or []],
@@ -299,9 +301,53 @@ def quality_tools(
             "engine": status,
         }
 
+    def explain(code: str) -> dict[str, Any]:
+        """What a diagnostic code means (GS001-GS012, a Groovy 6 checker, a CodeNarc rule), why it matters, the fix."""
+        answer = call("groovyscope/explain", {"root": str(root), "code": code})
+        return {"found": True, **answer} if answer else {"found": False, "code": code}
+
+    def review(paths: list[str] | None = None, top: int = 5) -> dict[str, Any]:
+        """Compile, lint, type-check and practice findings for PATHS in one call, grouped by the review checklist."""
+        raw = call(
+            "groovyscope/check",
+            {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "include": []},
+        )
+        findings = [
+            compact_diagnostic(uri, item, root) for uri, items in raw.get("diagnostics", {}).items() for item in items
+        ]
+        groups = practices.review(findings, max(1, min(top, cap)))
+        return {"summary": raw.get("summary", {}), "groups": groups[:cap]}
+
+    def fix(paths: list[str] | None = None, codes: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
+        """Safe fixes for PATHS (all when empty) and CODES (all fixable when empty). APPLY writes the files."""
+        raw = call(
+            "groovyscope/fix",
+            {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "codes": codes or []},
+        )
+        files = []
+        for uri, edits in raw.get("edits", {}).items():
+            target = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+            before = target.read_text(encoding="utf-8")
+            after = apply_edits(before, edits)
+            if apply:
+                target.write_text(after, encoding="utf-8")
+            files.append(
+                {
+                    "path": relative_path(uri, root),
+                    "codes": raw.get("applied", {}).get(uri, []),
+                    "linesChanged": changed_line_count(before, after),
+                    "applied": apply,
+                }
+            )
+        rejected = {relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()}
+        return {"changed": len(files), "files": files[:cap], "rejected": rejected}
+
     return {
         "check": check,
         "format": format_files,
+        "explain": explain,
+        "review": review,
+        "fix": fix,
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
     }

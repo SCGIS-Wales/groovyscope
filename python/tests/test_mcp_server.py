@@ -196,6 +196,9 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "format",
         "find_dynamic_code",
         "workspace_status",
+        "explain",
+        "review",
+        "fix",
     }
     result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
     structured = result[1] if isinstance(result, tuple) else result
@@ -246,3 +249,66 @@ def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) ->
         ("groovyscope/status", 600.0),
         ("close", session),
     ]
+
+
+def test_explain_review_and_fix(tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path) -> None:
+    engine["responses"]["groovyscope/explain"] = {"code": "GS001", "title": "Integer division with /", "why": "w"}
+    assert tools["explain"]("GS001") == {"found": True, "code": "GS001", "title": "Integer division with /", "why": "w"}
+    engine["responses"]["groovyscope/explain"] = None
+    assert tools["explain"]("Nope") == {"found": False, "code": "Nope"}
+
+    engine["responses"]["groovyscope/check"] = {
+        "diagnostics": {
+            "file:///ws/src/A.groovy": [
+                {
+                    "range": {"start": {"line": 4, "character": 2}},
+                    "severity": 2,
+                    "source": "groovyscope",
+                    "code": "GS001",
+                    "message": "m1",
+                },
+                {
+                    "range": {"start": {"line": 1, "character": 0}},
+                    "severity": 1,
+                    "source": "groovyscope",
+                    "code": "GS006",
+                    "message": "m2",
+                },
+                {
+                    "range": {"start": {"line": 2, "character": 0}},
+                    "severity": 3,
+                    "source": "codenarc",
+                    "code": "SomeRule",
+                    "message": "m3",
+                },
+            ]
+        },
+        "summary": {"errors": 1, "warnings": 1},
+    }
+    reviewed = tools["review"](paths=["src/A.groovy"], top=1)
+    assert [g["group"] for g in reviewed["groups"]] == ["security", "numbers", "style"]
+    assert reviewed["groups"][0]["findings"][0]["code"] == "GS006"
+    assert reviewed["groups"][1]["title"] == "Numbers and money"
+    assert engine["calls"][-1][1]["include"] == []
+
+    target = tmp_path / "Fix.groovy"
+    target.write_text("int x = a / b\n", encoding="utf-8")
+    engine["responses"]["groovyscope/fix"] = {
+        "edits": {
+            target.as_uri(): [
+                {
+                    "range": {"start": {"line": 0, "character": 8}, "end": {"line": 0, "character": 13}},
+                    "newText": "a.intdiv(b)",
+                }
+            ]
+        },
+        "applied": {target.as_uri(): ["GS001"]},
+        "rejected": {"file:///ws/src/B.groovy": "does not parse"},
+    }
+    dry = tools["fix"](paths=[str(target)])
+    assert dry["files"][0]["codes"] == ["GS001"] and dry["files"][0]["applied"] is False
+    assert dry["rejected"] == {"src/B.groovy": "does not parse"}
+    assert target.read_text(encoding="utf-8") == "int x = a / b\n"
+    tools["fix"](paths=[str(target)], codes=["GS001"], apply=True)
+    assert target.read_text(encoding="utf-8") == "int x = a.intdiv(b)\n"
+    assert engine["calls"][-1][1]["codes"] == ["GS001"]

@@ -14,7 +14,7 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, mcp_server, provision, relay, rpc
+from groovyscope import __version__, mcp_server, practices, provision, relay, rpc
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config
@@ -343,11 +343,29 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
 @click.option(
     "--profile", type=click.Choice(["default", "jenkins"]), default=None, help="Rule set profile (default: by file)."
 )
-@click.option("--include", default="lint,compile,typecheck", show_default=True, help="Comma-separated analyses.")
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option(
+    "--include", default="lint,compile,typecheck,practices", show_default=True, help="Comma-separated analyses."
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output (same as --format json).")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "short", "sarif"]),
+    default="text",
+    show_default=True,
+    help="short: file:line:col: severity: message [code]; sarif: SARIF 2.1.0 for code scanning.",
+)
 @click.pass_obj
-def check(obj: dict[str, Any], paths: tuple[Path, ...], profile: str | None, include: str, as_json: bool) -> None:
-    """Lint, compile and type-check Groovy files (the whole workspace when no PATHS are given)."""
+def check(
+    obj: dict[str, Any],
+    *,
+    paths: tuple[Path, ...],
+    profile: str | None,
+    include: str,
+    as_json: bool,
+    output_format: str,
+) -> None:
+    """Lint, compile, type-check and practice-check Groovy files (the whole workspace when no PATHS are given)."""
     socket_file, effective = daemon_socket_for(obj)
     params: dict[str, Any] = {
         "root": str(obj["root"]),
@@ -359,8 +377,13 @@ def check(obj: dict[str, Any], paths: tuple[Path, ...], profile: str | None, inc
     result = engine_call(socket_file, "groovyscope/check", params)
     rows = finding_rows(result.get("diagnostics", {}), obj["root"])
     summary = result.get("summary", {})
-    if as_json:
+    if as_json or output_format == "json":
         click.echo(compact_json({"findings": rows, "summary": summary}))
+    elif output_format == "short":
+        for line in practices.short_lines(rows):
+            click.echo(line)
+    elif output_format == "sarif":
+        click.echo(json.dumps(practices.sarif(rows), indent=2))
     else:
         for row in rows:
             location = f"{row['path']}:{row['line']}:{row['column']}"
@@ -406,6 +429,76 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
         click.echo(f"{len(rows)} of {checked} file(s) {'formatted' if apply_changes else 'need formatting'}")
     if rows and not apply_changes:
         sys.exit(1)
+
+
+@main.command()
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--code", "codes", multiple=True, help="Only these codes (GS001, CompileStatic, ...); repeatable.")
+@click.option("--apply", "apply_changes", is_flag=True, help="Write the fixes; otherwise only report them.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def fix(
+    obj: dict[str, Any], paths: tuple[Path, ...], codes: tuple[str, ...], apply_changes: bool, as_json: bool
+) -> None:
+    """Apply groovyscope's safe fixes (practice findings and mechanical lint fixes); exits 1 when fixes remain."""
+    socket_file, _ = daemon_socket_for(obj)
+    params = {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths), "codes": list(codes)}
+    result = engine_call(socket_file, "groovyscope/fix", params)
+    rows: list[dict[str, Any]] = []
+    for uri, edits in sorted(result.get("edits", {}).items()):
+        path = uri_to_path(uri)
+        before = path.read_text(encoding="utf-8")
+        after = apply_edits(before, edits)
+        if apply_changes:
+            path.write_text(after, encoding="utf-8")
+        rows.append(
+            {
+                "path": shown_path(path, obj["root"]),
+                "codes": result.get("applied", {}).get(uri, []),
+                "lines": changed_line_count(before, after),
+                "applied": apply_changes,
+            }
+        )
+    rejected = {shown_path(uri_to_path(uri), obj["root"]): why for uri, why in result.get("rejected", {}).items()}
+    if as_json:
+        click.echo(compact_json({"files": rows, "rejected": rejected}))
+    else:
+        for row in rows:
+            state = " (applied)" if row["applied"] else ""
+            click.echo(f"{row['path']}: {', '.join(row['codes'])}{state}")
+        for skipped, why in rejected.items():
+            click.echo(f"{skipped}: skipped, {why}")
+        click.echo(f"{len(rows)} file(s) {'fixed' if apply_changes else 'with fixes available'}")
+    if rows and not apply_changes:
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("code")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def explain(obj: dict[str, Any], code: str, as_json: bool) -> None:
+    """Explain a diagnostic code (GS001, NullChecker, a CodeNarc rule): why it matters and how to fix it."""
+    socket_file, _ = daemon_socket_for(obj)
+    answer = engine_call(socket_file, "groovyscope/explain", {"root": str(obj["root"]), "code": code})
+    if not answer:
+        click.echo(f"groovyscope: nothing known about {code}", err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(compact_json(answer))
+        return
+    click.echo(f"{answer['code']}: {answer['title']}")
+    click.echo(f"why: {answer['why']}")
+    click.echo(f"fix: {answer['fix']}")
+    if answer.get("link"):
+        click.echo(f"see: {answer['link']}")
+
+
+def shown_path(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def target_params(obj: dict[str, Any], target: str) -> dict[str, Any]:
