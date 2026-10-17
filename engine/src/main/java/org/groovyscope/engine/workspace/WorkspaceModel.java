@@ -87,6 +87,23 @@ public final class WorkspaceModel {
         return openDocuments.get(uri);
     }
 
+    /** The current text of a document: the open overlay, else the file on disk; {@code null} when neither. */
+    public String text(String uri) {
+        String open = openDocuments.get(uri);
+        if (open != null) {
+            return open;
+        }
+        Path path = toPath(uri);
+        if (path == null || !Files.isRegularFile(path)) {
+            return null;
+        }
+        try {
+            return Files.readString(path, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /**
      * Groovy source files on disk. Uses the configured roots that exist; when none of them exists the
      * whole workspace is walked, so unusual layouts (Gradle multi-projects, plain script folders) still work.

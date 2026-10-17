@@ -33,24 +33,75 @@ import java.util.Set;
  * @param classpath jars or directories added to the analysis classpath (never inferred)
  * @param exclude glob patterns of paths to ignore
  * @param trust whether AST transformations found on the workspace classpath may run
+ * @param lint CodeNarc settings
+ * @param typecheck Groovy 6 type-checker settings
+ * @param format formatter settings
  */
-public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust) {
+public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+        Lint lint, TypeCheck typecheck, Format format) {
 
     /** File extensions treated as Groovy sources. */
     public static final Set<String> EXTENSIONS = Set.of("groovy", "gvy", "gy", "gsh", "gradle");
     /** Extension-less file names treated as Groovy sources. */
     public static final Set<String> FILE_NAMES = Set.of("Jenkinsfile");
 
+    /**
+     * CodeNarc settings.
+     *
+     * @param ruleset path of the default profile, or {@code null} for the bundled defensive profile
+     * @param jenkinsRuleset path of the Jenkins profile, or {@code null} for the bundled one
+     * @param failOnPriority {@code check} fails on violations with this priority or more severe (1 is worst)
+     * @param publish whether lint findings are pushed as LSP diagnostics
+     */
+    public record Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish) {
+        public static final Lint DEFAULTS = new Lint(null, null, 2, true);
+    }
+
+    /**
+     * Groovy 6 type-checker settings, applied to classes that already carry {@code @CompileStatic} or
+     * {@code @TypeChecked}.
+     *
+     * @param nullChecker {@code off}, {@code lenient} or {@code strict}
+     * @param sqlInjection whether to add the SQL injection checker
+     * @param purity whether to add the purity and modifies checkers
+     */
+    public record TypeCheck(String nullChecker, boolean sqlInjection, boolean purity) {
+        public static final TypeCheck DEFAULTS = new TypeCheck("strict", true, false);
+    }
+
+    /**
+     * Formatter settings.
+     *
+     * @param engine {@code basic} (bundled whitespace and CodeNarc-driven fixes) or {@code greclipse} (not bundled)
+     * @param indentSize spaces per indentation level
+     * @param maxBlankLines consecutive blank lines allowed
+     * @param removeSemicolons remove unnecessary trailing semicolons
+     */
+    public record Format(String engine, int indentSize, int maxBlankLines, boolean removeSemicolons) {
+        public static final Format DEFAULTS = new Format("basic", 4, 1, true);
+    }
+
     public static final EngineConfig DEFAULTS = new EngineConfig(
             List.of("src/main/groovy", "src/test/groovy", "vars"),
             List.of(),
             List.of("**/build/**", "**/.gradle/**", "**/target/**", "**/node_modules/**"),
-            false);
+            false,
+            Lint.DEFAULTS,
+            TypeCheck.DEFAULTS,
+            Format.DEFAULTS);
 
     public EngineConfig {
         sourceRoots = List.copyOf(sourceRoots);
         classpath = List.copyOf(classpath);
         exclude = List.copyOf(exclude);
+        lint = lint == null ? Lint.DEFAULTS : lint;
+        typecheck = typecheck == null ? TypeCheck.DEFAULTS : typecheck;
+        format = format == null ? Format.DEFAULTS : format;
+    }
+
+    /** Convenience for callers that only care about workspace settings. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust) {
+        this(sourceRoots, classpath, exclude, trust, Lint.DEFAULTS, TypeCheck.DEFAULTS, Format.DEFAULTS);
     }
 
     /**
@@ -70,12 +121,30 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         if (!root.isJsonObject()) {
             throw new IllegalArgumentException("engine configuration must be a JSON object");
         }
-        JsonObject workspace = objectOrEmpty(root.getAsJsonObject().get("workspace"));
+        JsonObject document = root.getAsJsonObject();
+        JsonObject workspace = objectOrEmpty(document.get("workspace"));
+        JsonObject lint = objectOrEmpty(document.get("lint"));
+        JsonObject typecheck = objectOrEmpty(document.get("typecheck"));
+        JsonObject format = objectOrEmpty(document.get("format"));
         return new EngineConfig(
                 strings(workspace.get("sourceRoots"), DEFAULTS.sourceRoots()),
                 strings(workspace.get("classpath"), DEFAULTS.classpath()),
                 strings(workspace.get("exclude"), DEFAULTS.exclude()),
-                bool(workspace.get("trust"), DEFAULTS.trust()));
+                bool(workspace.get("trust"), DEFAULTS.trust()),
+                new Lint(
+                        string(lint.get("ruleset"), null),
+                        string(lint.get("jenkinsRuleset"), null),
+                        integer(lint.get("failOnPriority"), Lint.DEFAULTS.failOnPriority()),
+                        bool(lint.get("publish"), Lint.DEFAULTS.publish())),
+                new TypeCheck(
+                        string(typecheck.get("nullChecker"), TypeCheck.DEFAULTS.nullChecker()),
+                        bool(typecheck.get("sqlInjection"), TypeCheck.DEFAULTS.sqlInjection()),
+                        bool(typecheck.get("purity"), TypeCheck.DEFAULTS.purity())),
+                new Format(
+                        string(format.get("engine"), Format.DEFAULTS.engine()),
+                        integer(format.get("indentSize"), Format.DEFAULTS.indentSize()),
+                        integer(format.get("maxBlankLines"), Format.DEFAULTS.maxBlankLines()),
+                        bool(format.get("removeSemicolons"), Format.DEFAULTS.removeSemicolons())));
     }
 
     /** True when the file name denotes a Groovy source. */
@@ -108,6 +177,17 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             }
         }
         return values;
+    }
+
+    private static String string(JsonElement element, String fallback) {
+        return element != null && element.isJsonPrimitive() ? element.getAsString() : fallback;
+    }
+
+    private static int integer(JsonElement element, int fallback) {
+        if (element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
+            return element.getAsInt();
+        }
+        return fallback;
     }
 
     private static boolean bool(JsonElement element, boolean fallback) {

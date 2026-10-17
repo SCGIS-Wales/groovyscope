@@ -16,6 +16,10 @@ hard failures.
 | `daemon unavailable (...); running the engine directly` on stderr | The daemon could not start; `groovyscope daemon status` shows the log path, read it, then `groovyscope daemon start` |
 | Stale answers after switching branches | The daemon recompiles on file events from Kiro; if in doubt, `groovyscope daemon stop` and let the next session restart it |
 | Socket path too long (`AF_UNIX path too long`) | Set `GROOVYSCOPE_SOCKET_DIR` to a short directory such as `/tmp/gs` |
+| `check` exits 1 | A finding at or above `lint.failOnPriority` (1 = error, 2 = warning, 3 = info); lower the bar or fix the code; `--json` lists every finding |
+| `format` exits 1 | Files would change; rerun with `--apply`, or treat the exit code as "needs formatting" in CI |
+| `cannot load CodeNarc rule set` | `lint.ruleset` / `lint.jenkinsRuleset` points at a missing or broken file; set them to `null` for the bundled profiles |
+| `formatter engine 'greclipse' is not bundled` | Set `format.engine: basic`; the Groovy Eclipse formatter is a Stage 6 packaging item |
 | `kiro init` fails with "not valid JSON" | An existing `.kiro/settings/*.json` is broken; fix it or rerun with `--force` (a `.bak` is written) |
 
 ## Logs

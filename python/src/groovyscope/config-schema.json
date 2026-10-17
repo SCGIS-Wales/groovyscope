@@ -53,7 +53,8 @@
       "properties": {
         "ruleset": { "type": ["string", "null"] },
         "jenkinsRuleset": { "type": ["string", "null"] },
-        "failOnPriority": { "type": "integer", "minimum": 1, "maximum": 3 }
+        "failOnPriority": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "publish": { "type": "boolean" }
       }
     },
     "typecheck": {
@@ -69,7 +70,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "engine": { "type": "string", "enum": ["greclipse"] },
+        "engine": { "type": "string", "enum": ["basic", "greclipse"] },
+        "indentSize": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "maxBlankLines": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "removeSemicolons": { "type": "boolean" },
         "properties": { "type": ["string", "null"] }
       }
     },

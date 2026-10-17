@@ -99,6 +99,22 @@ public final class LanguageServices {
         return snapshot.version() > 0;
     }
 
+    private volatile QualityServices quality;
+
+    /** Lint, type-check, format and quick fixes over this workspace, sharing its caches. */
+    public QualityServices quality() {
+        QualityServices current = quality;
+        if (current == null) {
+            synchronized (lock) {
+                if (quality == null) {
+                    quality = new QualityServices(workspace, this);
+                }
+                current = quality;
+            }
+        }
+        return current;
+    }
+
     public WorkspaceModel workspace() {
         return workspace;
     }

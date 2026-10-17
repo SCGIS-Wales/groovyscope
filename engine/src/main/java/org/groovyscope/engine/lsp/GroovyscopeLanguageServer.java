@@ -26,7 +26,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.IntConsumer;
+import org.eclipse.lsp4j.CodeActionKind;
+import org.eclipse.lsp4j.CodeActionOptions;
 import org.eclipse.lsp4j.CompletionOptions;
+import org.eclipse.lsp4j.DiagnosticRegistrationOptions;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InitializedParams;
@@ -124,6 +127,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         capabilities.setCompletionProvider(new CompletionOptions(false, List.of(".")));
         capabilities.setSignatureHelpProvider(new SignatureHelpOptions(List.of("(", ",")));
         capabilities.setRenameProvider(new RenameOptions(true));
+        capabilities.setDocumentFormattingProvider(Boolean.TRUE);
+        capabilities.setCodeActionProvider(new CodeActionOptions(List.of(CodeActionKind.QuickFix)));
+        capabilities.setDiagnosticProvider(new DiagnosticRegistrationOptions(false, false));
         return capabilities;
     }
 
@@ -168,6 +174,104 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             status.put("trust", current.workspace().config().trust());
         }
         return CompletableFuture.completedFuture(status);
+    }
+
+    /**
+     * Lint, compile and type-check diagnostics for the given documents (all when {@code uris} is empty).
+     * Params: {@code uris} (list), {@code profile} (default|jenkins, optional), {@code include} (list).
+     */
+    @JsonRequest("groovyscope/check")
+    public CompletableFuture<Map<String, Object>> check(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            List<String> uris = stringList(params.get("uris"));
+            Object profile = params.get("profile");
+            java.util.Set<String> include = new java.util.LinkedHashSet<>(stringList(params.get("include")));
+            org.groovyscope.engine.model.CheckResult result = current.quality().check(uris,
+                    profile == null ? null : profile.toString(), include);
+            Map<String, List<org.eclipse.lsp4j.Diagnostic>> converted = new LinkedHashMap<>();
+            for (Map.Entry<String, List<org.groovyscope.engine.model.Diagnostic>> entry : result.diagnostics().entrySet()) {
+                List<org.eclipse.lsp4j.Diagnostic> list = new java.util.ArrayList<>();
+                for (org.groovyscope.engine.model.Diagnostic diagnostic : entry.getValue()) {
+                    list.add(Converters.toLsp(diagnostic));
+                }
+                converted.put(entry.getKey(), list);
+            }
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("errors", result.count(org.groovyscope.engine.model.Diagnostic.Severity.ERROR));
+            summary.put("warnings", result.count(org.groovyscope.engine.model.Diagnostic.Severity.WARNING));
+            summary.put("information", result.count(org.groovyscope.engine.model.Diagnostic.Severity.INFORMATION));
+            summary.put("files", converted.size());
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("diagnostics", converted);
+            response.put("summary", summary);
+            return response;
+        });
+    }
+
+    /** Formatting edits for the given documents (all workspace documents when {@code uris} is empty). */
+    @JsonRequest("groovyscope/format")
+    public CompletableFuture<Map<String, Object>> format(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            List<String> uris = stringList(params.get("uris"));
+            if (uris.isEmpty()) {
+                uris = new java.util.ArrayList<>(current.workspace().sources().keySet());
+            }
+            Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
+            for (String uri : uris) {
+                List<org.eclipse.lsp4j.TextEdit> list = new java.util.ArrayList<>();
+                try {
+                    for (org.groovyscope.engine.model.TextEdit edit : current.quality().format(uri)) {
+                        list.add(Converters.toLsp(edit));
+                    }
+                } catch (IllegalStateException e) {
+                    throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                            new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                                    org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.InvalidRequest, e.getMessage(), null));
+                }
+                if (!list.isEmpty()) {
+                    edits.put(uri, list);
+                }
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("edits", edits);
+            response.put("changed", edits.size());
+            response.put("checked", uris.size());
+            return response;
+        });
+    }
+
+    /**
+     * The services of this connection, or, for a connection that skipped {@code initialize} (the Python
+     * {@code check} and {@code format} commands), the services of the {@code root} named in the params.
+     */
+    private LanguageServices requireServices(Map<String, Object> params) {
+        LanguageServices current = services.get();
+        if (current == null && params != null && params.get("root") instanceof String root && !root.isBlank()) {
+            Path path = Paths.get(root).toAbsolutePath().normalize();
+            workspaceRoot.set(path);
+            services.compareAndSet(null, servicesProvider.apply(path));
+            current = services.get();
+        }
+        if (current == null) {
+            throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                    org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.ServerNotInitialized,
+                    "groovyscope engine has not been initialized (send initialize, or pass root)", null));
+        }
+        return current;
+    }
+
+    static List<String> stringList(Object value) {
+        List<String> list = new java.util.ArrayList<>();
+        if (value instanceof Iterable<?> items) {
+            for (Object item : items) {
+                if (item != null) {
+                    list.add(item.toString());
+                }
+            }
+        }
+        return list;
     }
 
     /** Asks a daemon to exit after this connection closes; ignored when not running as a daemon. */

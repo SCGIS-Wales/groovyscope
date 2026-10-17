@@ -37,7 +37,8 @@ class TypeNamesSpec extends Specification {
         def list = ClassHelper.make(List).plainNodeReference
         list.setGenericsTypes([new GenericsType(ClassHelper.STRING_TYPE)] as GenericsType[])
         def placeholder = ClassHelper.make(List).plainNodeReference
-        def t = new GenericsType(ClassHelper.OBJECT_TYPE, null, null)
+        // A fresh node: GenericsType.setPlaceholder mutates its ClassNode, and OBJECT_TYPE is shared JVM-wide.
+        def t = new GenericsType(ClassHelper.OBJECT_TYPE.plainNodeReference, null, null)
         t.placeholder = true
         t.name = 'T'
         placeholder.setGenericsTypes([t] as GenericsType[])

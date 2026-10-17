@@ -24,13 +24,17 @@ lint:
   ruleset: null           # path to a CodeNarc ruleset; null = bundled defensive profile
   jenkinsRuleset: null    # path to a Jenkins pipeline ruleset; null = bundled profile
   failOnPriority: 2       # check exits non-zero on violations with this priority or higher
+  publish: true           # push lint findings to the editor/agent as diagnostics
 typecheck:
-  nullChecker: "strict"   # off | lenient | strict (Groovy 6 NullChecker)
+  nullChecker: "strict"   # off | lenient | strict (Groovy 6 NullChecker, on @CompileStatic/@TypeChecked code)
   sqlInjection: true      # Groovy 6 SqlInjectionChecker
   purity: false           # Groovy 6 PurityChecker and ModifiesChecker
 format:
-  engine: "greclipse"
-  properties: null        # path to a Groovy Eclipse formatter properties file; null = bundled
+  engine: "basic"         # basic (bundled: whitespace hygiene + safe CodeNarc-driven fixes) | greclipse (not bundled yet)
+  indentSize: 4
+  maxBlankLines: 1
+  removeSemicolons: true
+  properties: null        # Groovy Eclipse formatter properties (greclipse engine only)
 output:
   maxResults: 50          # per response, with continuation tokens beyond that
   maxBytes: 16000         # hard cap on the JSON body returned to an agent

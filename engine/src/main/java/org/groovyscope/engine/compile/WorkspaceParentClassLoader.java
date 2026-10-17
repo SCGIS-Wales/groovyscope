@@ -29,7 +29,7 @@ import java.util.List;
  * classpath. Global AST transformations are discovered through resources, so those are filtered the same
  * way, which keeps third-party transformations on the engine's classpath from ever touching workspace code.
  */
-final class WorkspaceParentClassLoader extends ClassLoader {
+public final class WorkspaceParentClassLoader extends ClassLoader {
 
     private static final List<String> CLASS_PREFIXES = List.of(
             "groovy.", "groovyjarjar", "org.codehaus.groovy.", "org.apache.groovy.");
@@ -40,7 +40,7 @@ final class WorkspaceParentClassLoader extends ClassLoader {
 
     private final ClassLoader engineLoader;
 
-    WorkspaceParentClassLoader(ClassLoader engineLoader) {
+    public WorkspaceParentClassLoader(ClassLoader engineLoader) {
         super(ClassLoader.getPlatformClassLoader());
         this.engineLoader = engineLoader;
     }

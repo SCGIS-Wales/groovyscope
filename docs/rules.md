@@ -30,7 +30,10 @@ file installs for Kiro agents. The CodeNarc profiles live in `config/codenarc/`.
 - `config/codenarc/jenkins.groovy`: pipeline code runs on Jenkins' CPS Groovy runtime, not Groovy 5/6, so it
   gets its own profile with `rulesets/jenkins.xml`.
 
-Stage 3 runs each profile once against CodeNarc 4 and prunes any rule it reports as unknown.
+Both profiles load cleanly against CodeNarc 4.0.0 (the engine's specs assert it). The `enhanced` rules are
+included; they need the compile classpath, which comes from `workspace.classpath` today and from the Gradle
+export task later. `groovyscope check` applies the Jenkins profile to `Jenkinsfile*` and `vars/` scripts
+automatically, or everywhere with `--profile jenkins`.
 
 ## Formatter
 

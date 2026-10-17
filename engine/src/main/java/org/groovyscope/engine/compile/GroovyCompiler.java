@@ -261,7 +261,7 @@ public final class GroovyCompiler {
         return null;
     }
 
-    static Range rangeOf(SyntaxException exception) {
+    public static Range rangeOf(SyntaxException exception) {
         int startLine = Math.max(1, exception.getStartLine());
         int startColumn = Math.max(1, exception.getStartColumn());
         int endLine = exception.getEndLine() > 0 ? exception.getEndLine() : startLine;
