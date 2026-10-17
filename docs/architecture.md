@@ -141,7 +141,9 @@ deliberately loose so shared runners do not fail the build.
 | `cli.py` | click commands; nothing but wiring and exit codes |
 | `config.py` | defaults ← `.groovyscope.yaml` ← `GROOVYSCOPE_*`; JSON-schema validation |
 | `java.py` | JDK discovery with injected `runner`/`which` for testability |
-| `jar.py` | bundled JAR lookup and SHA-256 verification, `GROOVYSCOPE_JAR` override |
+| `jar.py` | JAR lookup (`GROOVYSCOPE_JAR`, bundled, fetched) and SHA-256 verification |
+| `fetch.py` | `groovyscope fetch`: checksum-verified install of a release JAR into the cache |
+| `provision.py` | opt-in Temurin JDK provisioning through the Adoptium API (`jdk install`, `jdk.autoProvision`) |
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
 | `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing); one-shot requests and persistent sessions |
