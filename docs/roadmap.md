@@ -112,6 +112,42 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
     annotations.
   Done when: CI green on the PR, local Kiro CLI checks recorded, release published.
 
+- [ ] **Stage 10: dependable assistant for every Kiro action on Groovy code** — branch `feat/agent-capabilities`
+  (pushed, no PR yet). Plan: `/Users/ssddgreg/.claude/plans/humming-crunching-badger.md` (approved).
+  Done on the branch (engine 352 specs, Python 246 tests at 96.5%, all green locally on Corretto 21):
+  - `groovyscope classpath` (Gradle init script / Maven, trusted workspaces only) writes
+    `workspace.classpathFile`; its entries join the engine classpath. `groovyscope init`, `profile install`.
+  - GS100: without a classpath, unresolved imports become one "missing dependencies" warning per file.
+  - `lint.rules` per-rule overrides, `lint.publishMaxPriority` (default 2), `duplicates.minLines/minStatements`.
+  - LSP: implementation, documentHighlight, foldingRange, inlayHint, rangeFormatting, fixable `data`,
+    `source.fixAll.groovyscope`, `source.organizeImports`.
+  - MCP: `read_symbol`, `find_code`, `find_duplicates`, `workspace_overview`; paged `document_symbols` with
+    line ranges; `check`/`review` `codes`/`max_priority`, `byCode`, `fixable`, `missingDependencies`.
+  - Kiro: the groovy agent's `tools` is `["*"]` so every MCP server (GitLab etc.) is usable; `doctor` names
+    hidden servers, suggests the universal format, stays quiet outside a project; diffs mark a missing newline.
+  Left to do, in order:
+  1. Docs: README (commands, 21 MCP tools, LSP capability table), `docs/kiro.md` (agent `tools: ["*"]`),
+     `docs/install.md` and `docs/troubleshooting.md` (`init`, `trust`, `classpath`, GS100), `docs/security.md`
+     (`classpath` runs the build tool, trusted only), `docs/architecture.md` (search package, GS100, LSP
+     parity), `docs/practices.md` (GS100 entry).
+  2. Steering (`kiro/steering/groovyscope.md` and the package mirror) and `INSTRUCTIONS` in
+     `python/src/groovyscope/mcp_server.py`: overview first, then outline, then `read_symbol`; `find_code`
+     instead of grep; `find_duplicates` for duplication.
+  3. Verify on a CodeNarc 4.0.0 checkout: `groovyscope trust` + `groovyscope classpath`, then `check`; record
+     unresolved-class counts before and after; sample `find_duplicates` and `find_code catch` results.
+  4. Kiro CLI free commands with a throwaway `KIRO_HOME`: `/code status`, `/mcp` (21 tools), `/tools` under
+     `--agent groovy` on `--agent-engine v2` and `v3` lists another server's tools (already verified once).
+  5. Two budgeted prompts (~2 credits; 12.2 of 50 used this month): "find duplicated code in
+     src/main/groovy/org/codenarc/report" (expects `find_duplicates`) and "list catch blocks that catch
+     Exception and do not rethrow" (expects `find_code`).
+  6. PR (lowercase Conventional Commit title), merge only when every check is `pass` (Ubuntu, macOS, CodeQL,
+     title; check each by name), then the release PR: approve its runs
+     (`gh api -X POST repos/SCGIS-Wales/groovyscope/actions/runs/<id>/approve`), same gate, merge, verify the
+     0.9.0 publish and the tap.
+  7. Ask the owner before enabling branch protection on `main` with those required checks.
+  8. After 0.9.0: `groovyscope kiro repair --global` on each machine (adds `tools: ["*"]`), and
+     `groovyscope profile install` to bring the private profile to the second machine.
+
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
 Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.
