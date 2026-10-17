@@ -76,9 +76,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 - [x] **Stage 7: docs polish, benchmark, upstream watch** — branch `feat/docs-benchmark` (2026-10-17).
   Docs brought up to date with everything shipped (README status, rules, architecture, AGENTS, install);
   `docs/benchmark.md` fixes the credit benchmark protocol (five tasks, two conditions, what to record,
-  answer key first). The benchmark itself has not been run: a full run costs ten to twenty Kiro credits,
-  which is the owner's call on a free account, so the results table is empty and `v1.0.0` waits for a
-  recorded run. Upstream watch recorded below.
+  answer key first). First run recorded on 2026-10-17 on CodeNarc 4.0.0 (10.73 credits, one pass); see
+  `docs/benchmark.md`. Upstream watch recorded below.
 
 - [ ] **Stage 8: practices knowledge base and runtime profiles** — branch `feat/groovy-practices`.
   Practice catalogue and `docs/practices.md`; GS001-GS012 with AST fixes; CodeNarc profile aligned with the
@@ -136,6 +135,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
 - 2026-10-17: Stage 7 merged (PR #22). v0.6.0 released: the release-please run dispatched `workflow.yml`
   and every job passed (build, attestations, PyPI, release assets, Homebrew tap job, which skipped with a
   notice because `HOMEBREW_TAP_TOKEN` is not set). Roadmap complete except the benchmark run.
+- 2026-10-17: Dependabot PRs #2-#7 merged (CycloneDX 3 report path fixed in the publish workflow). The Homebrew
+  tap now updates itself from PyPI (SCGIS-Wales/homebrew-tap#3). Benchmark preparation on CodeNarc found and
+  fixed: Java sources ignored and compile-retry cascades (#25), Kiro 2.x ignoring the groovy agent (#26),
+  `execute()` false positives (#27), the MCP session receiving every diagnostic (#28). Releases 0.6.1 and
+  0.6.2. First credit benchmark run recorded.
 - 2026-10-17: Stage 8 verified locally with Kiro CLI 2.32.0. Free commands against a throwaway `KIRO_HOME`
   that already had another MCP server: `kiro init --global` plus project `kiro init` gave
   `groovyscope (groovy) initialized (548ms)`, `/mcp` listed both servers with groovyscope running 13 tools, and
@@ -146,4 +150,3 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   runtime-profile question called `profile_status` and answered that `Set.of` is unproven on the target
   Groovy (0.19). Follow-ups fixed the same day: the type fix now handles `final x = ...`, duplicate edits
   from two codes on one spot apply once, and `profile_status` lists each construct's status.
-

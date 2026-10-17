@@ -6,10 +6,8 @@ credits, so the claim can be checked on a real repository and repeated after eve
 
 ## Status
 
-The protocol below is complete and reproducible. **No run has been recorded yet**: a full run costs roughly
-ten to twenty Kiro credits (five tasks, two conditions, at least one repetition each), which is a large share
-of a free account's monthly allowance. The results table at the end stays empty until someone with the
-credits to spare runs it; the figures from that run, with the Kiro and groovyscope versions, replace it.
+First run recorded on 2026-10-17 (one pass, results below). The protocol asks for a second pass on another
+day; that repetition has not been run yet.
 
 ## Subject repository
 
@@ -69,12 +67,52 @@ adjusting the prompt: it is exactly what the benchmark should reveal.
 
 ## Results
 
+Subject: CodeNarc 4.0.0 (commit `3334d94`, 529 main and 531 test Groovy files, 15 Java files), with its
+dependency jars on `workspace.classpath`. Kiro CLI 2.32.0, model `auto`, groovyscope 0.6.1, one pass,
+2026-10-17. Each run used a fresh copy of the repository and a new non-interactive session
+(`kiro-cli chat --no-interactive`), with the same trusted tools in both conditions (read, write, grep, glob,
+code; plus the groovyscope MCP tools in the "with" condition; never shell).
+
 | Task | Credits without | Credits with | Time without | Time with | Correct without | Correct with |
 |---|---|---|---|---|---|---|
-| 1 Find callers | | | | | | |
-| 2 Impact of a change | | | | | | |
-| 3 Safe rename | | | | | | |
-| 4 Lint and fix | | | | | | |
-| 5 Dynamic code review | | | | | | |
+| 1 Find callers (`PathUtil.getName`) | 0.22 | 0.43 | 12 s | 33 s | 8 of 9 sites; called the list complete | 9 of 9, each marked certain |
+| 2 Impact of a signature change (`ModifiersUtil.parseModifiers`) | 0.45 | 0.42 | 27 s | 43 s | production caller, tests, and the indirect user `IllegalClassMemberRule` | production caller and tests; missed the indirect user |
+| 3 Safe rename (`includeRuleDescriptions`) | 1.30 | 1.36 | 45 s | 713 s | all 10 code sites plus 2 docs pages, nothing else | all 10 code sites, nothing else |
+| 4 Lint and fix (`XmlReportUtil.groovy`) | 2.13 | 1.22 | 97 s | 888 s | 1 of 3 findings fixed; turned the `cdata` closure into a block (behaviour change) | 2 of 3 fixed; class-level `@CompileStatic` breaks the builder closure |
+| 5 Dynamic code review | 0.72 | 0.78 | 34 s | 37 s | hooks and metaclass writes; missed `GroovyShell` and four template engines | hooks, metaclass writes, `GroovyShell`, template engines; also listed four `execute()` calls on untyped receivers that are not process launches |
+| **Total** | **4.82** | **4.21** | | | | |
 
-Versions: Kiro CLI `_`, groovyscope `_`, model `_`, repository `_` at `_`, date `_`.
+Versions: Kiro CLI 2.32.0, groovyscope 0.6.1, model `auto`, repository CodeNarc at `3334d94`, date 2026-10-17.
+In all, 10.73 credits were spent, including 1.70 on "with" runs that had to be repeated (below).
+
+### What the run showed
+
+- **Accuracy.** groovyscope answered navigation and review questions more completely (tasks 1 and 5) and
+  never invented a call site. Text search missed a test call and every runtime-evaluation site. Task 2 is the
+  exception: the agent with groovyscope stopped at direct callers although `impact_of` lists transitive ones.
+- **Credits.** Roughly even: 4.21 with groovyscope against 4.82 without. Lookups cost slightly more with
+  groovyscope (more tool calls), edits cost less.
+- **Edits are slow on a large workspace.** Tasks 3 and 4 took 12 to 15 minutes with groovyscope against under
+  two without. Each edit makes the daemon recompile 1,064 files and republish diagnostics for every file.
+- **Neither condition fixed task 4 correctly.** The fix needs `@CompileDynamic` (or `@CompileStatic` with the
+  builder method left dynamic). groovyscope's type check should have caught the broken `@CompileStatic`, but
+  the two test files that import the missing `junit-jupiter-params` stop the whole type-check compile before
+  static checking runs.
+- **Rename safety worked as designed.** groovyscope's rename refused because two references are name-only
+  matches, and the agent fell back to explicit edits of the reported sites.
+
+### Harness notes
+
+- With `--agent groovy`, Kiro CLI takes tool approvals from the agent's `allowedTools`, not from
+  `--trust-tools`, so the first "with" runs of tasks 3 and 4 could not write files (0.94 and 0.70 credits
+  spent). The repeat runs added `write` to the run copy's `allowedTools`, matching what the default agent gets
+  from `--trust-tools`. Interactive sessions are unaffected: Kiro asks.
+- A first "with" run of task 1 stalled with every process idle and was stopped (0.06 credits); the repeat
+  completed normally.
+- `/usage` was read before and after every run through a pseudo terminal; it costs no credits.
+
+### Follow-ups taken into Stage 8
+
+Per-edit latency (recompile and diagnostics scope), type checking that survives broken files, the
+`execute()` precision on untyped receivers, and steering that tells the agent to follow `impact_of`'s
+transitive callers.
