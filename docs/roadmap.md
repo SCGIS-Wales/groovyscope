@@ -11,13 +11,13 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 
 ## Stages
 
-- [x] **Stage 0: foundation** — branch `feat/groovyscope-foundation`, PR: api-py/groovyscope#1 (merged 2026-10-17).
+- [x] **Stage 0: foundation** — branch `feat/groovyscope-foundation`, PR: SCGIS-Wales/groovyscope#1 (merged 2026-10-17).
   Monorepo scaffold, Java 21 engine skeleton serving the LSP lifecycle (LSP4J 1.0.0), Python package with
   `doctor`, `version`, `config validate`, `kiro init|repair`, `lsp --stdio`, placeholders for `mcp` and
   `daemon`, CI on Ubuntu and macOS, CodeQL, semantic PR titles, release-please, publish workflow with
   trusted publishing and provenance attestations, docs.
   Done when: CI green, release PR for 0.1.0 merged, wheel on PyPI (needs the repository transfer first).
-  - [ ] Repository transferred to `SCGIS-Wales/groovyscope` and remote re-pointed
+  - [x] Repository transferred to `SCGIS-Wales/groovyscope` and remote re-pointed (2026-10-17)
   - [ ] `v0.1.0` published to PyPI through `workflow.yml`
 - [ ] **Stage 1: engine compile + index + LSP navigation** — branch `feat/engine-navigation`.
   `workspace/`, `compile/` (CompilationUnit to CANONICALIZATION, incremental, Grape/ASTTest off, trust gate),
@@ -53,3 +53,5 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   `groovyscope (groovy) initialized (261ms)` against the installed wheel. PR #1 merged with CI green on Ubuntu and macOS.
 - 2026-10-17: release-please cannot open the 0.1.0 release PR until the repository setting "Allow GitHub
   Actions to create and approve pull requests" is enabled (Settings > Actions > General > Workflow permissions).
+- 2026-10-17: repository transferred from api-py to SCGIS-Wales; the PyPI trusted publisher now matches. Six
+  Dependabot PRs (#2-#7) bump pinned actions and the CycloneDX plugin across major versions; review before merging.
