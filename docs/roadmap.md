@@ -136,3 +136,14 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
 - 2026-10-17: Stage 7 merged (PR #22). v0.6.0 released: the release-please run dispatched `workflow.yml`
   and every job passed (build, attestations, PyPI, release assets, Homebrew tap job, which skipped with a
   notice because `HOMEBREW_TAP_TOKEN` is not set). Roadmap complete except the benchmark run.
+- 2026-10-17: Stage 8 verified locally with Kiro CLI 2.32.0. Free commands against a throwaway `KIRO_HOME`
+  that already had another MCP server: `kiro init --global` plus project `kiro init` gave
+  `groovyscope (groovy) initialized (548ms)`, `/mcp` listed both servers with groovyscope running 13 tools, and
+  `/tools` showed them allowed. Kiro reads language servers only from the project's `.kiro/`, hence the
+  per-project step. Three budgeted prompts cost 1.47 credits (10.73 before): "why is line 71 flagged"
+  called `check` and `explain` and gave the GS005 fix (0.21); "review XmlReportUtil and apply safe fixes"
+  called `review`, `fix` and `profile_status`, added `@CompileStatic` and left the file compiling (1.07); a
+  runtime-profile question called `profile_status` and answered that `Set.of` is unproven on the target
+  Groovy (0.19). Follow-ups fixed the same day: the type fix now handles `final x = ...`, duplicate edits
+  from two codes on one spot apply once, and `profile_status` lists each construct's status.
+

@@ -192,6 +192,23 @@ public final class QualityServices {
         }
         status.put("contractItems", items.size());
         status.put("seams", items.keySet().stream().filter(k -> k.startsWith("seam:")).map(k -> k.substring(5)).toList());
+        List<Map<String, String>> constructs = new ArrayList<>();
+        for (Profile.Construct construct : profile.constructs()) {
+            if (construct.files().isEmpty() || construct.files().stream()
+                    .anyMatch(glob -> Profile.matches(glob, java.nio.file.Path.of(relative)))) {
+                Map<String, String> entry = new java.util.LinkedHashMap<>();
+                entry.put("id", construct.id());
+                entry.put("status", construct.status());
+                if (!construct.evidence().isBlank()) {
+                    entry.put("evidence", construct.evidence());
+                }
+                if (!construct.replacement().isBlank()) {
+                    entry.put("replacement", construct.replacement());
+                }
+                constructs.add(entry);
+            }
+        }
+        status.put("constructs", constructs);
         status.put("protectedMethods", profile.protectedRegions().methods());
         status.put("baselineRecorded", Contracts.baseline(workspace.root(), relative) != null);
         status.put("guidance", profile.guidance());

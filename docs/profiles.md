@@ -102,7 +102,7 @@ On the name argument of a typed accessor (`getParameter('TOPIC_NAME', String.cla
 
 ## For agents
 
-The MCP tool `profile_status(path)` returns the profile, target Groovy, compiling service, descriptor
-parameters, test seams, protected methods, whether a baseline is recorded, and the guidance. `review` names
+The MCP tool `profile_status(path)` returns the profile, target Groovy, compiling service, the status,
+evidence and replacement of every construct the profile lists for that file, descriptor parameters, test seams, protected methods, whether a baseline is recorded, and the guidance. `review` names
 the profiles governing the paths it was given. The steering file tells the agent to call `profile_status`
 before editing a governed file and to treat RP001 and RP002 as blocking.

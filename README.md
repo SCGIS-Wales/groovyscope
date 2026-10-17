@@ -101,7 +101,7 @@ relative to the workspace root, 1-based `line`/`col`, a confidence where one app
 | `review(paths?, top?)` | The same findings grouped by the review checklist, with the profiles governing the paths |
 | `fix(paths?, codes?, apply?)` | Safe fixes; a dry run unless `apply` |
 | `explain(code)` | What a code means, why it matters and the fix |
-| `profile_status(path)` | Target Groovy, compiling service, descriptor parameters, test seams and protected code of a governed file |
+| `profile_status(path)` | Target Groovy, compiling service, construct status on the runtime, descriptor parameters, test seams and protected code of a governed file |
 | `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |
 | `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing`, `metaClass` writes, `@Grab`, `Eval`, `execute()` |
 | `workspace_status()` | Daemon state, engine version, root, file count and trust flag |

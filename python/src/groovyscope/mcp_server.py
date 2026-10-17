@@ -346,8 +346,9 @@ def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., 
         return found
 
     def profile_status(path: str) -> dict[str, Any]:
-        """The runtime profile governing PATH: target Groovy, compiling service, descriptor parameters, test seams,
-        protected methods, whether a contract baseline is recorded, and the profile's guidance."""
+        """The runtime profile governing PATH: target Groovy, compiling service, the status of each construct on the
+        runtime (blocked, unproven, proven...), descriptor parameters, test seams, protected methods, whether a
+        contract baseline is recorded, and the profile's guidance."""
         status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
         return {"path": path, **(dict(status) if isinstance(status, Mapping) else {"governed": False})}
 

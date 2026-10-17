@@ -235,6 +235,10 @@ class ProfilesSpec extends Specification {
         status.parameters == [TOPIC_NAME: 'string', RETENTION_DAYS: 'string', ENABLED: 'boolean']
         status.seams == ['seam']
         status.protectedMethods == ['advance']
+        status.constructs*.id == ['groovy-json', 'immutable-factories', 'arrow-switch', 'nested-class']
+        status.constructs[0] == [id: 'groovy-json', status: 'blocked', evidence: 'groovy-json is not on the runtime classpath',
+                                 replacement: 'Jackson ObjectMapper']
+        status.constructs[2] == [id: 'arrow-switch', status: 'unproven']
         status.baselineRecorded == false
         services.quality().profileStatus(uri('plugins/other/src/Util.groovy')) == [governed: false]
     }

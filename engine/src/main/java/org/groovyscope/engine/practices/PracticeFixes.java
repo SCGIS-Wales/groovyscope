@@ -210,11 +210,23 @@ public final class PracticeFixes {
                     ClassNode type = PracticeFinder.typeOf(declaration.getRightExpression());
                     String text = lines.slice(range);
                     int def = text.indexOf("def ");
-                    if (type != null && !type.isGenericsPlaceHolder() && def >= 0 && type.getGenericsTypes() == null) {
+                    boolean typable = type != null && !type.isGenericsPlaceHolder() && type.getGenericsTypes() == null;
+                    if (typable && def >= 0) {
                         String name = typeName(type, module);
                         Range defRange = new Range(new Position(range.start().line(), range.start().column() + def),
                                 new Position(range.start().line(), range.start().column() + def + 3));
                         actions.add(new CodeAction("Declare as " + name, diagnostic, List.of(new TextEdit(defRange, name))));
+                    } else if (typable) {
+                        // `final x = ...`: the modifier stands where a type belongs, so insert the type after it.
+                        java.util.regex.Matcher modifier = java.util.regex.Pattern
+                                .compile("\\bfinal\\s+(?=" + java.util.regex.Pattern.quote(variable.getName()) + "\\b)")
+                                .matcher(lines.line(range.start().line()));
+                        if (modifier.find()) {
+                            String name = typeName(type, module);
+                            Position at = new Position(range.start().line(), modifier.end());
+                            actions.add(new CodeAction("Declare as " + name, diagnostic,
+                                    List.of(new TextEdit(new Range(at, at), name + " "))));
+                        }
                     }
                 }
                 super.visitDeclarationExpression(declaration);
@@ -256,13 +268,15 @@ public final class PracticeFixes {
         for (TextEdit edit : edits) {
             int start = lines.offsetOf(edit.range().start());
             int end = lines.offsetOf(edit.range().end());
-            if (start > end) {
+            if (start > end || accepted.contains(edit)) {
+                // Two findings on one spot (NoDef and VariableTypeRequired) propose the same edit: apply it once.
                 continue;
             }
             boolean clash = false;
             for (int[] span : spans) {
                 if (start < span[1] && span[0] < end || start == end && span[0] < start && start < span[1]
-                        || span[0] == span[1] && start < span[0] && span[0] < end) {
+                        || span[0] == span[1] && start < span[0] && span[0] < end
+                        || start == end && span[0] == span[1] && start == span[0]) {
                     clash = true;
                     break;
                 }
