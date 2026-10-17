@@ -1,0 +1,24 @@
+# Versions verified against Maven Central on 2026-10-17.
+[versions]
+groovy = "6.0.0"
+lsp4j = "1.0.0"
+codenarc = "4.0.0"
+spotless = "4.10.4"
+sqlite-jdbc = "3.53.4.0"
+spock = "2.5-groovy-6.0"
+shadow = "9.6.1"
+cyclonedx = "1.4.0"
+
+[libraries]
+groovy = { module = "org.apache.groovy:groovy", version.ref = "groovy" }
+lsp4j = { module = "org.eclipse.lsp4j:org.eclipse.lsp4j", version.ref = "lsp4j" }
+# Declared now, wired in later stages (lint, format, daemon index persistence).
+codenarc = { module = "org.codenarc:CodeNarc", version.ref = "codenarc" }
+spotless-lib = { module = "com.diffplug.spotless:spotless-lib", version.ref = "spotless" }
+spotless-lib-extra = { module = "com.diffplug.spotless:spotless-lib-extra", version.ref = "spotless" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
+spock-core = { module = "org.spockframework:spock-core", version.ref = "spock" }
+
+[plugins]
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
+cyclonedx = { id = "org.cyclonedx.bom", version.ref = "cyclonedx" }

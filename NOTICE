@@ -1,0 +1,11 @@
+groovyscope
+Copyright 2026 SCGIS-Wales and contributors
+
+This product includes software developed at The Apache Software Foundation
+(https://www.apache.org/), in particular Apache Groovy and CodeNarc.
+
+Portions of the language server design are derived from the Apache 2.0
+licensed GroovyLanguageServer/groovy-language-server project
+(https://github.com/GroovyLanguageServer/groovy-language-server) and the
+trustytrojan/groovyls fork. Their licence headers are preserved where code
+is reused.

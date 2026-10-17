@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SCGIS-Wales/groovyscope/config-schema.json",
+  "title": "groovyscope configuration (.groovyscope.yaml)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "groovy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)*$" },
+        "compat": { "type": "array", "items": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)*$" } }
+      }
+    },
+    "jdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "home": { "type": ["string", "null"] },
+        "minimum": { "type": "integer", "minimum": 17 },
+        "autoProvision": { "type": "boolean" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sourceRoots": { "type": "array", "items": { "type": "string" } },
+        "classpath": { "type": "array", "items": { "type": "string" } },
+        "classpathFrom": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "gradleTask": { "type": ["string", "null"] } }
+        },
+        "exclude": { "type": "array", "items": { "type": "string" } },
+        "trust": { "type": "boolean" }
+      }
+    },
+    "daemon": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "idleTimeoutMinutes": { "type": "integer", "minimum": 1 },
+        "heap": { "type": "string", "pattern": "^[0-9]+[kKmMgG]$" },
+        "cds": { "type": "boolean" }
+      }
+    },
+    "lint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ruleset": { "type": ["string", "null"] },
+        "jenkinsRuleset": { "type": ["string", "null"] },
+        "failOnPriority": { "type": "integer", "minimum": 1, "maximum": 3 }
+      }
+    },
+    "typecheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nullChecker": { "type": "string", "enum": ["off", "lenient", "strict"] },
+        "sqlInjection": { "type": "boolean" },
+        "purity": { "type": "boolean" }
+      }
+    },
+    "format": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "engine": { "type": "string", "enum": ["greclipse"] },
+        "properties": { "type": ["string", "null"] }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxResults": { "type": "integer", "minimum": 1 },
+        "maxBytes": { "type": "integer", "minimum": 256 }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": { "type": "string", "enum": ["debug", "info", "warning", "error"] },
+        "file": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
