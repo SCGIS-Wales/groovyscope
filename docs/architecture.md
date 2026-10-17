@@ -17,7 +17,7 @@ Packages under `org.groovyscope.engine`:
 
 | Package | Stage | Responsibility |
 |---|---|---|
-| `lsp` | 0, 1 | LSP4J server: lifecycle, incremental document sync, definition, type definition, references, hover, document and workspace symbols, completion, signature help, prepare/rename, published diagnostics. The only package allowed to import LSP4J types. |
+| `lsp` | 0, 1, 10 | LSP4J server: lifecycle, incremental document sync, definition, type definition, implementation, references, document highlight, hover, document and workspace symbols, folding ranges, inlay hints, completion, signature help, prepare/rename, formatting and range formatting, code actions (quick fixes, fix all, organize imports), published and pulled diagnostics, call hierarchy, semantic tokens, plus the `groovyscope/*` requests the CLI and MCP server use. The only package allowed to import LSP4J types. |
 | `version` | 0 | Engine version from a Gradle-expanded resource. |
 | `config` | 1 | The slice of `.groovyscope.yaml` the engine needs, handed over as JSON by the Python front end. |
 | `workspace` | 1 | Source discovery under the configured roots (whole-tree fallback), open-document overlay, classpath from configuration (never inferred). |
@@ -28,6 +28,10 @@ Packages under `org.groovyscope.engine`:
 | `lint`, `typecheck`, `format` | 3 | CodeNarc 4 in process (rule sets cached per path, findings cached per document hash); Groovy's static type checker over the workspace with the Groovy 6 checkers added to every `@CompileStatic`/`@TypeChecked` annotation; the bundled `basic` formatter returning one whole-document edit. |
 | `services.QualityServices` | 3 | `check`, `format`, quick fixes and the merged compile + lint diagnostics the LSP publishes. |
 | `callgraph` | 4 | `CallGraph` (every call as an edge from its containing method, script or class initialiser to each resolved target, built once per snapshot) and `ImpactAnalyzer` (direct and transitive callers, overrides in both directions, tests, name-only sites, risk score, suggested checks). |
+| `practices`, `profiles` | 8 | GS practice checks with AST fixes and explanations; runtime profiles (RP codes, descriptors, contracts, emulation compile). See below. |
+| `search` | 10 | `CodeSearch` (structural search over the compiled trees: catch clauses, throws, calls, constructor calls, `return null`, string literals, annotations, `def` declarations, empty blocks, fields and methods, each with filters), `CloneFinder` (duplicated code by normalised statement hashes), `SymbolReader` (the source of one declaration with the comments and annotations above it) and `WorkspaceOverview` (sizes per package, largest files and classes, untested classes). Java documents are never searched. |
+| `compile.MissingDependencies` | 10 | Folds the unresolved-class errors of a file with no configured classpath into one `GS100` warning naming the missing packages. |
+| `services.DocumentSupport` | 10 | Per-document editor features: implementations, highlights, folding ranges and inlay type hints. |
 
 Keeping the engine API free of LSP4J types outside `lsp` lets the front end be swapped for, or contribute to,
 Apache Groovy's own `groovy-lsp` (GROOVY-12411). That server was merged into Groovy's master branch on
@@ -87,6 +91,14 @@ Classpaths are often incomplete (JUnit 4 without Hamcrest, say). A classpath typ
 missing class is treated as having no readable members, so the affected call stays unresolved instead of
 failing the request.
 
+The classpath is `workspace.classpath` plus the entries of `workspace.classpathFile`, which `groovyscope
+classpath` writes by running the project's Gradle build with a bundled init script (a `groovyscopeClasspath`
+task per project printing its resolved compile and test classpath and class folders) or Maven's
+`dependency:build-classpath`; the command is refused in an untrusted workspace because build scripts execute.
+With no classpath at all, every import of a library class and every use of it is a compile error that hides
+the one real cause, so `MissingDependencies` folds those errors into one `GS100` warning per file (severity
+from `practices.severity`, `off` drops them) before diagnostics are published or returned.
+
 Joint Groovy/Java projects: with `workspace.javaSources` (on by default), `.java` files under the source
 roots (`src/main/java` and `src/test/java` are among the defaults) join the compile, read by Groovy's parser,
 which accepts most Java. Groovy code then resolves the project's Java classes, and navigation, references
@@ -112,10 +124,13 @@ analysis (Stage 4) will report those sites for manual review.
 
 - **Lint.** CodeNarc 4 runs in process on one document at a time (`StringSourceAnalyzer`), so unsaved
   editor text is linted too. Rule sets come from `lint.ruleset` / `lint.jenkinsRuleset` or the bundled
-  profiles; Jenkinsfiles and `vars/` scripts get the Jenkins profile automatically. Findings are cached by
-  document content hash and profile, published as diagnostics (`lint.publish`), served through pull
-  diagnostics, and exposed as quick fixes where the fix is purely textual (unnecessary semicolon, trailing
-  whitespace, extra blank line).
+  profiles, with `lint.rules` applied on top (a rule switched off or given another priority); Jenkinsfiles
+  and `vars/` scripts get the Jenkins profile automatically. Findings are cached by document content hash and
+  profile, published as diagnostics (`lint.publish`, down to `lint.publishMaxPriority`; `check` and `review`
+  are never filtered), served through pull diagnostics, and exposed as quick fixes where the fix is purely
+  textual (unnecessary semicolon, trailing whitespace, extra blank line). Every diagnostic a fix can repair
+  carries `data.fixable`, and the `source.fixAll.groovyscope` and `source.organizeImports` code actions apply
+  the safe fixes of a whole file.
 - **Type-check.** `check --include typecheck` compiles the workspace to `INSTRUCTION_SELECTION` (still no
   bytecode) in a separate unit with a customizer that appends the configured Groovy 6 checkers
   (`NullChecker`, `SqlInjectionChecker`, `PurityChecker` + `ModifiesChecker`) to the `extensions` of every
@@ -193,6 +208,9 @@ deliberately loose so shared runners do not fail the build.
 |---|---|
 | `cli.py` | click commands; nothing but wiring and exit codes |
 | `config.py` | defaults ← `.groovyscope.yaml` ← `GROOVYSCOPE_*`; JSON-schema validation |
+| `workspace_init.py` | `groovyscope init`: a starting `.groovyscope.yaml` from the layout and build files, read as text |
+| `classpath.py` | `groovyscope classpath`: the Gradle init script or Maven command, parsing, `workspace.classpathFile` |
+| `trust.py` | the per-user trust record that gates `workspace.trust`, `jdk.home`, rule sets and `classpath` |
 | `java.py` | JDK discovery with injected `runner`/`which` for testability |
 | `jar.py` | JAR lookup (`GROOVYSCOPE_JAR`, bundled, fetched) and SHA-256 verification |
 | `fetch.py` | `groovyscope fetch`: checksum-verified install of a release JAR into the cache |
@@ -200,9 +218,11 @@ deliberately loose so shared runners do not fail the build.
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
 | `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing); one-shot requests and persistent sessions |
-| `mcp_server.py` | the MCP server: nine tool functions over one engine session, compact output through `render.py` |
+| `mcp_server.py` | the MCP server: twenty-one tool functions over one engine session, compact output through `render.py` |
+| `mcp_search.py`, `mcp_server_support.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview`; the shared helpers (paging, paths, clipping) |
 | `relay.py` | asyncio byte relay between this process's stdio and the socket |
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
+| `kiro_agent.py` | agent format detection (V2, universal, out of sync, V3) and format-preserving merges; the servers an agent's `tools` hides |
 | `doctor.py` | pure report building for `doctor` |
 | `render.py` | relative paths, pagination with continuation cursors, byte caps for agent output |
 
@@ -233,8 +253,8 @@ them. Tools are plain
 functions built by `build_tools(root, call, output, environ)`, which keeps them testable against a fake
 engine. Each tool maps to one engine request: `groovyscope/symbols`, `/definition`, `/references`,
 `/callGraph`, `/impact`, `/check` (also behind `review`), `/fix`, `/explain`, `/profile`, `/format`,
-`/dynamicCode` and `/status`. Every request carries `root`, so
-the daemon serves several Kiro sessions on the same workspace from one compiled snapshot.
+`/dynamicCode`, `/status`, `/readSymbol`, `/findCode`, `/duplicates` and `/overview`. Every request carries
+`root`, so the daemon serves several Kiro sessions on the same workspace from one compiled snapshot.
 
 Results are returned as one compact JSON text block per call. The SDK would otherwise pretty-print each result
 and also attach it as `structuredContent`, sending every answer twice and about a third larger;
@@ -244,7 +264,15 @@ session is guarded by a lock and reopened (with a daemon restart if needed) when
 `hover`, `type_definition`, `document_symbols` and `rename` map to `groovyscope/hover`, `/typeDefinition`,
 `/documentSymbols` and `/rename`, which reuse the LSP implementations.
 
-`find_dynamic_code` is the one tool with no LSP counterpart: `DynamicCodeFinder` walks the index for the
+The reading tools exist so an agent never needs a file body: `workspace_overview` for orientation,
+`document_symbols` for a file's outline with line ranges (paged, filtered by kind or name), `read_symbol` for
+the source of one declaration with line numbers, `find_code` for a structural search that grep cannot do
+(a catch that swallows `Exception`, calls on a receiver type, `return null`, methods over a length), and
+`find_duplicates` for repeated blocks with identifiers and literals ignored. `check` and `review` return
+counts per code, `check` filters by `codes` and `max_priority`, and both summarise GS100 under
+`missingDependencies` rather than listing it per file.
+
+`find_dynamic_code` has no LSP counterpart either: `DynamicCodeFinder` walks the index for the
 constructs that defeat static analysis (classes with neither `@CompileStatic` nor `@CompileDynamic`, `def`
 on public methods, `methodMissing`/`propertyMissing`/`invokeMethod` hooks, `metaClass` writes, `@Grab` on
 classes, methods or imports, `Eval`/`GroovyShell`/template engines, and `execute()` on a string, GString,

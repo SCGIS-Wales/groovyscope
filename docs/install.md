@@ -72,6 +72,33 @@ groovyscope doctor                         # reports it as "provisioned"
 finds no JDK meeting `jdk.minimum` (`jdk.vendor: corretto` picks Corretto). A JDK you installed yourself always wins over a provisioned one. Supported:
 macOS and Linux on x64 and arm64.
 
+## Per project: `init`, `trust`, `classpath`
+
+All three are optional; the engine answers from the project's own sources without them.
+
+```bash
+cd your-groovy-project
+groovyscope init          # .groovyscope.yaml with the source roots and Groovy version the build files declare
+groovyscope trust         # record, in your home folder, that this repository may run its build tool
+groovyscope classpath     # Gradle (bundled init script) or Maven writes .groovyscope/classpath.txt
+groovyscope check         # library classes now resolve; no GS100 "missing dependencies" warnings
+```
+
+`init` reads the build files as text and runs nothing; settings you already wrote win over what it detects.
+`classpath` runs `./gradlew` (or `gradle`) with the init script `config/gradle/groovyscope-classpath.gradle`,
+which registers a `groovyscopeClasspath` task printing the resolved compile and test classpath of every
+project plus the compiled class folders, or `mvn dependency:build-classpath` for Maven. Resolution is lenient:
+a dependency that cannot be fetched is skipped, and paths that do not exist yet (not built) are reported and
+left out. Everything the build needs to configure itself (its Gradle version, a pinned Java toolchain, network
+access to its repositories) is needed here too: the command is the build, not a parser of it. The list lands in `workspace.classpathFile` (`.groovyscope/classpath.txt` by default; add it to
+`.gitignore`, it holds absolute paths), its entries join `workspace.classpath`, and a running daemon is stopped
+so the next request starts with the new classpath. Rerun it after dependency changes. Because the build
+scripts execute, the command is refused in a workspace you have not trusted ([security](security.md)).
+
+Until a classpath is configured, imports of library classes fold into one `GS100` warning per file naming the
+missing packages, rather than one error per import and per use. `practices.severity: {GS100: off}` silences
+it.
+
 ## How the JDK is found
 
 In order, the first JDK that meets `jdk.minimum` (17 unless configured higher) wins:
@@ -114,6 +141,12 @@ bundled one. `GROOVYSCOPE_JAR` still overrides both (not verified; `doctor` says
 Nothing is downloaded at runtime unless you ask: the wheel contains the engine JAR and its SHA-256, `fetch`
 and `jdk install` are explicit commands, and `jdk.autoProvision` is off by default. Mirror the release JAR and
 its `SHA256SUMS.txt` on an internal server and point `fetch --from` at it; set `jdk.home` to a managed JDK.
+
+## Runtime profiles on a second machine
+
+A private profile stays outside every repository. Copy it with `groovyscope profile install profile.yaml`:
+the file is validated against the profile schema and written to `~/.groovyscope/profiles/` readable by you
+only (`--force` replaces one of the same name). Then `groovyscope daemon restart` in any open workspace.
 
 ## Cache directory
 

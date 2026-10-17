@@ -9,10 +9,23 @@ hard failures.
 | `FAIL jdk JDK 11 ... below the minimum 17` | Groovy 6 needs 17+; point `jdk.home` or `JAVA_HOME` at a newer JDK |
 | `warn jdk ... JAVA_HOME (...) is JDK 11, below the minimum 17; ignored` | The JDK you named is too old (or not a JDK); another one is used. Point `JAVA_HOME` at a JDK 17+ home, for example `~/Library/Java/JavaVirtualMachines/amazon-corretto-21.jdk` |
 | `warn config ... ignored in an untrusted workspace` | The repository's `.groovyscope.yaml` sets `jdk.home`, a rule set or `workspace.trust`; run `groovyscope trust` if you trust the repository |
+| `GS100 missing dependencies` warnings, or `missingDependencies` in a `check`/`review` answer | No classpath is configured, so imports of library classes cannot resolve; `groovyscope trust` then `groovyscope classpath`, or list the jars under `workspace.classpath`; `practices.severity: {GS100: off}` silences the warning |
+| `` `classpath` runs the project's build tool ... run `groovyscope trust` first `` | The workspace is not trusted and `classpath` would execute its build scripts; trust it, or write `workspace.classpath` by hand |
+| `classpath`: `no Gradle or Maven build at ...` or `gradle is not installed and the project has no wrapper` | Pass `--tool`, add a wrapper, or list the jars under `workspace.classpath`; a build failure prints the build tool's last lines |
+| `classpath`: `N listed path(s) do not exist yet (not built?)` | The build declares output folders it has not produced; run the build once and rerun `groovyscope classpath` |
+| `classpath`: `Cannot find a Java installation ... matching: {languageVersion=11 ...}` | The project's build pins a Gradle toolchain this machine lacks; install that JDK (Gradle finds it in the standard folders) or add its path to `org.gradle.java.installations.paths` in `~/.gradle/gradle.properties`. The requirement is the build's, not groovyscope's |
+| `classpath` wrote fewer entries than the build declares | Gradle resolves leniently, so a dependency the repository could not fetch (offline, rate limited) is skipped silently; rerun once the network is back |
+| `groovyscope init` says `already has these settings` | Nothing to add: the existing `.groovyscope.yaml` already covers what the layout and build files suggest |
 | `the daemon was started with a different configuration` | `.groovyscope.yaml`, a profile or the environment changed since the daemon started; `groovyscope daemon restart` |
 | `socket path ... is longer than ... bytes` | Set `GROOVYSCOPE_SOCKET_DIR` to a short directory such as `/tmp/gs` |
 | `... belongs to another user; set GROOVYSCOPE_SOCKET_DIR` | The socket folder was created by someone else; point `GROOVYSCOPE_SOCKET_DIR` at a folder you own |
 | `doctor` warns `kiro agent ... universal-out-of-sync` | The agent was edited after Kiro generated its V3 rules; `groovyscope kiro repair` re-stamps it |
+| `doctor` warns `kiro agent ... its tools list hides these MCP servers: ...` | The agent was written before 0.9.0 with `tools: ["code", "@groovyscope"]`, so Kiro hides your other servers from it; `groovyscope kiro repair --global` sets `tools: ["*"]` |
+| `doctor` says `kiro agent ... this kiro-cli can load it in both engines` | Informational: `groovyscope kiro repair --agent-format universal` converts the V2 agent so `kiro-cli --v3` loads it too |
+| `doctor` prints `info kiro files ... not in a Groovy project here` | Expected outside a project: the global setup is present and this folder has no Groovy sources or build file |
+| Kiro's `/tools` lists only `code` and groovyscope under `--agent groovy` | Same cause as the hidden-servers warning; repair the agent |
+| An MCP `find_code` answer is `unknown kind` | The kinds are listed in the answer: `catch`, `throw`, `call`, `new`, `return-null`, `string-literal`, `annotation`, `def`, `empty-block`, `field`, `method` |
+| `read_symbol` answers `found: false` with `candidates` | The name matched nothing exactly; pick one of the candidates (`Class.name`, or `line` for an overload) |
 | `FAIL engine jar no engine JAR bundled` | Development checkout: run `./gradlew build` in `engine/` then `python3 scripts/bundle_jar.py`; a package without the JAR: `groovyscope fetch`; or set `GROOVYSCOPE_JAR` |
 | `fetch failed: no checksum` | Pass `--sha256`, or put the release's `SHA256SUMS.txt` next to the JAR you point `--from` at |
 | `FAIL jdk no JDK found` | Install a JDK (docs/install.md), or `groovyscope jdk install`, or set `jdk.autoProvision: true` |

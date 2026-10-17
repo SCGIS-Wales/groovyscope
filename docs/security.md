@@ -30,8 +30,21 @@ repository are ignored, and `doctor` and every command name them:
 | emulation jars of a runtime profile kept in the repository | The emulation compile loads those jars |
 
 Your environment (`GROOVYSCOPE_*` variables) and a configuration file you name with `--config` are your own
-choice and are not gated. The classpath itself comes from `workspace.classpath` or an explicit Gradle export
-task, never from silent inference over the workspace contents.
+choice and are not gated. The classpath itself comes from `workspace.classpath`, from the file
+`workspace.classpathFile` names, or from `groovyscope classpath`, never from silent inference over the
+workspace contents.
+
+## `groovyscope classpath` runs the build tool
+
+Resolving a project's dependencies means running its Gradle or Maven build, and a build script is code from
+the repository: `build.gradle`, `settings.gradle`, plugins and init scripts all execute. `groovyscope
+classpath` therefore runs only in a workspace you have trusted and only when you invoke it; no other command,
+LSP request or MCP tool runs it on its own, and there is no setting that automates it. The
+Gradle init script it uses is bundled with the package (`config/gradle/groovyscope-classpath.gradle`), never
+taken from the workspace. The result is a plain list of paths in `.groovyscope/classpath.txt`. Reading jars
+from that list for name resolution runs no code from them; global AST transformations found on the
+classpath still load only with `workspace.trust`, which itself needs the trust record. `groovyscope init`
+reads build files as text and runs nothing.
 
 ## Containment
 

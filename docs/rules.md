@@ -34,8 +34,11 @@ profiles live in `config/codenarc/`.
   gets its own profile with `rulesets/jenkins.xml`.
 
 Both profiles load cleanly against CodeNarc 4.0.0 (the engine's specs assert it). The `enhanced` rules are
-included; they need the compile classpath, which comes from `workspace.classpath` today and from the Gradle
-export task later. `groovyscope check` applies the Jenkins profile to `Jenkinsfile*` and `vars/` scripts
+included; they need the compile classpath, which comes from `workspace.classpath` or from `groovyscope
+classpath` (the project's own Gradle or Maven build, in a trusted workspace). `lint.rules` in
+`.groovyscope.yaml` switches single rules off or changes their priority on top of either profile
+(`{CompileStatic: off, LineLength: {priority: 3}}`), and `lint.publishMaxPriority` keeps priority 3 findings
+out of the editor and the agent's diagnostics while `check` and `review` still report them. `groovyscope check` applies the Jenkins profile to `Jenkinsfile*` and `vars/` scripts
 automatically, or everywhere with `--profile jenkins`.
 
 ## Running the same checks in the build
