@@ -28,6 +28,17 @@ def engine() -> dict[str, Any]:
 
 
 @pytest.fixture
+def local_tools(engine: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
+    """Tools whose workspace root is tmp_path, for the tools that write files."""
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        engine["calls"].append((method, params))
+        return engine["responses"].get(method, {})
+
+    return mcp_server.build_tools(tmp_path, call, {"maxResults": 3, "maxBytes": 16000}, {})
+
+
+@pytest.fixture
 def tools(engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     def call(method: str, params: dict[str, Any]) -> Any:
         engine["calls"].append((method, params))
@@ -158,8 +169,9 @@ def test_check_and_dynamic_code_and_status(tools: dict[str, Any], engine: dict[s
 
 
 def test_format_reports_and_applies(
-    tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    tools = local_tools
     target = tmp_path / "Messy.groovy"
     target.write_text("a  \n", encoding="utf-8")
     engine["responses"]["groovyscope/format"] = {
@@ -170,10 +182,10 @@ def test_format_reports_and_applies(
         },
         "checked": 1,
     }
-    dry = tools["format"](paths=[str(target)])
+    dry = tools["format"](paths=["Messy.groovy"])
     assert dry["changed"] == 1 and dry["files"][0]["linesChanged"] == 1 and dry["files"][0]["applied"] is False
     assert target.read_text(encoding="utf-8") == "a  \n"
-    applied = tools["format"](paths=[str(target)], apply=True)
+    applied = tools["format"](paths=["Messy.groovy"], apply=True)
     assert applied["files"][0]["applied"] is True
     assert target.read_text(encoding="utf-8") == "a\n"
 
@@ -252,7 +264,9 @@ def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) ->
     ]
 
 
-def test_explain_review_and_fix(tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path) -> None:
+def test_explain_review_and_fix(
+    tools: dict[str, Any], local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+) -> None:
     engine["responses"]["groovyscope/explain"] = {"code": "GS001", "title": "Integer division with /", "why": "w"}
     assert tools["explain"]("GS001") == {"found": True, "code": "GS001", "title": "Integer division with /", "why": "w"}
     engine["responses"]["groovyscope/explain"] = None
@@ -305,13 +319,13 @@ def test_explain_review_and_fix(tools: dict[str, Any], engine: dict[str, Any], t
             ]
         },
         "applied": {target.as_uri(): ["GS001"]},
-        "rejected": {"file:///ws/src/B.groovy": "does not parse"},
+        "rejected": {(tmp_path / "src" / "B.groovy").as_uri(): "does not parse"},
     }
-    dry = tools["fix"](paths=[str(target)])
+    dry = local_tools["fix"](paths=["Fix.groovy"])
     assert dry["files"][0]["codes"] == ["GS001"] and dry["files"][0]["applied"] is False
     assert dry["rejected"] == {"src/B.groovy": "does not parse"}
     assert target.read_text(encoding="utf-8") == "int x = a / b\n"
-    tools["fix"](paths=[str(target)], codes=["GS001"], apply=True)
+    local_tools["fix"](paths=["Fix.groovy"], codes=["GS001"], apply=True)
     assert target.read_text(encoding="utf-8") == "int x = a.intdiv(b)\n"
     assert engine["calls"][-1][1]["codes"] == ["GS001"]
 
@@ -334,3 +348,24 @@ def test_profile_status_and_review_notes(tools: dict[str, Any], engine: dict[str
     assert reviewed["profiles"] == {"plugins/demo/DemoPlugin.groovy": "demo-runtime"}
     engine["responses"]["groovyscope/profile"] = None
     assert tools["profile_status"]("src/A.groovy") == {"path": "src/A.groovy", "governed": False}
+
+
+def test_writes_stay_inside_the_workspace_and_keep_line_endings(
+    local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.groovy"
+    outside.write_text("x\n", encoding="utf-8")
+    inside = tmp_path / "Crlf.groovy"
+    inside.write_bytes("def s = '\U0001f600'; int a = 1\r\nint b = 2\r\n".encode())
+    edit = {"range": {"start": {"line": 0, "character": 18}, "end": {"line": 0, "character": 19}}, "newText": "z"}
+    engine["responses"]["groovyscope/fix"] = {
+        "edits": {inside.as_uri(): [edit], outside.as_uri(): [edit], (tmp_path / "notes.txt").as_uri(): [edit]},
+        "applied": {inside.as_uri(): ["X"]},
+    }
+    (tmp_path / "notes.txt").write_text("text\n", encoding="utf-8")
+    result = local_tools["fix"](apply=True)
+    assert inside.read_bytes() == "def s = '\U0001f600'; int z = 1\r\nint b = 2\r\n".encode()
+    assert outside.read_text(encoding="utf-8") == "x\n"
+    assert set(result["rejected"].values()) == {"not a Groovy source inside the workspace"}
+    with pytest.raises(ValueError, match="outside the workspace"):
+        local_tools["fix"](paths=["../elsewhere.groovy"])

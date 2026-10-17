@@ -13,7 +13,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from groovyscope import daemon, practices, rpc
-from groovyscope.edits import apply_edits, changed_line_count
+from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
 from groovyscope.render import page
 
 SERVER_NAME = "groovyscope"
@@ -75,7 +75,12 @@ def relative_path(uri: str, root: Path) -> str:
 
 
 def to_uri(root: Path, path: str) -> str:
-    return (root / path).resolve().as_uri()
+    """The file URI of a workspace-relative path. Paths that leave the workspace are refused."""
+    target = (root / path).resolve()
+    if not target.is_relative_to(root.resolve()):
+        msg = f"{path} is outside the workspace"
+        raise ValueError(msg)
+    return target.as_uri()
 
 
 def compact_location(location: Mapping[str, Any] | None, root: Path) -> dict[str, Any] | None:
@@ -266,17 +271,22 @@ def quality_tools(
     def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
         """Formatting edits for PATHS (whole workspace when empty). APPLY writes the files; otherwise only counts."""
         raw = call("groovyscope/format", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
+        changed, refused = file_edits(raw.get("edits", {}), root)
         files = []
-        for uri, edits in raw.get("edits", {}).items():
-            target = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
-            before = target.read_text(encoding="utf-8")
-            after = apply_edits(before, edits)
+        for edit in changed:
             if apply:
-                target.write_text(after, encoding="utf-8")
+                write_document(edit["path"], edit["after"])
             files.append(
-                {"path": relative_path(uri, root), "linesChanged": changed_line_count(before, after), "applied": apply}
+                {
+                    "path": relative_path(edit["path"].as_uri(), root),
+                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
+                    "applied": apply,
+                }
             )
-        return {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
+        result: dict[str, Any] = {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
+        if refused:
+            result["refused"] = [relative_path(uri, root) for uri in refused]
+        return result
 
     def find_dynamic_code(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
         """Constructs that defeat static analysis: untyped classes, def on public API, methodMissing, metaClass."""
@@ -358,22 +368,22 @@ def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., 
             "groovyscope/fix",
             {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "codes": codes or []},
         )
-        files = []
-        for uri, edits in raw.get("edits", {}).items():
-            target = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
-            before = target.read_text(encoding="utf-8")
-            after = apply_edits(before, edits)
+        changed, refused = file_edits(raw.get("edits", {}), root)
+        files: list[dict[str, Any]] = []
+        for edit in changed:
             if apply:
-                target.write_text(after, encoding="utf-8")
+                write_document(edit["path"], edit["after"])
+            uri = edit["path"].as_uri()
             files.append(
                 {
                     "path": relative_path(uri, root),
-                    "codes": raw.get("applied", {}).get(uri, []),
-                    "linesChanged": changed_line_count(before, after),
+                    "codes": next((v for k, v in raw.get("applied", {}).items() if uri_path(k) == edit["path"]), []),
+                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
                     "applied": apply,
                 }
             )
         rejected = {relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()}
+        rejected.update({relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused})
         return {"changed": len(files), "files": files[:cap], "rejected": rejected}
 
     return {"explain": explain, "review": review, "fix": fix, "profile_status": profile_status}

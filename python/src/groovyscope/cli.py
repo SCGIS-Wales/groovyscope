@@ -20,7 +20,7 @@ from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config
 from groovyscope.doctor import build_report, has_failures
-from groovyscope.edits import apply_edits, changed_line_count
+from groovyscope.edits import changed_line_count, file_edits, write_document
 from groovyscope.jar import locate_jar, read_manifest
 from groovyscope.java import JdkInfo, discover
 from groovyscope.kiro import (
@@ -544,17 +544,19 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
         socket_file, "groovyscope/format", {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths)}
     )
     rows: list[dict[str, Any]] = []
-    for uri, edits in sorted(result.get("edits", {}).items()):
-        path = uri_to_path(uri)
-        before = path.read_text(encoding="utf-8")
-        after = apply_edits(before, edits)
+    changed, refused = file_edits(result.get("edits", {}), obj["root"])
+    for edit in changed:
         if apply_changes:
-            path.write_text(after, encoding="utf-8")
-        try:
-            shown = path.relative_to(obj["root"]).as_posix()
-        except ValueError:
-            shown = path.as_posix()
-        rows.append({"path": shown, "lines": changed_line_count(before, after), "applied": apply_changes})
+            write_document(edit["path"], edit["after"])
+        rows.append(
+            {
+                "path": shown_path(edit["path"], obj["root"]),
+                "lines": changed_line_count(edit["before"], edit["after"]),
+                "applied": apply_changes,
+            }
+        )
+    for uri in refused:
+        click.echo(f"groovyscope: refused an edit outside the workspace: {uri}", err=True)
     checked = int(result.get("checked", 0))
     if as_json:
         click.echo(compact_json({"files": rows, "checked": checked, "changed": len(rows)}))
@@ -580,21 +582,21 @@ def fix(
     params = {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths), "codes": list(codes)}
     result = engine_call(socket_file, "groovyscope/fix", params)
     rows: list[dict[str, Any]] = []
-    for uri, edits in sorted(result.get("edits", {}).items()):
-        path = uri_to_path(uri)
-        before = path.read_text(encoding="utf-8")
-        after = apply_edits(before, edits)
+    changed, refused = file_edits(result.get("edits", {}), obj["root"])
+    applied_codes = {uri_to_path(uri): codes for uri, codes in result.get("applied", {}).items()}
+    for edit in changed:
         if apply_changes:
-            path.write_text(after, encoding="utf-8")
+            write_document(edit["path"], edit["after"])
         rows.append(
             {
-                "path": shown_path(path, obj["root"]),
-                "codes": result.get("applied", {}).get(uri, []),
-                "lines": changed_line_count(before, after),
+                "path": shown_path(edit["path"], obj["root"]),
+                "codes": applied_codes.get(edit["path"], []),
+                "lines": changed_line_count(edit["before"], edit["after"]),
                 "applied": apply_changes,
             }
         )
     rejected = {shown_path(uri_to_path(uri), obj["root"]): why for uri, why in result.get("rejected", {}).items()}
+    rejected.update({shown_path(uri_to_path(uri), obj["root"]): "outside the workspace; refused" for uri in refused})
     if as_json:
         click.echo(compact_json({"files": rows, "rejected": rejected}))
     else:
