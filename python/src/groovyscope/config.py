@@ -13,6 +13,8 @@ import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from groovyscope import trust
+
 CONFIG_FILENAME = ".groovyscope.yaml"
 ENV_PREFIX = "GROOVYSCOPE_"
 ENV_SEPARATOR = "__"
@@ -101,13 +103,15 @@ def nest(parts: Sequence[str], value: Any, reference: Mapping[str, Any]) -> Conf
 
 
 def env_overrides(environ: Mapping[str, str], reference: Mapping[str, Any]) -> Config:
-    """Collect ``GROOVYSCOPE_SECTION__KEY=value`` variables into a nested mapping."""
+    """Collect ``GROOVYSCOPE_SECTION__KEY=value`` variables into a nested mapping. Variables that name no
+    configuration section (``GROOVYSCOPE_TOKEN`` and the like) are not configuration and are skipped."""
     overrides: Config = {}
+    sections = {key.lower() for key in reference}
     for name, raw in sorted(environ.items()):
         if not name.startswith(ENV_PREFIX) or name in RESERVED_ENV:
             continue
         parts = name[len(ENV_PREFIX) :].split(ENV_SEPARATOR)
-        if any(part == "" for part in parts):
+        if any(part == "" for part in parts) or parts[0].lower() not in sections:
             continue
         overrides = deep_merge(overrides, nest(parts, parse_scalar(raw), reference))
     return overrides
@@ -133,19 +137,47 @@ def find_config_file(root: Path, explicit: Path | None) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def load_config(root: Path, explicit: Path | None = None, environ: Mapping[str, str] | None = None) -> Config:
-    """Effective configuration for ``root``. Raises ``ValueError`` listing every schema violation."""
+def read_config_file(path: Path) -> Config:
+    """A YAML mapping, with YAML syntax errors reported as ``ValueError``."""
+    try:
+        return read_yaml_file(path)
+    except yaml.YAMLError as exc:
+        msg = f"{path} is not valid YAML: {exc}"
+        raise ValueError(msg) from exc
+
+
+def load_config_with_notes(
+    root: Path,
+    explicit: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> tuple[Config, list[str]]:
+    """Effective configuration for ``root`` and notes about settings ignored because the workspace is not trusted.
+    A file passed explicitly (``--config``, ``GROOVYSCOPE_CONFIG``) is the user's choice and is not gated; the
+    workspace's own ``.groovyscope.yaml`` is. Raises ``ValueError`` listing every schema violation."""
     env = os.environ if environ is None else environ
     defaults = load_defaults()
     path = find_config_file(root, explicit)
-    from_file = read_yaml_file(path) if path is not None else {}
-    merged = deep_merge(deep_merge(defaults, from_file), env_overrides(env, defaults))
+    from_file = read_config_file(path) if path is not None else {}
+    from_env = env_overrides(env, defaults)
+    merged = deep_merge(deep_merge(defaults, from_file), from_env)
     errors = validate_config(merged)
     if errors:
         listing = "\n".join(f"  - {error}" for error in errors)
         msg = f"invalid configuration:\n{listing}"
         raise ValueError(msg)
-    return merged
+    workspace_file = from_file if explicit is None else {}
+    trusted = trust.is_trusted(root, home or Path.home()) or (
+        explicit is not None and bool((from_file.get("workspace") or {}).get("trust"))
+    )
+    return trust.gate(merged, workspace_file, from_env, defaults, trusted=trusted)
+
+
+def load_config(
+    root: Path, explicit: Path | None = None, environ: Mapping[str, str] | None = None, home: Path | None = None
+) -> Config:
+    """Effective configuration for ``root`` (see :func:`load_config_with_notes`)."""
+    return load_config_with_notes(root, explicit, environ, home)[0]
 
 
 def dump_yaml(config: Mapping[str, Any]) -> str:

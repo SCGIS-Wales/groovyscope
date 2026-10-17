@@ -15,10 +15,10 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, kiro_agent, mcp_server, practices, profiles, provision, relay, rpc
+from groovyscope import __version__, kiro_agent, mcp_server, practices, profiles, provision, relay, rpc, trust
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
-from groovyscope.config import dump_yaml, load_config
+from groovyscope.config import dump_yaml, load_config, load_config_with_notes
 from groovyscope.doctor import build_report, has_failures
 from groovyscope.edits import changed_line_count, file_edits, write_document
 from groovyscope.jar import locate_jar, read_manifest
@@ -276,10 +276,12 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
 def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     """Resolve configuration, JDK and JAR; exit 1 with a message on any failure."""
     try:
-        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+        effective, notes = load_config_with_notes(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
+    for note in notes:
+        click.echo(f"groovyscope: {note}", err=True)
     jdk = resolve_jdk(effective, dict(os.environ))
     if jdk is None:
         click.echo("groovyscope: no suitable JDK found; run `groovyscope doctor`", err=True)
@@ -331,7 +333,12 @@ def discover_profiles(obj: dict[str, Any], effective: dict[str, Any]) -> profile
 
 def hand_over_config(obj: dict[str, Any], effective: dict[str, Any]) -> None:
     """The engine reads the validated, effective configuration from the environment (see EngineConfig)."""
-    runtime = profiles.engine_profiles(discover_profiles(obj, effective))
+    found = discover_profiles(obj, effective)
+    trusted = bool(effective["workspace"].get("trust"))
+    if not trusted:
+        for note in profiles.untrusted_jar_notes(found, obj["root"]):
+            click.echo(f"groovyscope: {note}", err=True)
+    runtime = profiles.engine_profiles(found, obj["root"], trusted=trusted)
     os.environ[CONFIG_ENV] = json.dumps(engine_view(obj, effective, runtime), sort_keys=True)
 
 
@@ -875,6 +882,23 @@ def profile_status(obj: dict[str, Any], path: Path, as_json: bool) -> None:
     for key, value in status.items():
         if key != "governed" and value not in ("", [], {}, None):
             click.echo(f"{key}: {value}")
+
+
+@main.command("trust")
+@click.option("--revoke", is_flag=True, help="Stop trusting the workspace.")
+@click.option("--list", "list_all", is_flag=True, help="List the trusted workspaces.")
+@click.pass_obj
+def trust_command(obj: dict[str, Any], revoke: bool, list_all: bool) -> None:
+    """Trust this workspace: its .groovyscope.yaml may then set workspace.trust (AST transformations from the
+    workspace classpath), jdk.home and CodeNarc rule sets, and its runtime profiles may load emulation jars."""
+    home = Path.home()
+    if list_all:
+        for root in trust.trusted_roots(home):
+            click.echo(root)
+        return
+    trust.set_trusted(obj["root"], home, trusted=not revoke)
+    state = "no longer trusted" if revoke else "trusted"
+    click.echo(f"{obj['root']} is {state}; run `groovyscope daemon restart` if a daemon is serving it")
 
 
 @main.group()

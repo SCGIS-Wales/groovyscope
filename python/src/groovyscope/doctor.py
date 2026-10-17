@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from groovyscope import __version__, daemon, kiro_agent, profiles
-from groovyscope.config import load_config
+from groovyscope.config import load_config_with_notes
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover, jdk_status
 from groovyscope.kiro import has_global_setup, kiro_home, present_files
@@ -30,11 +30,14 @@ def config_check(
     root: Path, config_path: Path | None, environ: Mapping[str, str]
 ) -> tuple[Check, dict[str, Any] | None]:
     try:
-        config = load_config(root, config_path, environ)
+        config, notes = load_config_with_notes(root, config_path, environ)
     except (ValueError, OSError) as exc:
         return (("fail", "config", str(exc).replace("\n", " ")), None)
     source = str(config_path) if config_path else "defaults + .groovyscope.yaml when present"
-    return (("ok", "config", source), config)
+    trusted = "trusted workspace" if config["workspace"].get("trust") else "untrusted workspace"
+    if notes:
+        return (("warn", "config", f"{source}; {trusted}; " + "; ".join(notes)), config)
+    return (("ok", "config", f"{source}; {trusted}"), config)
 
 
 def jdk_check(config: Mapping[str, Any] | None, environ: Mapping[str, str]) -> tuple[Check, JdkInfo | None]:
