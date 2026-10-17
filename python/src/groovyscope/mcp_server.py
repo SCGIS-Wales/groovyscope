@@ -16,7 +16,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import daemon, diagnostics, mcp_search, practices, rpc
+from groovyscope import changes, daemon, diagnostics, mcp_search, practices, rpc
 from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
@@ -533,13 +533,130 @@ def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHAR
     }
 
 
+def flat_outline(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every declaration of a document outline as ``{name, kind, lines, in}`` with 1-based inclusive lines."""
+    flat: list[dict[str, Any]] = []
+
+    def walk(item: Mapping[str, Any], container: str | None) -> None:
+        location = item.get("location") or {}
+        start = int((location.get("range") or {}).get("start", {}).get("line", 0)) + 1
+        end = int(item.get("endLine", start - 1)) + 1
+        kind = str(item.get("kind") or "").lower()
+        if kind.isdigit():
+            kind = LSP_SYMBOL_KINDS.get(int(kind), kind)
+        entry = {"name": item.get("name"), "kind": kind, "lines": [start, max(start, end)]}
+        if container:
+            entry["in"] = container
+        flat.append(entry)
+        for child in item.get("children") or []:
+            walk(child, str(item.get("name")))
+
+    for item in raw.get("symbols", []):
+        walk(item, None)
+    return flat
+
+
+def review_tools(
+    root: Path, call: Call, cap: int, clip_at: int, others: Mapping[str, Callable[..., Any]]
+) -> dict[str, Callable[..., Any]]:
+    """review_changes: the merge request review, composed from git and the other tools."""
+
+    def review_changes(base: str = "main", staged: bool = False, top: int = 8) -> dict[str, Any]:
+        """Review what this branch changed against BASE (or the index with STAGED) as a merge request reviewer:
+        the changed Groovy, Gradle and Jenkinsfile files, every finding on their changed lines grouped blocking,
+        shouldFix and nits, pre-existing findings elsewhere in those files as counts, the impact of changed
+        declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), and a
+        one-sentence verdict. Nothing is run but git."""
+        try:
+            change = changes.changed_files(root, base, staged=staged)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        existing = [f for f in change["files"] if f["status"] != "deleted"]
+        shown = [
+            {"path": f["path"], "status": f["status"], "changedLines": sum(e - s + 1 for s, e in f["ranges"])}
+            for f in change["files"]
+        ]
+        result: dict[str, Any] = {"base": base, "mode": change["mode"], "files": shown[:cap]}
+        if not existing:
+            result["verdict"] = f"nothing to review: no Groovy, Gradle or Jenkinsfile changes against {base}"
+            return result
+        ranges = changes.ranges_by_path(change)
+        paths = [f["path"] for f in existing]
+        raw = call("groovyscope/check", {"root": str(root), "uris": [to_uri(root, p) for p in paths], "include": []})
+        findings = [
+            compact_diagnostic(uri, item, root, clip_at)
+            for uri, items in raw.get("diagnostics", {}).items()
+            for item in items
+        ]
+        findings, extra = summarise(findings)
+        inside, elsewhere = changes.split_findings(findings, ranges)
+        buckets = changes.bucket(inside)
+        limit = max(1, min(top, cap))
+        impact: list[dict[str, Any]] = []
+        for file in existing[:cap]:
+            outline = flat_outline(
+                call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
+            )
+            for declaration in changes.touched_declarations(outline, file["ranges"], limit=limit):
+                if len(impact) >= limit:
+                    break
+                container, _, member = declaration["symbol"].rpartition(".")
+                target = (
+                    f"{container}#{member}"
+                    if container and declaration["kind"] not in {"class", "interface", "trait", "enum", "record"}
+                    else declaration["symbol"]
+                )
+                report = others["impact_of"](target, "signature")
+                if not report.get("found"):
+                    continue
+                first = report["reports"][0]
+                impact.append(
+                    {
+                        **declaration,
+                        "path": file["path"],
+                        "riskLevel": first.get("riskLevel"),
+                        "riskScore": first.get("riskScore"),
+                        "callers": first.get("counts", {}),
+                        "tests": len(first.get("tests", [])),
+                        "dynamicSites": len(first.get("dynamicUnknowns", [])),
+                    }
+                )
+        risky: list[dict[str, Any]] = []
+        for kind in changes.RISKY_KINDS:
+            matches = others["find_code"](kind, paths=paths).get("items", [])
+            risky += [{"kind": kind, **m} for m in changes.risky_in_change(matches, ranges)]
+        elsewhere_counts: dict[str, int] = {}
+        for finding in elsewhere:
+            elsewhere_counts[str(finding.get("code"))] = elsewhere_counts.get(str(finding.get("code")), 0) + 1
+        result.update(
+            {
+                "verdict": changes.verdict(buckets, risky, impact),
+                "blocking": buckets["blocking"][:limit],
+                "shouldFix": buckets["shouldFix"][:limit],
+                "nits": buckets["nits"][:limit],
+                "counts": {name: len(items) for name, items in buckets.items()},
+                "elsewhere": {
+                    "count": len(elsewhere),
+                    "byCode": dict(sorted(elsewhere_counts.items(), key=lambda kv: -kv[1])[:limit]),
+                },
+                "impact": impact,
+                "risky": risky[:limit],
+                "riskyCount": len(risky),
+                **extra,
+            }
+        )
+        return result
+
+    return {"review_changes": review_changes}
+
+
 def build_tools(
     root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]
 ) -> dict[str, Callable[..., Any]]:
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
     clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
-    return {
+    tools: dict[str, Callable[..., Any]] = {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, paged, cap),
         **mcp_search.search_tools(
@@ -548,6 +665,8 @@ def build_tools(
         **quality_tools(root, call, paged, cap, environ, clip_at=clip_at),
         **practice_tools(root, call, cap, clip_at),
     }
+    tools.update(review_tools(root, call, cap, clip_at, tools))
+    return tools
 
 
 # name: (title, read only). Every tool is closed-world (only this workspace) and idempotent.
@@ -573,6 +692,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "find_code": ("Structural code search", True),
     "find_duplicates": ("Find duplicated code", True),
     "workspace_overview": ("Workspace overview", True),
+    "review_changes": ("Review the branch as a merge request", True),
 }
 
 

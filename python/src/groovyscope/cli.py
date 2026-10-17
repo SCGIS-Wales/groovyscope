@@ -634,12 +634,17 @@ def uri_to_path(uri: str) -> Path:
 
 
 def engine_call(socket_file: Path, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    result = engine_result(socket_file, method, params)
+    return dict(result) if isinstance(result, dict) else {}
+
+
+def engine_result(socket_file: Path, method: str, params: dict[str, Any]) -> Any:
+    """One engine request, whatever shape it answers with (a list for impact reports); exits on failure."""
     try:
-        result = _RPC(socket_file, method, params, RPC_TIMEOUT_SECONDS)
+        return _RPC(socket_file, method, params, RPC_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"groovyscope: {method} failed: {exc}", err=True)
         sys.exit(1)
-    return dict(result) if isinstance(result, dict) else {}
 
 
 def finding_rows(diagnostics: dict[str, list[dict[str, Any]]], root: Path) -> list[dict[str, Any]]:
@@ -744,6 +749,81 @@ def check(
     fail_on = int(effective["lint"]["failOnPriority"])
     if any(row["level"] <= fail_on for row in rows):
         sys.exit(1)
+
+
+@main.command("review")
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--changed", is_flag=True, help="Review what this branch changed against --base, as a merge request.")
+@click.option("--base", default="main", show_default=True, help="Base branch for --changed.")
+@click.option("--staged", is_flag=True, help="With --changed: review the index instead of the branch.")
+@click.option("--top", default=8, show_default=True, help="Findings shown per group.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def review_command(
+    obj: dict[str, Any], *, paths: tuple[Path, ...], changed: bool, base: str, staged: bool, top: int, as_json: bool
+) -> None:
+    """Review PATHS (or the whole workspace) against the practices checklist, or with --changed review the
+    branch's changed Groovy files as a merge request reviewer: blocking, should fix, by design, impact, verdict."""
+    socket_file, effective = daemon_socket_for(obj)
+    settings = {**effective["output"], "duplicates": effective.get("duplicates", {})}
+    tools = mcp_server.build_tools(
+        obj["root"], lambda method, params: engine_result(socket_file, method, params), settings, dict(os.environ)
+    )
+    if changed:
+        result = tools["review_changes"](base, staged, top)
+    else:
+        relative = [shown_path(obj["root"] / p, obj["root"]) for p in paths]
+        result = tools["review"](relative or None, top)
+    if as_json:
+        click.echo(compact_json(result))
+    else:
+        for line in render_review(result):
+            click.echo(line)
+    if (
+        result.get("error")
+        or result.get("counts", {}).get("blocking")
+        or any(group.get("worst", 9) <= 1 for group in result.get("groups", []))
+    ):
+        sys.exit(1)
+
+
+def render_review(result: dict[str, Any]) -> list[str]:
+    """The review as text: verdict first, then the groups a reviewer reads in order."""
+    if result.get("error"):
+        return [f"groovyscope: {result['error']}"]
+    lines: list[str] = []
+    if "verdict" in result:
+        lines.append(f"verdict: {result['verdict']}")
+        shown = ", ".join(f"{f['path']} ({f['status']}, {f['changedLines']} lines)" for f in result.get("files", []))
+        lines.append(f"changed: {shown or 'nothing reviewable'}")
+        for name, title in (("blocking", "blocking"), ("shouldFix", "should fix"), ("nits", "nits")):
+            items = result.get(name, [])
+            if items:
+                lines.append(f"{title} ({result['counts'][name]}):")
+                lines += [f"  {f['path']}:{f['line']}: [{f.get('code')}] {f.get('message')}" for f in items]
+        for report in result.get("impact", []):
+            lines.append(
+                f"impact: {report['symbol']} ({report['kind']}, {report['path']}) risk {report['riskLevel']}, "
+                f"callers {report['callers']}, tests {report['tests']}"
+            )
+        for site in result.get("risky", []):
+            lines.append(f"added {site['kind']}: {site['path']}:{site['line']} {site.get('detail') or ''}".rstrip())
+        elsewhere = result.get("elsewhere", {})
+        if elsewhere.get("count"):
+            lines.append(f"pre-existing in these files: {elsewhere['count']} ({elsewhere.get('byCode')})")
+        missing = result.get("missingDependencies")
+        if missing:
+            lines.append(f"missing dependencies in {missing['files']} file(s): {missing['fix']}")
+        return lines
+    summary = result.get("summary", {})
+    lines.append(
+        f"{summary.get('errors', 0)} error(s), {summary.get('warnings', 0)} warning(s), "
+        f"{summary.get('information', 0)} info in {summary.get('files', 0)} file(s)"
+    )
+    for group in result.get("groups", []):
+        lines.append(f"{group['title']} ({group['total']}): {group['check']}")
+        lines += [f"  {f['path']}:{f['line']}: [{f.get('code')}] {f.get('message')}" for f in group.get("findings", [])]
+    return lines
 
 
 @main.command("format")

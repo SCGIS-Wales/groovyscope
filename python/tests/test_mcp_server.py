@@ -211,6 +211,7 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "workspace_status",
         "explain",
         "review",
+        "review_changes",
         "fix",
         "profile_status",
         "hover",
@@ -603,3 +604,108 @@ def test_check_filters_counts_and_missing_dependencies(tools: dict[str, Any], en
     assert [f["code"] for f in tools["check"](codes=["LineLength"])["items"]] == ["LineLength", "LineLength"]
     reviewed = tools["review"](paths=["src/A.groovy"], max_priority=1)
     assert reviewed["byCode"] == {"GS006": 1} and reviewed["missingDependencies"]["files"] == 1
+
+
+def test_review_changes_composes_findings_impact_and_risky_sites(
+    tools: dict[str, Any], engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = "file:///ws/src/A.groovy"
+    engine["responses"]["groovyscope/check"] = {
+        "diagnostics": {
+            uri: [
+                {
+                    "range": {"start": {"line": 3, "character": 0}},
+                    "severity": 2,
+                    "source": "codenarc",
+                    "code": "NoDef",
+                    "message": "m",
+                },
+                {
+                    "range": {"start": {"line": 20, "character": 0}},
+                    "severity": 2,
+                    "source": "codenarc",
+                    "code": "NoDef",
+                    "message": "m",
+                },
+                {
+                    "range": {"start": {"line": 0, "character": 0}},
+                    "severity": 2,
+                    "source": "groovyscope",
+                    "code": "GS100",
+                    "message": "deps",
+                },
+            ]
+        },
+        "summary": {"errors": 0, "warnings": 2, "information": 0, "files": 1},
+    }
+    engine["responses"]["groovyscope/documentSymbols"] = {
+        "symbols": [
+            {
+                "name": "A",
+                "kind": "class",
+                "location": loc("src/A.groovy", 0),
+                "endLine": 30,
+                "children": [{"name": "run", "kind": "method", "location": loc("src/A.groovy", 2), "endLine": 6}],
+            }
+        ],
+        "lines": 31,
+    }
+    engine["responses"]["groovyscope/impact"] = [
+        {
+            "symbol": symbol("run"),
+            "riskLevel": "medium",
+            "riskScore": 30,
+            "counts": {"direct": 2},
+            "tests": [
+                {"caller": symbol("t"), "callee": symbol("run"), "site": loc("src/T.groovy"), "confidence": "STATIC"}
+            ],
+            "dynamicUnknowns": [],
+            "directCallers": [],
+            "transitiveCallers": [],
+            "overrides": [],
+            "suggestedChecks": [],
+        }
+    ]
+    engine["responses"]["groovyscope/findCode"] = {
+        "matches": [
+            {
+                "uri": uri,
+                "line": 3,
+                "endLine": 4,
+                "detail": "return null",
+                "snippet": "return null",
+                "enclosing": "A.run",
+            }
+        ],
+        "count": 1,
+    }
+    change = {
+        "base": "main",
+        "mode": "branch",
+        "files": [{"path": "src/A.groovy", "status": "modified", "ranges": [[3, 5]]}],
+    }
+    monkeypatch.setattr(mcp_server.changes, "changed_files", lambda *_a, **_k: change)
+    result = tools["review_changes"]()
+    assert result["verdict"] == "approve with comments: 1 warning(s) to fix, 3 risky construct(s) added"
+    assert result["counts"] == {"blocking": 0, "shouldFix": 1, "nits": 0}
+    assert result["shouldFix"][0]["line"] == 4
+    assert result["elsewhere"] == {"count": 1, "byCode": {"NoDef": 1}}
+    assert result["missingDependencies"]["files"] == 1
+    assert [i["symbol"] for i in result["impact"]] == ["A", "A.run"]
+    assert result["impact"][1]["tests"] == 1 and result["impact"][1]["callers"] == {"direct": 2}
+    assert result["riskyCount"] == 3 and {r["kind"] for r in result["risky"]} == {"catch", "def", "return-null"}
+    impact_calls = [p for m, p in engine["calls"] if m == "groovyscope/impact"]
+    assert [c["symbol"] for c in impact_calls] == ["A", "A#run"]
+    monkeypatch.setattr(
+        mcp_server.changes, "changed_files", lambda *_a, **_k: {"base": "main", "mode": "branch", "files": []}
+    )
+    assert tools["review_changes"]()["verdict"].startswith("nothing to review")
+
+    def refuse(*_a: object, **_k: object) -> object:
+        msg = "git is not installed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(mcp_server.changes, "changed_files", refuse)
+    assert tools["review_changes"]() == {"error": "git is not installed"}
+    assert mcp_server.TOOL_INFO["review_changes"][1] is True
+    assert len(mcp_server.TOOL_INFO) == 22
