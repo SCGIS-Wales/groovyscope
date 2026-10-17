@@ -70,7 +70,7 @@ import org.groovyscope.engine.model.Range;
  * that can resolve does; only the genuinely broken files are partial. Diagnostics then come from the first
  * attempt only, since later attempts mostly report the classes that the drops removed.
  */
-public final class GroovyCompiler {
+public class GroovyCompiler {
 
     /** Reported as the diagnostic source. */
     public static final String SOURCE = "groovyc";
@@ -224,12 +224,15 @@ public final class GroovyCompiler {
             units.put(source.getKey(), unit.addSource(source.getKey(), source.getValue()));
         }
         boolean failed = false;
+        CompilationFailedException failure = null;
         try {
             unit.compile(throughPhase);
         } catch (CompilationFailedException e) {
             failed = true;
-        } catch (RuntimeException e) {
-            // A compiler bug on exotic input must not take the server down.
+            failure = e;
+        } catch (RuntimeException | LinkageError | StackOverflowError e) {
+            // A compiler bug on exotic input, a class that fails to link, or a stack overflow on deeply nested code
+            // must not take the server down. OutOfMemoryError is left to propagate.
             Map<String, List<Diagnostic>> crash = new HashMap<>();
             String firstUri = sources.keySet().iterator().next();
             crash.put(firstUri, List.of(new Diagnostic(firstUri, Range.of(0, 0, 0, 1), Severity.ERROR, SOURCE,
@@ -261,7 +264,28 @@ public final class GroovyCompiler {
         for (SourceUnit source : units.values()) {
             collect(source.getErrorCollector(), sources.keySet(), diagnostics, broken);
         }
+        if (failure != null && diagnostics.values().stream().flatMap(List::stream)
+                .noneMatch(d -> d.severity() == Severity.ERROR)) {
+            // Groovy wraps some failures (a parser stack overflow on deeply nested code) without recording an
+            // error; report it rather than leaving the file silently unresolved.
+            unreported(failure, sources.keySet(), diagnostics, broken);
+        }
         return new Attempt(modules, units, diagnostics, broken, unit.getPhase(), failed, false, resolutionLoader, unit);
+    }
+
+    /** Records a compile failure that came without any error message, on the file it names when it names one. */
+    static void unreported(CompilationFailedException failure, Set<String> uris, Map<String, List<Diagnostic>> out,
+            Set<String> broken) {
+        String uri = failure.getUnit() instanceof SourceUnit source && uris.contains(source.getName())
+                ? source.getName()
+                : uris.iterator().next();
+        Throwable cause = failure.getCause();
+        String detail = cause == null ? String.valueOf(failure.getMessage())
+                : failure.getMessage() + " (" + cause.getClass().getSimpleName() + ")";
+        if (add(out, new Diagnostic(uri, Range.of(0, 0, 0, 1), Severity.ERROR, SOURCE, "compiler-crash",
+                "the Groovy compiler failed: " + detail))) {
+            broken.add(uri);
+        }
     }
 
     /** Closes the class loader of an attempt whose trees are discarded. */

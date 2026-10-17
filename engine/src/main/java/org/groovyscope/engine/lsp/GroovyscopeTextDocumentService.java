@@ -88,10 +88,34 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     private final Supplier<LanguageServices> services;
     private final DiagnosticsPublisher diagnostics;
+    /** The documents this connection has open, so they can be released when it ends. */
+    private final java.util.Set<String> opened = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     GroovyscopeTextDocumentService(Supplier<LanguageServices> services, DiagnosticsPublisher diagnostics) {
         this.services = services;
         this.diagnostics = diagnostics;
+    }
+
+    /** The documents this connection currently has open. */
+    java.util.Set<String> openedDocuments() {
+        return java.util.Set.copyOf(opened);
+    }
+
+    /**
+     * Closes every document this connection opened: an editor that crashed or disconnected without
+     * {@code didClose} must not leave its unsaved text overriding the disk for other clients.
+     */
+    void closeAll() {
+        LanguageServices current = services.get();
+        java.util.List<String> uris = new java.util.ArrayList<>(opened);
+        opened.clear();
+        if (current == null || uris.isEmpty()) {
+            return;
+        }
+        for (String uri : uris) {
+            current.workspace().close(uri);
+        }
+        current.markDirty();
     }
 
     private LanguageServices ready() {
@@ -107,7 +131,13 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public void didOpen(DidOpenTextDocumentParams params) {
         LanguageServices current = services.get();
         if (current != null) {
-            current.workspace().open(params.getTextDocument().getUri(), params.getTextDocument().getText());
+            String uri = params.getTextDocument().getUri();
+            if (opened.add(uri)) {
+                current.workspace().open(uri, params.getTextDocument().getText());
+            } else {
+                // Opened again by the same connection: one reference, new text.
+                current.workspace().change(uri, params.getTextDocument().getText());
+            }
             current.markDirty();
             diagnostics.schedule();
         }
@@ -129,7 +159,12 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
             }
         }
         if (text != null) {
-            current.workspace().change(uri, text);
+            if (opened.add(uri)) {
+                // A change without didOpen from this connection still makes the overlay this connection's to release.
+                current.workspace().open(uri, text);
+            } else {
+                current.workspace().change(uri, text);
+            }
             current.markDirty();
             diagnostics.schedule();
         }
@@ -146,7 +181,10 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     public void didClose(DidCloseTextDocumentParams params) {
         LanguageServices current = services.get();
         if (current != null) {
-            current.workspace().close(params.getTextDocument().getUri());
+            String uri = params.getTextDocument().getUri();
+            if (opened.remove(uri)) {
+                current.workspace().close(uri);
+            }
             current.markDirty();
             diagnostics.schedule();
         }
@@ -227,23 +265,27 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     @Override
     public CompletableFuture<Hover> hover(HoverParams params) {
         return CompletableFutures.computeAsync(cancel -> {
-            LanguageServices current = ready();
-            String uri = params.getTextDocument().getUri();
-            org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
-            java.util.Optional<org.groovyscope.engine.model.Hover> hover = current.hover(uri, position);
-            java.util.Optional<String> parameter = current.quality().parameterHover(uri, position);
-            if (parameter.isPresent()) {
-                hover = java.util.Optional.of(new org.groovyscope.engine.model.Hover(parameter.get(),
-                        hover.map(org.groovyscope.engine.model.Hover::range).orElse(null)));
-            }
-            String notes = findingNotes(current, uri, position.line());
-            if (notes.isEmpty()) {
-                return hover.map(Converters::hover).orElse(null);
-            }
-            String markdown = hover.map(h -> h.markdown() + "\n\n---\n\n").orElse("") + notes;
-            org.groovyscope.engine.model.Range range = hover.map(org.groovyscope.engine.model.Hover::range).orElse(null);
-            return Converters.hover(new org.groovyscope.engine.model.Hover(markdown, range));
+            return fullHover(ready(), params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))
+                    .map(Converters::hover).orElse(null);
         });
+    }
+
+    /** Hover text plus runtime-profile parameter details and the notes for findings on the line. */
+    static java.util.Optional<org.groovyscope.engine.model.Hover> fullHover(LanguageServices current, String uri,
+            org.groovyscope.engine.model.Position position) {
+        java.util.Optional<org.groovyscope.engine.model.Hover> hover = current.hover(uri, position);
+        java.util.Optional<String> parameter = current.quality().parameterHover(uri, position);
+        if (parameter.isPresent()) {
+            hover = java.util.Optional.of(new org.groovyscope.engine.model.Hover(parameter.get(),
+                    hover.map(org.groovyscope.engine.model.Hover::range).orElse(null)));
+        }
+        String notes = findingNotes(current, uri, position.line());
+        if (notes.isEmpty()) {
+            return hover;
+        }
+        String markdown = hover.map(h -> h.markdown() + "\n\n---\n\n").orElse("") + notes;
+        org.groovyscope.engine.model.Range range = hover.map(org.groovyscope.engine.model.Hover::range).orElse(null);
+        return java.util.Optional.of(new org.groovyscope.engine.model.Hover(markdown, range));
     }
 
     /** Why and how to fix, for each practice or lint finding on a line (deduplicated by code). */

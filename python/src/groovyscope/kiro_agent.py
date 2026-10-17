@@ -1,0 +1,255 @@
+"""Kiro agent file formats: detect what a ``groovy.json`` agent is, and merge groovyscope's entries into it
+without changing which Kiro engines can load it.
+
+Kiro CLI 2.x knows these agent formats (``kiro-cli agent upgrade`` names them):
+
+- ``v2``: ``tools`` / ``allowedTools`` / ``toolsSettings``; loaded by the V2 engine (the 2.x default).
+- ``universal``: the V2 fields plus a V3 ``permissions`` block and a ``kiroUpgrade`` stamp; loaded by both.
+- ``universal-out-of-sync``: a universal file whose V2 fields changed after the stamp.
+- ``v3``: a ``permissions`` block without the stamp; loaded only by the V3 engine.
+
+A ``kiroUpgrade`` revision newer than :data:`KNOWN_UPGRADE_REVISION` is a format groovyscope does not know; such a
+file, and one Kiro reports as managed externally, is left untouched.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, TypedDict
+
+from groovyscope.config import deep_merge
+
+KNOWN_UPGRADE_REVISION = 2
+FORMATS = ("v2", "universal", "universal-out-of-sync", "v3", "unknown", "external")
+REQUESTABLE = ("auto", "v2", "universal", "v3")
+V2_KEYS = ("tools", "allowedTools", "toolsSettings")
+V3_KEYS = ("permissions", "kiroUpgrade")
+# List-valued agent keys where a user's own entries are kept next to groovyscope's.
+UNION_PATHS: tuple[tuple[str, ...], ...] = (
+    ("tools",),
+    ("allowedTools",),
+    ("resources",),
+    ("toolsSettings", "shell", "allowedCommands"),
+)
+# The V3 rules groovyscope needs, as `kiro-cli agent upgrade` derives them from the V2 template.
+V3_RULES: tuple[dict[str, Any], ...] = (
+    {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},
+    {"capability": "fs_read", "effect": "allow"},
+    {"capability": "shell", "match": ["./gradlew *", "groovyscope *", "git status", "git diff*"], "effect": "allow"},
+)
+KIRO_TIMEOUT_SECONDS = 60
+
+KiroRunner = Callable[[Sequence[str]], tuple[int, str]]
+
+
+class AgentMerge(TypedDict):
+    """The merged agent text, the format it ends up in, and anything the user should know."""
+
+    text: str
+    format: str
+    note: str
+
+
+def kiro_runner(which: Callable[[str], str | None] = shutil.which) -> KiroRunner | None:
+    """A runner for the installed ``kiro-cli``, or None when it is not on PATH."""
+    executable = which("kiro-cli")
+    if executable is None:
+        return None
+    found: str = executable
+
+    def run(arguments: Sequence[str]) -> tuple[int, str]:
+        try:
+            done = subprocess.run(
+                [found, *arguments], capture_output=True, text=True, timeout=KIRO_TIMEOUT_SECONDS, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return (-1, str(exc))
+        return (done.returncode, done.stdout + done.stderr)
+
+    return run
+
+
+def kiro_version(run: KiroRunner | None) -> str | None:
+    """``2.32.0`` from ``kiro-cli --version``."""
+    if run is None:
+        return None
+    code, output = run(["--version"])
+    words = output.split()
+    return words[-1] if code == 0 and words else None
+
+
+def supports_upgrade(run: KiroRunner | None) -> bool:
+    """Whether this kiro-cli can write the universal format (``kiro-cli agent upgrade``)."""
+    if run is None:
+        return False
+    code, output = run(["agent", "upgrade", "--help"])
+    return code == 0 and "universal" in output
+
+
+def detect_format(agent: Mapping[str, Any]) -> str:
+    """The format of an agent document, from its keys alone."""
+    stamp = agent.get("kiroUpgrade")
+    if stamp is not None:
+        revision = stamp.get("revision") if isinstance(stamp, Mapping) else None
+        if not isinstance(revision, int) or revision > KNOWN_UPGRADE_REVISION:
+            return "unknown"
+        return "universal"
+    if "permissions" in agent:
+        return "v3"
+    return "v2"
+
+
+DRY_RUN_VERDICTS: tuple[tuple[str, str], ...] = (
+    ("already universal", "universal"),
+    ("v3-only", "v3"),
+    ("managed externally", "external"),
+)
+
+
+def classify(text: str, run: KiroRunner | None) -> str:
+    """The format of an agent file, asking ``kiro-cli agent upgrade --dry-run`` when available (it alone can tell
+    an in-sync universal file from an out-of-sync one); otherwise from the keys."""
+    try:
+        agent = json.loads(text)
+    except json.JSONDecodeError:
+        return "unknown"
+    by_keys = detect_format(agent) if isinstance(agent, dict) else "unknown"
+    if run is None or by_keys == "unknown":
+        return by_keys
+    with tempfile.TemporaryDirectory(prefix="groovyscope-agent-") as folder:
+        Path(folder, "groovy.json").write_text(text, encoding="utf-8")
+        code, output = run(["agent", "upgrade", "--dry-run", folder])
+    verdict = next((name for marker, name in DRY_RUN_VERDICTS if marker in output), None)
+    if code != 0 or verdict is not None:
+        return verdict or by_keys
+    if "would upgrade" in output and by_keys == "universal":
+        return "universal-out-of-sync"
+    return by_keys
+
+
+def upgrade(text: str, run: KiroRunner | None) -> str | None:
+    """The universal form of a V2 agent, written by ``kiro-cli agent upgrade`` in a scratch folder; None when
+    kiro-cli cannot do it."""
+    if run is None:
+        return None
+    with tempfile.TemporaryDirectory(prefix="groovyscope-agent-") as folder:
+        target = Path(folder, "groovy.json")
+        target.write_text(text, encoding="utf-8")
+        code, _ = run(["agent", "upgrade", "--no-backup", folder])
+        result = target.read_text(encoding="utf-8")
+    if code != 0:
+        return None
+    try:
+        upgraded = json.loads(result)
+    except json.JSONDecodeError:
+        return None
+    return result if isinstance(upgraded, dict) and detect_format(upgraded) == "universal" else None
+
+
+def union(existing: Any, ours: Any) -> Any:
+    """Existing entries first, then ours that are missing."""
+    if not isinstance(existing, list) or not isinstance(ours, list):
+        return ours
+    return [*existing, *(item for item in ours if item not in existing)]
+
+
+def get_path(document: Mapping[str, Any], path: Sequence[str]) -> Any:
+    node: Any = document
+    for key in path:
+        if not isinstance(node, Mapping) or key not in node:
+            return None
+        node = node[key]
+    return node
+
+
+def set_path(document: dict[str, Any], path: Sequence[str], value: Any) -> None:
+    node = document
+    for key in path[:-1]:
+        child = node.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            node[key] = child
+        node = child
+    node[path[-1]] = value
+
+
+def merge_v2(current: Mapping[str, Any], template: Mapping[str, Any]) -> dict[str, Any]:
+    """groovyscope's V2 entries win for scalars; for the list keys the user's own entries are kept."""
+    merged = deep_merge(current, template)
+    for path in UNION_PATHS:
+        existing = get_path(current, path)
+        if existing is not None:
+            set_path(merged, path, union(existing, get_path(template, path)))
+    return merged
+
+
+def merge_v3(current: Mapping[str, Any]) -> dict[str, Any]:
+    """A V3-only agent keeps its format; groovyscope's permission rules are added when missing."""
+    merged: dict[str, Any] = json.loads(json.dumps(current))
+    permissions = merged.get("permissions")
+    if not isinstance(permissions, dict):
+        permissions = {}
+        merged["permissions"] = permissions
+    rules = permissions.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        permissions["rules"] = rules
+    for rule in V3_RULES:
+        if rule not in rules:
+            rules.append(dict(rule))
+    return merged
+
+
+def v2_view(agent: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in agent.items() if key not in V3_KEYS}
+
+
+def dump(agent: Mapping[str, Any]) -> str:
+    return json.dumps(agent, indent=2, ensure_ascii=False) + "\n"
+
+
+def target_format(requested: str, existing: str | None, can_upgrade: bool) -> str:
+    """What to write: the requested format, or with ``auto`` the existing file's format (a new file is universal
+    when kiro-cli can produce it, else V2)."""
+    if requested != "auto":
+        return requested
+    if existing is None:
+        return "universal" if can_upgrade else "v2"
+    return {"universal-out-of-sync": "universal"}.get(existing, existing)
+
+
+def merge_agent(existing: str | None, template: str, *, requested: str, run: KiroRunner | None) -> AgentMerge:
+    """Merge groovyscope's agent template into an existing agent file, keeping (or converting to) a format."""
+    ours = json.loads(template)
+    current_format = classify(existing, run) if existing is not None else None
+    if current_format in {"unknown", "external"} and requested == "auto":
+        reason = "managed outside Kiro's project files" if current_format == "external" else "a newer, unknown format"
+        return {"text": existing or "", "format": current_format, "note": f"agent is {reason}; left unchanged"}
+    current: dict[str, Any] = json.loads(existing) if existing is not None else {}
+    can_upgrade = supports_upgrade(run)
+    goal = target_format(requested, current_format, can_upgrade)
+    if goal == "v3":
+        if current_format is None:
+            merged = merge_v3({key: value for key, value in ours.items() if key not in V2_KEYS})
+        else:
+            merged = merge_v3({key: value for key, value in current.items() if key not in ("kiroUpgrade",)})
+        return {"text": dump(merged), "format": "v3", "note": ""}
+    v2 = merge_v2(v2_view(current), ours)
+    if goal == "v2":
+        note = "" if current_format in {None, "v2"} else f"converted from {current_format} to v2"
+        return {"text": dump(v2), "format": "v2", "note": note}
+    if current_format == "universal" and v2_view(current) == v2 and existing is not None:
+        return {"text": existing, "format": "universal", "note": ""}
+    upgraded = upgrade(dump(v2), run)
+    if upgraded is None:
+        return {
+            "text": dump(v2),
+            "format": "v2",
+            "note": "kiro-cli cannot write the universal format here; wrote v2 (loaded by the default V2 engine)",
+        }
+    return {"text": upgraded, "format": "universal", "note": ""}

@@ -33,6 +33,26 @@ printed first. `--dry-run` shows the diff and writes nothing; `--force` replaces
 backups unless `--no-backup`). `groovyscope kiro repair [--global]` re-merges after a manual edit or
 `/code init` removed an entry. The global agent also reads `~/.kiro/steering/**/*.md` by absolute path.
 
+## Agent file formats (V2, universal, V3)
+
+Kiro CLI 2.x has two agent engines and four agent file states, as `kiro-cli agent upgrade --dry-run` reports
+them:
+
+| Format | Keys | Loaded by |
+|---|---|---|
+| V2 | `tools`, `allowedTools`, `toolsSettings` | the V2 engine (the 2.x default) |
+| universal | the V2 keys plus a V3 `permissions` block and a `kiroUpgrade` stamp | both engines |
+| universal, out of sync | a universal file whose V2 keys changed after the stamp | both, with stale V3 rules |
+| V3 | a `permissions` block without the stamp | the V3 engine only (`kiro-cli --v3`) |
+
+groovyscope detects the format of an existing `groovy.json` (asking `kiro-cli agent upgrade --dry-run` when Kiro
+CLI is installed) and keeps it: V2 and universal files get groovyscope's V2 entries, and an out-of-sync universal
+file is re-stamped by Kiro CLI itself; a V3 file gets groovyscope's permission rules (MCP tools, file reads, the
+allowed shell commands) next to yours. A new agent is written universal when the installed Kiro CLI can produce
+it, so it works in both engines; otherwise V2. `--agent-format v2|universal|v3` converts explicitly. A file
+stamped by a newer Kiro (an unknown `kiroUpgrade` revision) or managed outside the project is left untouched
+and reported. `groovyscope doctor` shows the Kiro CLI version and the agent's format.
+
 ## Verify
 
 ```text

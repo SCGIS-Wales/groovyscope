@@ -53,7 +53,7 @@ def test_jdk_install(runner: CliRunner, clean_env: dict[str, str], monkeypatch: 
     monkeypatch.setattr(cli.provision, "provision_jdk", fake_provision)
     result = runner.invoke(cli.main, ["jdk", "install", "--feature", "25"])
     assert result.exit_code == 0, result.output
-    assert "installed Temurin jdk-25 at /cache/jdk/jdk-25" in result.output
+    assert "installed jdk-25 at /cache/jdk/jdk-25" in result.output
 
     def failing(install_dir: Path, **_kwargs: Any) -> provision.ProvisionedJdk:
         raise OSError("network down")
@@ -70,9 +70,10 @@ def test_resolve_jdk_provisions_only_when_asked(
 
     def discover(_configured: str | None, _environ: Any, *, minimum: int, provisioned: list[Path]) -> Any:
         assert minimum == 17
-        return {"home": str(provisioned[0]), "version": 21, "source": "provisioned"} if provisioned else None
+        jdk = {"home": str(provisioned[0]), "version": 21, "source": "provisioned"} if provisioned else None
+        return {"jdk": jdk, "notes": []}
 
-    monkeypatch.setattr(cli, "discover_jdk", discover)
+    monkeypatch.setattr(cli, "discover", discover)
     effective: dict[str, Any] = {"jdk": {"home": None, "minimum": 17, "autoProvision": False}}
     assert cli.resolve_jdk(effective, dict(clean_env)) is None
 

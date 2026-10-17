@@ -152,9 +152,10 @@ def test_lsp_fails_cleanly_without_jdk_or_jar(
 ) -> None:
     monkeypatch.setattr(cli, "_EXEC", lambda _path, _argv: pytest.fail("must not exec"))
     with pytest.MonkeyPatch.context() as inner:
-        inner.setattr(cli, "discover_jdk", lambda *_a, **_k: None)
+        inner.setattr(cli, "discover", lambda *_a, **_k: {"jdk": None, "notes": ["JAVA_HOME (/x) is not a JDK home"]})
         no_jdk = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert no_jdk.exit_code == 1 and "no suitable JDK" in no_jdk.output
+    assert "JAVA_HOME (/x) is not a JDK home" in no_jdk.output
     monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
     monkeypatch.setattr(cli, "locate_jar", lambda env: locate_jar(env, tmp_path / "no-bundle"))
     no_jar = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
@@ -175,17 +176,28 @@ def test_mcp_command_serves_over_the_daemon(
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
     monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
-    served: list[tuple[Path, Path, dict[str, Any], dict[str, str]]] = []
+    served: list[tuple[Path, Path, dict[str, Any], dict[str, str], Any]] = []
     monkeypatch.setattr(
         cli,
         "_MCP_SERVE",
-        lambda root, socket_file, output, environ: served.append((root, socket_file, output, environ)) or 0,
+        lambda root, socket_file, output, environ, reconnect: (
+            served.append((root, socket_file, output, environ, reconnect)) or 0
+        ),
     )
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "mcp"])
     assert result.exit_code == 0, result.output
     assert served[0][0] == tmp_path.resolve()
     assert served[0][1].suffix == ".sock"
     assert served[0][2]["maxResults"] == 50
+    assert served[0][4]().suffix == ".sock"
+
+    def failing(*_a: object, **_k: object) -> dict[str, object]:
+        msg = "no JVM"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", failing)
+    with pytest.raises(ConnectionError, match="could not be restarted"):
+        served[0][4]()
 
 
 def test_configure_logging_levels() -> None:
@@ -213,7 +225,7 @@ def test_lsp_relays_through_the_daemon(
     ensured: list[list[str]] = []
     relayed: list[Path] = []
     monkeypatch.setattr(
-        cli.daemon_lifecycle, "ensure_running", lambda cmd, _s, _l, _e: ensured.append(cmd) or {"engine": "x"}
+        cli.daemon_lifecycle, "ensure_running", lambda cmd, _s, _l, _e, **_k: ensured.append(cmd) or {"engine": "x"}
     )
     monkeypatch.setattr(cli, "_RELAY", lambda socket_file: relayed.append(socket_file) or 0)
     monkeypatch.setattr(cli, "_EXEC", lambda _p, _a: pytest.fail("must not exec when the daemon works"))
@@ -271,6 +283,22 @@ def test_daemon_commands(
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"]).exit_code == 3
     monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: False)
     assert "was not running" in runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "stop"]).output
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: True)
+    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9"})
+    monkeypatch.setattr(
+        cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9", "configHash": "older"}
+    )
+    restarted = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"])
+    assert restarted.exit_code == 0 and "daemon restarted" in restarted.output
+    assert "started with a different configuration" in restarted.output
+
+    def stop_fails(_s: object) -> bool:
+        msg = "did not stop"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "stop", stop_fails)
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"]).exit_code == 1
 
     def failing(*_a: object, **_k: object) -> dict[str, object]:
         msg = "cannot spawn"

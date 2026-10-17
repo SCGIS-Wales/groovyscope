@@ -42,9 +42,17 @@ def test_jdk_check_uses_config_home(fake_jdk: Path, clean_env: dict[str, str]) -
 
 
 def test_jdk_check_without_config_or_jdk(clean_env: dict[str, str], monkeypatch) -> None:
-    monkeypatch.setattr("groovyscope.doctor.discover_jdk", lambda *_a, **_k: None)
+    monkeypatch.setattr("groovyscope.doctor.discover", lambda *_a, **_k: {"jdk": None, "notes": []})
     check, info = jdk_check(None, clean_env)
     assert check[0] == "fail" and info is None
+
+
+def test_jdk_check_reports_an_ignored_java_home(clean_env: dict[str, str], monkeypatch) -> None:
+    chosen = {"home": "/jdk25", "version": 25, "source": "PATH"}
+    note = "JAVA_HOME (/old) is JDK 11, below the minimum 17; ignored"
+    monkeypatch.setattr("groovyscope.doctor.discover", lambda *_a, **_k: {"jdk": chosen, "notes": [note]})
+    check, info = jdk_check(None, clean_env)
+    assert check[0] == "warn" and note in check[2] and info == chosen
 
 
 def test_jar_check_variants(fake_jar_dir: Path, tmp_path: Path, monkeypatch) -> None:
@@ -87,6 +95,7 @@ def test_build_report_and_failures(
         "jdk",
         "engine jar",
         "kiro files",
+        "kiro agent",
         "profiles",
         "daemon",
     ]
@@ -101,3 +110,23 @@ def test_daemon_check(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("groovyscope.daemon.probe", lambda _s, _timeout=5.0: {"engine": "1.2.3"})
     level, _, message = daemon_check(tmp_path, environ)
     assert level == "ok" and "engine 1.2.3" in message
+
+
+def test_kiro_agent_check_names_version_and_format(tmp_path: Path) -> None:
+    from groovyscope.doctor import kiro_agent_check  # noqa: PLC0415
+
+    def run(arguments: list[str]) -> tuple[int, str]:
+        if arguments == ["--version"]:
+            return (0, "kiro-cli 2.32.0")
+        return (0, "  = unchanged  groovy.json  already universal")
+
+    home = tmp_path / "kh"
+    level, _, message = kiro_agent_check(tmp_path, home, None)
+    assert level == "info" and "kiro-cli not found" in message
+    agent = home / "agents" / "groovy.json"
+    agent.parent.mkdir(parents=True)
+    agent.write_text('{"tools": [], "permissions": {}, "kiroUpgrade": {"revision": 2}}')
+    level, _, message = kiro_agent_check(tmp_path, home, run)
+    assert level == "ok" and "kiro-cli 2.32.0" in message and "universal (loaded by the V2 and V3 engines)" in message
+    agent.write_text('{"kiroUpgrade": {"revision": 7}}')
+    assert kiro_agent_check(tmp_path, home, None)[0] == "warn"

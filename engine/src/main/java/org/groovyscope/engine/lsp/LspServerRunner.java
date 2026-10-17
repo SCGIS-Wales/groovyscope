@@ -50,13 +50,17 @@ public final class LspServerRunner {
         GroovyscopeLanguageServer server = provider == null
                 ? new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config)
                 : new GroovyscopeLanguageServer(exitHandler, fallbackRoot, config, provider, null);
-        Launcher<LanguageClient> launcher = LSPLauncher.createServerLauncher(server, in, out);
+        Launcher<LanguageClient> launcher = new LSPLauncher.Builder<LanguageClient>().setLocalService(server)
+                .setRemoteInterface(LanguageClient.class).setInput(in).setOutput(out)
+                .wrapMessages(MessageLogging.wrapper()).create();
         server.connect(launcher.getRemoteProxy());
         try {
             launcher.startListening().get();
         } catch (ExecutionException e) {
             // The stream closed or the client misbehaved; the server state tells the caller what happened.
-            System.err.println("groovyscope-engine: LSP session ended: " + e.getCause());
+            org.groovyscope.engine.log.EngineLog.warn("%s", "LSP session ended: " + e.getCause());
+        } finally {
+            server.connectionClosed();
         }
         return server;
     }

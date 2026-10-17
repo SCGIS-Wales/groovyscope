@@ -5,21 +5,29 @@ Every tool returns compact JSON (relative paths, line:col, kinds, pagination) an
 
 from __future__ import annotations
 
+import functools
+import json
+import logging
+import threading
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import daemon, practices, rpc
-from groovyscope.edits import apply_edits, changed_line_count
+from groovyscope import daemon, diagnostics, practices, rpc
+from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
 from groovyscope.render import page
 
 SERVER_NAME = "groovyscope"
+LOG = logging.getLogger("groovyscope.mcp")
 INSTRUCTIONS = (
     "Groovy code intelligence for this workspace. Use these tools instead of grep, sed, head or tail to "
-    "locate Groovy symbols. Every answer carries a confidence; DYNAMIC_UNKNOWN means matched by name only. "
+    "locate Groovy symbols, and document_symbols or hover instead of reading whole files. Every answer carries a "
+    "confidence; DYNAMIC_UNKNOWN means matched by name only. Lists are paged: pass limit and the next_cursor you "
+    "were given rather than asking for everything. Rename through rename (a dry run first), never by text replace. "
     "Paths are workspace-relative; lines and columns are 1-based. Before finishing a change, call review on the "
     "changed files and fix what it reports (fix applies the safe mechanical fixes); explain says why a code matters. "
     "When impact_of is asked about a change, report its transitive callers and tests too, not only direct callers. "
@@ -75,7 +83,12 @@ def relative_path(uri: str, root: Path) -> str:
 
 
 def to_uri(root: Path, path: str) -> str:
-    return (root / path).resolve().as_uri()
+    """The file URI of a workspace-relative path. Paths that leave the workspace are refused."""
+    target = (root / path).resolve()
+    if not target.is_relative_to(root.resolve()):
+        msg = f"{path} is outside the workspace"
+        raise ValueError(msg)
+    return target.as_uri()
 
 
 def compact_location(location: Mapping[str, Any] | None, root: Path) -> dict[str, Any] | None:
@@ -118,7 +131,17 @@ def compact_site(site: Mapping[str, Any], root: Path) -> dict[str, Any]:
     }
 
 
-def compact_diagnostic(uri: str, item: Mapping[str, Any], root: Path) -> dict[str, Any]:
+MESSAGE_CHARS = 400  # default for output.maxMessageChars
+
+
+def clip(text: Any, limit: int) -> Any:
+    """Long text cut to ``limit`` characters with an ellipsis; anything else unchanged."""
+    if not isinstance(text, str) or limit <= 0 or len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)] + "…"
+
+
+def compact_diagnostic(uri: str, item: Mapping[str, Any], root: Path, limit: int = MESSAGE_CHARS) -> dict[str, Any]:
     start = item.get("range", {}).get("start", {})
     return {
         "path": relative_path(uri, root),
@@ -127,7 +150,7 @@ def compact_diagnostic(uri: str, item: Mapping[str, Any], root: Path) -> dict[st
         "severity": SEVERITY_NAMES.get(int(item.get("severity", 3)), "info"),
         "source": item.get("source"),
         "code": item.get("code"),
-        "message": item.get("message"),
+        "message": clip(item.get("message"), limit),
     }
 
 
@@ -234,8 +257,52 @@ def navigation_tools(root: Path, call: Call, paged: Paged, cap: int) -> dict[str
     }
 
 
+def insight_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+    """hover, type_definition and document_symbols: the remaining LSP views, for agents."""
+
+    def hover(path: str, line: int, col: int) -> dict[str, Any]:
+        """What the editor shows on hover at PATH:LINE:COL (1-based): type, signature, documentation, runtime-profile
+        parameter details and why any finding on that line matters."""
+        raw = call("groovyscope/hover", position_params(root, path, line, col))
+        if not raw:
+            return {"found": False}
+        return {"found": True, "markdown": clip(raw.get("markdown", ""), cap * 80)}
+
+    def type_definition(path: str, line: int, col: int) -> dict[str, Any]:
+        """The declaration of the type of the expression at PATH:LINE:COL (1-based)."""
+        raw = call("groovyscope/typeDefinition", position_params(root, path, line, col))
+        if not raw:
+            return {"found": False}
+        return {"found": True, "symbol": compact_symbol(raw["symbol"], root), "confidence": raw.get("confidence")}
+
+    def document_symbols(path: str, depth: int = 2) -> dict[str, Any]:
+        """The outline of PATH: classes and their members (to DEPTH levels), each with its line."""
+        raw = call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, path)})
+        budget = [cap * 4]
+
+        def outline(item: Mapping[str, Any], level: int) -> dict[str, Any]:
+            budget[0] -= 1
+            entry = compact_symbol(item, root)
+            entry.pop("path", None)
+            children = item.get("children") or []
+            if children and level < depth:
+                entry["children"] = [outline(child, level + 1) for child in children if budget[0] > 0]
+            elif children:
+                entry["members"] = len(children)
+            return entry
+
+        symbols = [outline(item, 1) for item in raw.get("symbols", []) if budget[0] > 0]
+        return {"path": path, "symbols": symbols, "truncated": budget[0] <= 0}
+
+    return {"hover": hover, "type_definition": type_definition, "document_symbols": document_symbols}
+
+
+def position_params(root: Path, path: str, line: int, col: int) -> dict[str, Any]:
+    return {"root": str(root), "uri": to_uri(root, path), "line": line - 1, "character": col - 1}
+
+
 def quality_tools(
-    root: Path, call: Call, paged: Paged, cap: int, environ: Mapping[str, str]
+    root: Path, call: Call, paged: Paged, cap: int, environ: Mapping[str, str], *, clip_at: int = MESSAGE_CHARS
 ) -> dict[str, Callable[..., Any]]:
     """check, format, find_dynamic_code and workspace_status."""
 
@@ -256,7 +323,9 @@ def quality_tools(
             params["profile"] = profile
         raw = call("groovyscope/check", params)
         findings = [
-            compact_diagnostic(uri, item, root) for uri, items in raw.get("diagnostics", {}).items() for item in items
+            compact_diagnostic(uri, item, root, clip_at)
+            for uri, items in raw.get("diagnostics", {}).items()
+            for item in items
         ]
         findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
         result = paged(findings, limit, cursor)
@@ -266,17 +335,22 @@ def quality_tools(
     def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
         """Formatting edits for PATHS (whole workspace when empty). APPLY writes the files; otherwise only counts."""
         raw = call("groovyscope/format", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
+        changed, refused = file_edits(raw.get("edits", {}), root)
         files = []
-        for uri, edits in raw.get("edits", {}).items():
-            target = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
-            before = target.read_text(encoding="utf-8")
-            after = apply_edits(before, edits)
+        for edit in changed:
             if apply:
-                target.write_text(after, encoding="utf-8")
+                write_document(edit["path"], edit["after"])
             files.append(
-                {"path": relative_path(uri, root), "linesChanged": changed_line_count(before, after), "applied": apply}
+                {
+                    "path": relative_path(edit["path"].as_uri(), root),
+                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
+                    "applied": apply,
+                }
             )
-        return {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
+        result: dict[str, Any] = {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
+        if refused:
+            result["refused"] = [relative_path(uri, root) for uri in refused]
+        return result
 
     def find_dynamic_code(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
         """Constructs that defeat static analysis: untyped classes, def on public API, methodMissing, metaClass."""
@@ -312,7 +386,7 @@ def quality_tools(
     }
 
 
-def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHARS) -> dict[str, Callable[..., Any]]:
     """explain, review, fix and profile_status."""
 
     def explain(code: str) -> dict[str, Any]:
@@ -327,7 +401,9 @@ def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., 
             {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "include": []},
         )
         findings = [
-            compact_diagnostic(uri, item, root) for uri, items in raw.get("diagnostics", {}).items() for item in items
+            compact_diagnostic(uri, item, root, clip_at)
+            for uri, items in raw.get("diagnostics", {}).items()
+            for item in items
         ]
         groups = practices.review(findings, max(1, min(top, cap)))
         result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap]}
@@ -358,25 +434,54 @@ def practice_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., 
             "groovyscope/fix",
             {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "codes": codes or []},
         )
-        files = []
-        for uri, edits in raw.get("edits", {}).items():
-            target = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
-            before = target.read_text(encoding="utf-8")
-            after = apply_edits(before, edits)
+        changed, refused = file_edits(raw.get("edits", {}), root)
+        files: list[dict[str, Any]] = []
+        for edit in changed:
             if apply:
-                target.write_text(after, encoding="utf-8")
+                write_document(edit["path"], edit["after"])
+            uri = edit["path"].as_uri()
             files.append(
                 {
                     "path": relative_path(uri, root),
-                    "codes": raw.get("applied", {}).get(uri, []),
-                    "linesChanged": changed_line_count(before, after),
+                    "codes": next((v for k, v in raw.get("applied", {}).items() if uri_path(k) == edit["path"]), []),
+                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
                     "applied": apply,
                 }
             )
         rejected = {relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()}
+        rejected.update({relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused})
         return {"changed": len(files), "files": files[:cap], "rejected": rejected}
 
-    return {"explain": explain, "review": review, "fix": fix, "profile_status": profile_status}
+    def rename(path: str, line: int, col: int, new_name: str, apply: bool = False) -> dict[str, Any]:
+        """Rename the symbol at PATH:LINE:COL (1-based) to NEW_NAME everywhere it is used. Refused when any use is
+        matched by name only (dynamic Groovy). A dry run listing the edits per file unless APPLY."""
+        raw = call("groovyscope/rename", {**position_params(root, path, line, col), "newName": new_name})
+        if raw.get("refused"):
+            return {"renamed": False, "refused": raw["refused"]}
+        changed, refused = file_edits(raw.get("edits", {}), root)
+        files = []
+        for edit in changed:
+            if apply:
+                write_document(edit["path"], edit["after"])
+            files.append(
+                {
+                    "path": relative_path(edit["path"].as_uri(), root),
+                    "edits": len(raw["edits"].get(edit["path"].as_uri(), [])) or None,
+                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
+                }
+            )
+        result: dict[str, Any] = {"renamed": apply, "files": files[:cap], "fileCount": len(files)}
+        if refused:
+            result["skipped"] = [relative_path(uri, root) for uri in refused][:cap]
+        return result
+
+    return {
+        "explain": explain,
+        "review": review,
+        "fix": fix,
+        "rename": rename,
+        "profile_status": profile_status,
+    }
 
 
 def build_tools(
@@ -384,32 +489,124 @@ def build_tools(
 ) -> dict[str, Callable[..., Any]]:
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
+    clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
     return {
         **navigation_tools(root, call, paged, cap),
-        **quality_tools(root, call, paged, cap, environ),
-        **practice_tools(root, call, cap),
+        **insight_tools(root, call, cap),
+        **quality_tools(root, call, paged, cap, environ, clip_at=clip_at),
+        **practice_tools(root, call, cap, clip_at),
     }
 
 
+# name: (title, read only). Every tool is closed-world (only this workspace) and idempotent.
+TOOL_INFO: dict[str, tuple[str, bool]] = {
+    "find_symbol": ("Find Groovy declarations", True),
+    "goto_definition": ("Go to definition", True),
+    "type_definition": ("Go to type definition", True),
+    "find_references": ("Find references", True),
+    "hover": ("Hover information", True),
+    "document_symbols": ("Document outline", True),
+    "call_graph": ("Call graph", True),
+    "impact_of": ("Impact of a change", True),
+    "check": ("Check findings", True),
+    "review": ("Review changed files", True),
+    "explain": ("Explain a finding code", True),
+    "profile_status": ("Runtime profile of a file", True),
+    "find_dynamic_code": ("Find dynamic Groovy", True),
+    "workspace_status": ("Workspace and daemon status", True),
+    "format": ("Format files", False),
+    "fix": ("Apply safe fixes", False),
+    "rename": ("Rename a symbol", False),
+}
+
+
+def compact_json(value: Any) -> str:
+    """JSON without indentation or spaces after separators: the SDK's default pretty printing costs about a
+    third more characters, and every character reaches the agent's context."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def respond(function: Callable[..., Any], *, structured: bool) -> Callable[..., Any]:
+    """Return a tool result as one compact JSON text block; with ``output.structured`` also as structuredContent
+    (for clients that read it; most send the text to the model, so it is off by default to avoid doubling)."""
+
+    @functools.wraps(function)
+    def wrapper(*args: Any, **kwargs: Any) -> CallToolResult:
+        result = function(*args, **kwargs)
+        return CallToolResult(
+            content=[TextContent(type="text", text=compact_json(result))],
+            structured_content=result if structured and isinstance(result, dict) else None,
+        )
+
+    return wrapper
+
+
 def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]) -> MCPServer:
-    """An MCP server exposing the tools of {@link build_tools}."""
+    """An MCP server exposing the tools of :func:`build_tools` with titles, behaviour annotations and compact
+    results."""
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
+    structured = bool(output.get("structured", False))
     for name, function in build_tools(root, call, output, environ).items():
-        server.tool(name=name, description=function.__doc__)(function)
+        title, read_only = TOOL_INFO.get(name, (name, True))
+        annotations = ToolAnnotations(
+            title=title,
+            read_only_hint=read_only,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+        tool = respond(diagnostics.timed(name, function, LOG), structured=structured)
+        server.tool(
+            name=name, title=title, description=function.__doc__, annotations=annotations, structured_output=False
+        )(tool)
     return server
 
 
-def serve(root: Path, socket_file: Path, output: Mapping[str, Any], environ: Mapping[str, str]) -> int:
+def session_caller(
+    socket_file: Path,
+    reconnect: Callable[[], Path] | None = None,
+    *,
+    open_session: Callable[[Path], rpc.Session] | None = None,
+) -> tuple[Call, Callable[[], None]]:
+    """A ``call`` bound to one engine session that, when the engine has gone away (daemon stopped, JVM killed,
+    upgraded), restarts it through ``reconnect`` and retries the request once. Also returns a closer."""
+    opener = rpc.open_session if open_session is None else open_session
+    state: dict[str, Any] = {"session": opener(socket_file)}
+    # The SDK runs tools on worker threads and agents call tools in parallel; one session carries one exchange
+    # at a time, so calls queue here instead of interleaving their frames.
+    lock = threading.Lock()
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        with lock:
+            try:
+                return rpc.call(state["session"], method, params, timeout=600.0)
+            except OSError as exc:
+                if reconnect is None:
+                    raise
+                LOG.info("engine session lost (%s); reconnecting", exc)
+                rpc.close_session(state["session"])
+                state["session"] = opener(reconnect())
+                return rpc.call(state["session"], method, params, timeout=600.0)
+
+    def close() -> None:
+        rpc.close_session(state["session"])
+
+    return (call, close)
+
+
+def serve(
+    root: Path,
+    socket_file: Path,
+    output: Mapping[str, Any],
+    environ: Mapping[str, str],
+    reconnect: Callable[[], Path] | None = None,
+) -> int:
     """Open one engine session, run the MCP server on stdio until the client disconnects, close the session."""
-    session = rpc.open_session(socket_file)
+    # No LSP initialize: every groovyscope/* request names its root, and an initialized session would make
+    # the engine lint the whole workspace and push diagnostics for every file to a client that ignores them.
+    call, close = session_caller(socket_file, reconnect)
     try:
-        # No LSP initialize: every groovyscope/* request names its root, and an initialized session would make
-        # the engine lint the whole workspace and push diagnostics for every file to a client that ignores them.
-
-        def call(method: str, params: dict[str, Any]) -> Any:
-            return rpc.call(session, method, params, timeout=600.0)
-
         build_server(root, call, output, environ).run(transport="stdio")
     finally:
-        rpc.close_session(session)
+        close()
     return 0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -14,14 +16,25 @@ from typing import Any
 
 import click
 
-from groovyscope import __version__, mcp_server, practices, profiles, provision, relay, rpc
+from groovyscope import (
+    __version__,
+    diagnostics,
+    kiro_agent,
+    mcp_server,
+    practices,
+    profiles,
+    provision,
+    relay,
+    rpc,
+    trust,
+)
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
-from groovyscope.config import dump_yaml, load_config
+from groovyscope.config import dump_yaml, load_config, load_config_with_notes
 from groovyscope.doctor import build_report, has_failures
-from groovyscope.edits import apply_edits, changed_line_count
+from groovyscope.edits import changed_line_count, file_edits, write_document
 from groovyscope.jar import locate_jar, read_manifest
-from groovyscope.java import JdkInfo, discover_jdk
+from groovyscope.java import JdkInfo, discover
 from groovyscope.kiro import (
     BACKUP_SUFFIX,
     KIRO_INIT_WARNING,
@@ -35,6 +48,7 @@ from groovyscope.launch import MIN_JDK_FOR_AUTO_CDS, build_engine_command
 from groovyscope.render import compact_json, table
 
 LOG_ENV = "GROOVYSCOPE_LOG"
+LOG = logging.getLogger("groovyscope.cli")
 CONFIG_ENV = "GROOVYSCOPE_CONFIG_JSON"
 BASELINE_PATH = Path(".groovyscope") / "contract-baseline.json"
 LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
@@ -42,10 +56,25 @@ LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
 ExecFn = Callable[[str, Sequence[str]], Any]
 
 
-def configure_logging(environ: dict[str, str] | None = None) -> None:
+def configure_logging(
+    environ: dict[str, str] | None = None, *, level: str | None = None, log_file: Path | None = None
+) -> None:
+    """``--debug``/``--verbose`` win over ``GROOVYSCOPE_LOG``; the default is warnings only."""
     env = os.environ if environ is None else environ
-    level_name = env.get(LOG_ENV, "warning").upper()
-    logging.basicConfig(level=getattr(logging, level_name, logging.WARNING), stream=sys.stderr, format="%(message)s")
+    diagnostics.configure(diagnostics.level_of(level or env.get(LOG_ENV)), log_file)
+
+
+def apply_config_logging(obj: dict[str, Any], effective: dict[str, Any]) -> None:
+    """``logging.level``/``logging.file`` from the configuration apply when no flag or GROOVYSCOPE_LOG chose already,
+    so the LSP and MCP processes Kiro starts honour .groovyscope.yaml. Flags reach the engine the same way."""
+    section = effective.setdefault("logging", {})
+    if obj.get("log_level"):
+        section["level"] = obj["log_level"]
+    if obj.get("log_file"):
+        section["file"] = str(obj["log_file"])
+    if not obj.get("log_level") and not os.environ.get(LOG_ENV):
+        file_setting = section.get("file")
+        diagnostics.configure(diagnostics.level_of(section.get("level")), Path(file_setting) if file_setting else None)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -64,11 +93,34 @@ def configure_logging(environ: dict[str, str] | None = None) -> None:
     default=None,
     help="Workspace root (default: current directory).",
 )
+@click.option("--debug", is_flag=True, help="Debug logging here and in the engine (implies --verbose).")
+@click.option("-v", "--verbose", is_flag=True, help="Report each step (JDK, JAR, configuration, daemon, downloads).")
+@click.option(
+    "--log-file",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Also append log records to this file (the engine writes there too).",
+)
 @click.pass_context
-def main(ctx: click.Context, config_path: Path | None, root: Path | None) -> None:
+def main(
+    ctx: click.Context,
+    *,
+    config_path: Path | None,
+    root: Path | None,
+    debug: bool,
+    verbose: bool,
+    log_file: Path | None,
+) -> None:
     """Groovy 5/6 code intelligence for AI coding agents."""
-    configure_logging()
-    ctx.obj = {"config_path": config_path, "root": (root or Path.cwd()).resolve()}
+    level = "debug" if debug else "info" if verbose else None
+    configure_logging(level=level, log_file=log_file)
+    ctx.obj = {
+        "config_path": config_path,
+        "root": (root or Path.cwd()).resolve(),
+        "log_level": level,
+        "log_file": log_file,
+    }
+    LOG.debug("groovyscope %s on Python %s, root %s", __version__, sys.version.split()[0], ctx.obj["root"])
 
 
 @main.command()
@@ -81,13 +133,57 @@ def version() -> None:
 
 
 @main.command()
+@click.option(
+    "--bundle",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Also write a zip for a bug report: this report, versions, configuration, daemon log, Kiro's groovyscope "
+    "log lines (no source code, no profile contents, no Kiro chat).",
+)
 @click.pass_obj
-def doctor(obj: dict[str, Any]) -> None:
-    """Check the JDK, engine JAR, configuration and Kiro files; exit 1 on hard failures."""
-    report = build_report(obj["root"], obj["config_path"], dict(os.environ))
+def doctor(obj: dict[str, Any], bundle: Path | None) -> None:
+    """Check the JDK, engine JAR, configuration, Kiro files and profiles; exit 1 on hard failures."""
+    report = build_report(obj["root"], obj["config_path"], dict(os.environ), kiro=_KIRO())
     click.echo(table([(LEVEL_MARKS[level], name, message) for level, name, message in report]))
+    if bundle is not None:
+        try:
+            effective: dict[str, Any] | None = load_config(obj["root"], obj["config_path"], dict(os.environ))
+        except (ValueError, OSError):
+            effective = None
+        manifest = read_manifest()
+        written = diagnostics.bundle(
+            bundle,
+            doctor_lines=diagnostics.lines_of(report),
+            versions={"groovyscope": __version__, "engine": (manifest or {}).get("version")},
+            effective_config=effective,
+            daemon_log=daemon_paths(obj["root"])[1],
+            environ=dict(os.environ),
+        )
+        click.echo(f"diagnostics bundle written to {written}")
     if has_failures(report):
         sys.exit(1)
+
+
+@main.command()
+@click.option("-n", "--lines", default=200, show_default=True, help="How many lines to show.")
+@click.option("--follow", "-f", "follow_log", is_flag=True, help="Keep printing new lines (Ctrl-C to stop).")
+@click.option("--kiro", "from_kiro", is_flag=True, help="Show groovyscope lines from Kiro CLI's LSP and MCP logs.")
+@click.pass_obj
+def logs(obj: dict[str, Any], lines: int, follow_log: bool, from_kiro: bool) -> None:
+    """Show the engine daemon's log for this workspace (where engine debug output goes), or Kiro's view."""
+    if from_kiro:
+        for name, found in diagnostics.kiro_lines(dict(os.environ), lines).items():
+            click.echo(f"== {diagnostics.kiro_log_dir(dict(os.environ)) / name}")
+            for line in found:
+                click.echo(line)
+        return
+    log_file = daemon_paths(obj["root"])[1]
+    click.echo(f"== {log_file}", err=True)
+    for line in diagnostics.tail(log_file, lines):
+        click.echo(line)
+    if follow_log:
+        with contextlib.suppress(KeyboardInterrupt):
+            diagnostics.follow(log_file, click.echo)
 
 
 @main.group()
@@ -124,11 +220,24 @@ def profile_guidance_for(obj: dict[str, Any], *, global_scope: bool = False) -> 
     except (ValueError, OSError):
         return ""
     found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
-    return profiles.guidance(found, None if global_scope else obj["root"])
+    if global_scope:
+        # The global steering applies to every project, so only profiles kept outside this repository count.
+        root = obj["root"].resolve()
+        outside = [p for p in found["profiles"] if not Path(p["path"]).resolve().is_relative_to(root)]
+        found = {**found, "profiles": outside}
+        return profiles.guidance(found, None)
+    return profiles.guidance(found, obj["root"])
 
 
 def run_kiro_merge(
-    obj: dict[str, Any], *, force: bool, backup: bool, dry_run: bool, global_scope: bool = False, full: bool = False
+    obj: dict[str, Any],
+    *,
+    force: bool,
+    backup: bool,
+    dry_run: bool,
+    global_scope: bool = False,
+    full: bool = False,
+    agent_format: str = "auto",
 ) -> None:
     home = kiro_home(dict(os.environ), Path.home())
     base = home if global_scope else obj["root"]
@@ -142,6 +251,8 @@ def run_kiro_merge(
             global_scope=global_scope,
             profile_guidance=profile_guidance_for(obj, global_scope=global_scope),
             lsp_only=lsp_only,
+            agent_format=agent_format,
+            run=_KIRO(),
         )
     except ValueError as exc:
         click.echo(str(exc), err=True)
@@ -150,6 +261,8 @@ def run_kiro_merge(
         click.echo(f"Kiro home: {base}")
     for change in changes:
         click.echo(f"{change['action']:9} {change['path']}")
+        if change.get("note"):
+            click.echo(f"          note: {change.get('note')}")
         if change["action"] != "unchanged":
             click.echo(unified_diff(change), nl=False)
     if dry_run:
@@ -171,30 +284,60 @@ def run_kiro_merge(
 
 GLOBAL_HELP = "Write the MCP server, groovy agent and steering to the Kiro home (~/.kiro, or $KIRO_HOME)."
 FULL_HELP = "In a project, write all files even when the global setup already provides the MCP server and agent."
+FORMAT_HELP = (
+    "Agent file format: auto keeps the existing file's format (new files are universal when kiro-cli can write it); "
+    "v2 for the V2 engine, universal for both engines, v3 for the V3 engine only."
+)
+FORMAT_CHOICE = click.Choice(list(kiro_agent.REQUESTABLE))
 
 
 @kiro.command("init")
 @click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
 @click.option("--full", is_flag=True, help=FULL_HELP)
+@click.option("--agent-format", type=FORMAT_CHOICE, default="auto", show_default=True, help=FORMAT_HELP)
 @click.option("--force", is_flag=True, help="Replace existing files instead of merging into them.")
 @click.option("--no-backup", is_flag=True, help="Do not write <file>.bak before overwriting.")
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
 def kiro_init(
-    obj: dict[str, Any], *, global_scope: bool, full: bool, force: bool, no_backup: bool, dry_run: bool
+    obj: dict[str, Any],
+    *,
+    global_scope: bool,
+    full: bool,
+    agent_format: str,
+    force: bool,
+    no_backup: bool,
+    dry_run: bool,
 ) -> None:
     """Write lsp.json, mcp.json, the groovy agent and the steering file (merging, never clobbering)."""
-    run_kiro_merge(obj, force=force, backup=not no_backup, dry_run=dry_run, global_scope=global_scope, full=full)
+    run_kiro_merge(
+        obj,
+        force=force,
+        backup=not no_backup,
+        dry_run=dry_run,
+        global_scope=global_scope,
+        full=full,
+        agent_format=agent_format,
+    )
 
 
 @kiro.command("repair")
 @click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
 @click.option("--full", is_flag=True, help=FULL_HELP)
+@click.option("--agent-format", type=FORMAT_CHOICE, default="auto", show_default=True, help=FORMAT_HELP)
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
 @click.pass_obj
-def kiro_repair(obj: dict[str, Any], *, global_scope: bool, full: bool, dry_run: bool) -> None:
-    """Re-merge groovyscope's entries after `/code init` or a manual edit removed them."""
-    run_kiro_merge(obj, force=False, backup=True, dry_run=dry_run, global_scope=global_scope, full=full)
+def kiro_repair(obj: dict[str, Any], *, global_scope: bool, full: bool, agent_format: str, dry_run: bool) -> None:
+    """Re-merge groovyscope's entries after `/code init`, a manual edit or a Kiro upgrade changed them."""
+    run_kiro_merge(
+        obj,
+        force=False,
+        backup=True,
+        dry_run=dry_run,
+        global_scope=global_scope,
+        full=full,
+        agent_format=agent_format,
+    )
 
 
 def cds_archive_for(
@@ -210,7 +353,11 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
     """A JDK meeting ``jdk.minimum``; with ``jdk.autoProvision`` on, Temurin is downloaded when none is found."""
     minimum = int(effective["jdk"]["minimum"])
     provisioned = provision.provisioned_homes(provision.jdk_dir(environ))
-    jdk = discover_jdk(effective["jdk"].get("home"), environ, minimum=minimum, provisioned=provisioned)
+    found = discover(effective["jdk"].get("home"), environ, minimum=minimum, provisioned=provisioned)
+    for note in found["notes"]:
+        click.echo(f"groovyscope: {note}", err=True)
+    jdk = found["jdk"]
+    LOG.debug("JDK: %s", jdk)
     if jdk is not None and jdk["version"] >= minimum:
         return jdk
     if not effective["jdk"].get("autoProvision"):
@@ -220,7 +367,9 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
         f"groovyscope: no JDK {minimum}+ found; jdk.autoProvision is on, downloading Temurin {feature}", err=True
     )
     try:
-        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature)
+        installed = provision.provision_jdk(
+            provision.jdk_dir(environ), feature=feature, vendor=str(effective["jdk"].get("vendor", "temurin"))
+        )
     except (OSError, ValueError, KeyError) as exc:
         click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
         return None
@@ -230,15 +379,24 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
 def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     """Resolve configuration, JDK and JAR; exit 1 with a message on any failure."""
     try:
-        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+        effective, notes = load_config_with_notes(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
         click.echo(str(exc), err=True)
         sys.exit(1)
+    for note in notes:
+        click.echo(f"groovyscope: {note}", err=True)
+    apply_config_logging(obj, effective)
+    LOG.debug(
+        "configuration: %s; workspace %s; `groovyscope config validate --show` prints it",
+        obj["config_path"] or "defaults + .groovyscope.yaml when present",
+        "trusted" if effective["workspace"].get("trust") else "untrusted",
+    )
     jdk = resolve_jdk(effective, dict(os.environ))
     if jdk is None:
         click.echo("groovyscope: no suitable JDK found; run `groovyscope doctor`", err=True)
         sys.exit(1)
     jar = locate_jar(dict(os.environ))
+    LOG.debug("engine JAR: %s", jar)
     if jar["error"] or jar["path"] is None:
         click.echo(f"groovyscope: {jar['error']}", err=True)
         sys.exit(1)
@@ -246,6 +404,8 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     if archive is not None:
         archive.parent.mkdir(parents=True, exist_ok=True)
     command = build_engine_command(Path(jdk["home"]), Path(jar["path"]), effective, [], cds_archive=archive)
+    obj["engine_version"] = jar["version"]
+    LOG.debug("engine command: %s", " ".join(command))
     return (command, effective)
 
 
@@ -283,7 +443,12 @@ def discover_profiles(obj: dict[str, Any], effective: dict[str, Any]) -> profile
 
 def hand_over_config(obj: dict[str, Any], effective: dict[str, Any]) -> None:
     """The engine reads the validated, effective configuration from the environment (see EngineConfig)."""
-    runtime = profiles.engine_profiles(discover_profiles(obj, effective))
+    found = discover_profiles(obj, effective)
+    trusted = bool(effective["workspace"].get("trust"))
+    if not trusted:
+        for note in profiles.untrusted_jar_notes(found, obj["root"]):
+            click.echo(f"groovyscope: {note}", err=True)
+    runtime = profiles.engine_profiles(found, obj["root"], trusted=trusted)
     os.environ[CONFIG_ENV] = json.dumps(engine_view(obj, effective, runtime), sort_keys=True)
 
 
@@ -297,14 +462,39 @@ def daemon_paths(root: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def run_through_daemon(root: Path, command: list[str], effective: dict[str, Any]) -> int | None:
+def config_hash() -> str:
+    """SHA-256 of the configuration handed to the engine, as the engine reports it in its status."""
+    return hashlib.sha256(os.environ.get(CONFIG_ENV, "").encode("utf-8")).hexdigest()
+
+
+def warn_if_stale(status: dict[str, Any]) -> None:
+    """A daemon started with another configuration keeps serving it; say so instead of failing silently."""
+    running = status.get("configHash")
+    if isinstance(running, str) and running and running != config_hash():
+        click.echo(
+            "groovyscope: the daemon was started with a different configuration (.groovyscope.yaml, profiles or "
+            "environment changed); run `groovyscope daemon restart` to apply it",
+            err=True,
+        )
+
+
+def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    """Start the workspace daemon when needed (replacing one from another engine version). Raises on failure."""
+    socket_file, log_file, cache = daemon_paths(obj["root"])
+    daemon_command = daemon_lifecycle.daemon_command(
+        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
+    )
+    status = daemon_lifecycle.ensure_running(
+        daemon_command, socket_file, log_file, dict(os.environ), expected_engine=obj.get("engine_version")
+    )
+    warn_if_stale(status)
+    return (socket_file, status)
+
+
+def run_through_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, Any]) -> int | None:
     """Start the daemon if needed and relay stdio to it. None when that is impossible (caller falls back)."""
     try:
-        socket_file, log_file, cache = daemon_paths(root)
-        daemon_command = daemon_lifecycle.daemon_command(
-            command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
-        )
-        daemon_lifecycle.ensure_running(daemon_command, socket_file, log_file, dict(os.environ))
+        socket_file, _ = ensure_daemon(obj, command, effective)
         return _RELAY(socket_file)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
@@ -317,6 +507,7 @@ def exec_process(path: str, argv: Sequence[str]) -> None:
 
 
 _EXEC: ExecFn = exec_process
+_KIRO: Callable[[], kiro_agent.KiroRunner | None] = kiro_agent.kiro_runner
 _RELAY: Callable[[Path], int] = relay.main
 _RPC: Callable[..., Any] = rpc.request
 _MCP_SERVE: Callable[..., int] = mcp_server.serve
@@ -329,12 +520,8 @@ def daemon_socket_for(obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     """Make sure the workspace daemon runs and return its socket with the effective configuration."""
     command, effective = resolve_engine(obj)
     hand_over_config(obj, effective)
-    socket_file, log_file, cache = daemon_paths(obj["root"])
-    daemon_command = daemon_lifecycle.daemon_command(
-        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
-    )
     try:
-        daemon_lifecycle.ensure_running(daemon_command, socket_file, log_file, dict(os.environ))
+        socket_file, _ = ensure_daemon(obj, command, effective)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
@@ -397,7 +584,7 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
     command, effective = resolve_engine(obj)
     hand_over_config(obj, effective)
     if effective["daemon"]["enabled"]:
-        code = run_through_daemon(obj["root"], command, effective)
+        code = run_through_daemon(obj, command, effective)
         if code is not None:
             sys.exit(code)
     _EXEC(command[0], [*command, "lsp", "--stdio", "--cache-dir", str(daemon_paths(obj["root"])[2])])
@@ -474,17 +661,19 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
         socket_file, "groovyscope/format", {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths)}
     )
     rows: list[dict[str, Any]] = []
-    for uri, edits in sorted(result.get("edits", {}).items()):
-        path = uri_to_path(uri)
-        before = path.read_text(encoding="utf-8")
-        after = apply_edits(before, edits)
+    changed, refused = file_edits(result.get("edits", {}), obj["root"])
+    for edit in changed:
         if apply_changes:
-            path.write_text(after, encoding="utf-8")
-        try:
-            shown = path.relative_to(obj["root"]).as_posix()
-        except ValueError:
-            shown = path.as_posix()
-        rows.append({"path": shown, "lines": changed_line_count(before, after), "applied": apply_changes})
+            write_document(edit["path"], edit["after"])
+        rows.append(
+            {
+                "path": shown_path(edit["path"], obj["root"]),
+                "lines": changed_line_count(edit["before"], edit["after"]),
+                "applied": apply_changes,
+            }
+        )
+    for uri in refused:
+        click.echo(f"groovyscope: refused an edit outside the workspace: {uri}", err=True)
     checked = int(result.get("checked", 0))
     if as_json:
         click.echo(compact_json({"files": rows, "checked": checked, "changed": len(rows)}))
@@ -510,21 +699,21 @@ def fix(
     params = {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths), "codes": list(codes)}
     result = engine_call(socket_file, "groovyscope/fix", params)
     rows: list[dict[str, Any]] = []
-    for uri, edits in sorted(result.get("edits", {}).items()):
-        path = uri_to_path(uri)
-        before = path.read_text(encoding="utf-8")
-        after = apply_edits(before, edits)
+    changed, refused = file_edits(result.get("edits", {}), obj["root"])
+    applied_codes = {uri_to_path(uri): codes for uri, codes in result.get("applied", {}).items()}
+    for edit in changed:
         if apply_changes:
-            path.write_text(after, encoding="utf-8")
+            write_document(edit["path"], edit["after"])
         rows.append(
             {
-                "path": shown_path(path, obj["root"]),
-                "codes": result.get("applied", {}).get(uri, []),
-                "lines": changed_line_count(before, after),
+                "path": shown_path(edit["path"], obj["root"]),
+                "codes": applied_codes.get(edit["path"], []),
+                "lines": changed_line_count(edit["before"], edit["after"]),
                 "applied": apply_changes,
             }
         )
     rejected = {shown_path(uri_to_path(uri), obj["root"]): why for uri, why in result.get("rejected", {}).items()}
+    rejected.update({shown_path(uri_to_path(uri), obj["root"]): "outside the workspace; refused" for uri in refused})
     if as_json:
         click.echo(compact_json({"files": rows, "rejected": rejected}))
     else:
@@ -688,7 +877,15 @@ _RPC_LIST = _rpc_list
 def mcp(obj: dict[str, Any]) -> None:
     """Serve groovyscope's MCP tools on stdio (what .kiro/settings/mcp.json runs)."""
     socket_file, effective = daemon_socket_for(obj)
-    sys.exit(_MCP_SERVE(obj["root"], socket_file, effective["output"], dict(os.environ)))
+
+    def reconnect() -> Path:
+        try:
+            return daemon_socket_for(obj)[0]
+        except SystemExit as exc:
+            msg = "the engine daemon could not be restarted; run `groovyscope doctor`"
+            raise ConnectionError(msg) from exc
+
+    sys.exit(_MCP_SERVE(obj["root"], socket_file, effective["output"], dict(os.environ), reconnect))
 
 
 @main.command()
@@ -721,15 +918,19 @@ def jdk() -> None:
 
 @jdk.command("install")
 @click.option("--feature", type=int, default=provision.DEFAULT_FEATURE, show_default=True, help="Java feature release.")
-def jdk_install(feature: int) -> None:
-    """Download the latest Temurin JDK of a feature release from Adoptium, verify it, unpack it into the cache."""
+@click.option(
+    "--vendor", type=click.Choice(list(provision.VENDORS)), default="temurin", show_default=True, help="JDK vendor."
+)
+def jdk_install(feature: int, vendor: str) -> None:
+    """Download the latest JDK of a feature release (Eclipse Temurin or Amazon Corretto), verify its SHA-256 against
+    the vendor's published checksum, and unpack it into groovyscope's cache."""
     environ = dict(os.environ)
     try:
-        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature)
+        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature, vendor=vendor)
     except (OSError, ValueError, KeyError) as exc:
         click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"installed Temurin {installed['release']} at {installed['home']}")
+    click.echo(f"installed {installed['release']} at {installed['home']}")
     click.echo("groovyscope will use it when no other JDK meets jdk.minimum; `groovyscope doctor` shows which wins")
 
 
@@ -797,6 +998,23 @@ def profile_status(obj: dict[str, Any], path: Path, as_json: bool) -> None:
             click.echo(f"{key}: {value}")
 
 
+@main.command("trust")
+@click.option("--revoke", is_flag=True, help="Stop trusting the workspace.")
+@click.option("--list", "list_all", is_flag=True, help="List the trusted workspaces.")
+@click.pass_obj
+def trust_command(obj: dict[str, Any], revoke: bool, list_all: bool) -> None:
+    """Trust this workspace: its .groovyscope.yaml may then set workspace.trust (AST transformations from the
+    workspace classpath), jdk.home and CodeNarc rule sets, and its runtime profiles may load emulation jars."""
+    home = Path.home()
+    if list_all:
+        for root in trust.trusted_roots(home):
+            click.echo(root)
+        return
+    trust.set_trusted(obj["root"], home, trusted=not revoke)
+    state = "no longer trusted" if revoke else "trusted"
+    click.echo(f"{obj['root']} is {state}; run `groovyscope daemon restart` if a daemon is serving it")
+
+
 @main.group()
 def baseline() -> None:
     """Record and compare the contract surface of files governed by a runtime profile."""
@@ -850,18 +1068,24 @@ def daemon() -> None:
 @click.pass_obj
 def daemon_start(obj: dict[str, Any]) -> None:
     """Start the daemon (or report the one already running)."""
-    command, effective = resolve_engine(obj)
-    hand_over_config(obj, effective)
-    socket_file, log_file, cache = daemon_paths(obj["root"])
-    daemon_command = daemon_lifecycle.daemon_command(
-        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
-    )
+    socket_file, _ = daemon_socket_for(obj)
+    status = daemon_lifecycle.probe(socket_file) or {}
+    click.echo(f"daemon running on {socket_file} (engine {status.get('engine', '?')})")
+
+
+@daemon.command("restart")
+@click.pass_obj
+def daemon_restart(obj: dict[str, Any]) -> None:
+    """Stop the daemon and start it again with the current configuration (open editor sessions reconnect)."""
+    socket_file, _, _ = daemon_paths(obj["root"])
     try:
-        status = daemon_lifecycle.ensure_running(daemon_command, socket_file, log_file, dict(os.environ))
+        daemon_lifecycle.stop(socket_file)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"daemon running on {socket_file} (engine {status.get('engine', '?')})")
+    socket_file, _ = daemon_socket_for(obj)
+    status = daemon_lifecycle.probe(socket_file) or {}
+    click.echo(f"daemon restarted on {socket_file} (engine {status.get('engine', '?')})")
 
 
 @daemon.command("stop")

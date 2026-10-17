@@ -135,7 +135,10 @@ public final class ProfileFinder {
             this.descriptor = descriptor;
             this.out = out;
             for (String name : profile.secrets().names()) {
-                secretNames.add(Pattern.compile(name, Pattern.CASE_INSENSITIVE));
+                if (!name.isBlank()) {
+                    // Names are fragments, not regular expressions: quoted, so no entry can fail to compile or backtrack.
+                    secretNames.add(Pattern.compile(Pattern.quote(name), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE));
+                }
             }
         }
 

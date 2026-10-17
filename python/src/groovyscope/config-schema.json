@@ -19,7 +19,8 @@
       "properties": {
         "home": { "type": ["string", "null"] },
         "minimum": { "type": "integer", "minimum": 17 },
-        "autoProvision": { "type": "boolean" }
+        "autoProvision": { "type": "boolean" },
+        "vendor": { "enum": ["temurin", "corretto"] }
       }
     },
     "workspace": {
@@ -35,7 +36,8 @@
         },
         "exclude": { "type": "array", "items": { "type": "string" } },
         "trust": { "type": "boolean" },
-        "javaSources": { "type": "boolean" }
+        "javaSources": { "type": "boolean" },
+        "maxFileBytes": { "type": "integer", "minimum": 0 }
       }
     },
     "daemon": {
@@ -106,7 +108,9 @@
       "additionalProperties": false,
       "properties": {
         "maxResults": { "type": "integer", "minimum": 1 },
-        "maxBytes": { "type": "integer", "minimum": 256 }
+        "maxBytes": { "type": "integer", "minimum": 256 },
+        "maxMessageChars": { "type": "integer", "minimum": 0 },
+        "structured": { "type": "boolean" }
       }
     },
     "logging": {

@@ -108,6 +108,7 @@ public final class Main {
     static Options parseOptions(List<String> options, Map<String, String> environment, Path cwd) throws IOException {
         List<String> remaining = new ArrayList<>(options);
         String json = environment == null ? null : environment.get(CONFIG_ENV);
+        String configHash = EngineConfig.hashOf(json);
         Path socket = null;
         Path cacheDir = null;
         long idleSeconds = DEFAULT_IDLE_SECONDS;
@@ -127,7 +128,34 @@ public final class Main {
                 default -> throw new IllegalArgumentException("unknown option: " + option);
             }
         }
-        return new Options(EngineConfig.fromJson(json), socket, idleSeconds, cacheDir);
+        configureLogging(json);
+        return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir);
+    }
+
+    /** Applies {@code logging.level} and {@code logging.file} from the configuration JSON to the engine log. */
+    static void configureLogging(String json) {
+        String level = null;
+        String file = null;
+        if (json != null && !json.isBlank()) {
+            try {
+                com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(json);
+                com.google.gson.JsonObject logging = parsed.isJsonObject() && parsed.getAsJsonObject().has("logging")
+                        && parsed.getAsJsonObject().get("logging").isJsonObject()
+                        ? parsed.getAsJsonObject().getAsJsonObject("logging") : null;
+                if (logging != null) {
+                    level = logging.has("level") && logging.get("level").isJsonPrimitive()
+                            ? logging.get("level").getAsString() : null;
+                    file = logging.has("file") && logging.get("file").isJsonPrimitive()
+                            ? logging.get("file").getAsString() : null;
+                }
+            } catch (com.google.gson.JsonParseException | IllegalStateException e) {
+                // EngineConfig.fromJson reports a malformed configuration
+            }
+        }
+        org.groovyscope.engine.log.EngineLog.configure(level, file);
+        org.groovyscope.engine.log.EngineLog.info("engine %s, Java %s (%s) at %s, log level %s",
+                EngineVersion.current(), System.getProperty("java.version"), System.getProperty("java.vendor"),
+                System.getProperty("java.home"), org.groovyscope.engine.log.EngineLog.threshold());
     }
 
     private static String value(List<String> remaining, String option) {

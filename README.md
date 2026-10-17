@@ -18,7 +18,8 @@ Python owns the installer, CLI, configuration and MCP bridge. Every semantic ans
 
 ## Quick start
 
-You need a JDK 17 or newer (21 recommended) and Kiro CLI. Once per machine:
+You need a JDK 17 or newer (21 recommended; Temurin, Amazon Corretto or any other build) and Kiro CLI. Once per
+machine:
 
 ```bash
 uv tool install groovyscope       # or: pipx install groovyscope, or: brew install SCGIS-Wales/tap/groovyscope
@@ -67,8 +68,10 @@ parsing. `explain` says why a finding matters and how to fix it.
 
 | Command | What it does |
 |---|---|
-| `groovyscope doctor` | Checks Python, configuration, JDK, the engine JAR (SHA-256), Kiro files and runtime profiles |
-| `groovyscope kiro init \| repair [--global] [--full] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project |
+| `groovyscope doctor [--bundle report.zip]` | Checks Python, configuration and trust, JDK (vendor and version), the engine JAR (SHA-256), Kiro files, the Kiro agent's format and runtime profiles; `--bundle` writes a zip for bug reports |
+| `groovyscope logs [-n N] [-f] [--kiro]` | The engine daemon's log for this workspace, or groovyscope's lines from Kiro CLI's logs |
+| `groovyscope trust [--revoke] [--list]` | Trust this workspace, so its `.groovyscope.yaml` may set `workspace.trust`, `jdk.home` and rule sets ([security](docs/security.md)) |
+| `groovyscope kiro init \| repair [--global] [--full] [--agent-format auto\|v2\|universal\|v3] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project. The agent keeps its format (V2, universal or V3) |
 | `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif]` | All findings; `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
 | `groovyscope fix [PATHS] [--code X] [--apply]` | Safe fixes; reports them unless `--apply` |
 | `groovyscope explain CODE` | Why a code (GS001, RP010, NullChecker, a CodeNarc rule) matters and how to fix it |
@@ -79,27 +82,36 @@ parsing. `explain` says why a finding matters and how to fix it.
 | `groovyscope baseline save \| check` | Records the contract surface of profile-governed files; `check` exits 1 when something recorded changed |
 | `groovyscope config validate [--show]` | Validates `.groovyscope.yaml` + `GROOVYSCOPE_*` overrides against the schema |
 | `groovyscope lsp --stdio` / `groovyscope mcp` | What Kiro runs: LSP and MCP over the warm per-workspace daemon |
-| `groovyscope daemon start \| stop \| status` | Manages the daemon (idle exit after `daemon.idleTimeoutMinutes`) |
-| `groovyscope fetch` / `groovyscope jdk install` / `groovyscope version` | Engine JAR fetch for packages without one, opt-in JDK download, versions |
+| `groovyscope daemon start \| stop \| restart \| status` | Manages the daemon (idle exit after `daemon.idleTimeoutMinutes`; `restart` applies a changed configuration) |
+| `groovyscope jdk install [--vendor temurin\|corretto]` | Opt-in, checksum-verified JDK download into groovyscope's cache |
+| `groovyscope fetch` / `groovyscope version` | Engine JAR fetch for packages without one; versions |
 
-Most commands take `--json`.
+Most commands take `--json`. Every command takes `--debug`, `-v`/`--verbose` and `--log-file PATH`
+([debug logging](docs/troubleshooting.md#debug-logging)).
 
 ## MCP tools
 
-`groovyscope mcp` registers one server, `groovyscope`, with these tools. Every answer is compact JSON: paths
-relative to the workspace root, 1-based `line`/`col`, a confidence where one applies, at most
-`output.maxResults` items within `output.maxBytes`, and a `next_cursor` to page on. No tool returns file bodies.
+`groovyscope mcp` registers one server, `groovyscope`, with these tools. Every answer is one compact JSON text
+block (no pretty printing, no second structured copy unless `output.structured: true`): paths relative to the
+workspace root, 1-based `line`/`col`, a confidence where one applies, at most `output.maxResults` items within
+`output.maxBytes`, finding messages clipped to `output.maxMessageChars`, and a `next_cursor` to page on. No tool
+returns file bodies. Each tool carries a title and MCP behaviour annotations (read-only or not, idempotent,
+closed-world), and parallel calls are queued safely on the one engine session.
 
 | Tool | Answers |
 |---|---|
 | `find_symbol(query, kind?, limit?, cursor?)` | Declarations whose name contains the query |
 | `goto_definition(path, line, col)` | The declaration under a position, with its confidence |
+| `type_definition(path, line, col)` | The declaration of the type of the expression under a position |
+| `hover(path, line, col)` | What an editor shows on hover: signature, documentation, runtime-profile parameter details, why a finding on that line matters |
+| `document_symbols(path, depth?)` | The outline of a file (classes, members), instead of reading it |
 | `find_references(path, line, col, include_declaration?, limit?, cursor?)` | Every reference with a confidence, plus counts per confidence |
 | `call_graph(symbol, direction?, depth?)` | Callers of (`in`) or calls made by (`out`) a declaration |
 | `impact_of(symbol, change?)` | Direct and transitive callers, overrides, tests, dynamic sites, risk and suggested checks |
 | `check(paths?, profile?, include?, limit?, cursor?)` | Compile, lint, type-check and practice findings, worst first |
 | `review(paths?, top?)` | The same findings grouped by the review checklist, with the profiles governing the paths |
 | `fix(paths?, codes?, apply?)` | Safe fixes; a dry run unless `apply` |
+| `rename(path, line, col, new_name, apply?)` | Rename everywhere it is used, refused when a use is matched by name only; a dry run unless `apply` |
 | `explain(code)` | What a code means, why it matters and the fix |
 | `profile_status(path)` | Target Groovy, compiling service, construct status on the runtime, descriptor parameters, test seams and protected code of a governed file |
 | `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |

@@ -8,10 +8,13 @@ found in the ``SHA256SUMS.txt`` published next to it.
 from __future__ import annotations
 
 import hashlib
+import http.client
+import logging
+import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from groovyscope import __version__, daemon
 from groovyscope.jar import write_manifest
@@ -22,6 +25,7 @@ DOWNLOAD_TIMEOUT_SECONDS = 120
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
 Downloader = Callable[[str], bytes]
+LOG = logging.getLogger("groovyscope.fetch")
 
 
 class FetchResult(TypedDict):
@@ -47,19 +51,48 @@ def fetched_dir(environ: Mapping[str, str]) -> Path:
     return daemon.cache_dir(environ) / "engine"
 
 
+def https_only_opener() -> urllib.request.OpenerDirector:
+    """An opener that follows redirects only to https URLs (urllib would otherwise follow https -> http)."""
+    handler = urllib.request.HTTPRedirectHandler()
+    follow = handler.redirect_request
+
+    def redirect(request: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:  # noqa: PLR0917 - urllib's signature
+        if not newurl.startswith("https://"):
+            message = f"refusing a redirect from {request.full_url} to a non-https URL {newurl}"
+            raise urllib.error.URLError(message)
+        LOG.debug("redirect %s -> %s", request.full_url, newurl)
+        return follow(request, fp, code, msg, headers, newurl)
+
+    handler.redirect_request = redirect  # type: ignore[method-assign,assignment]
+    return urllib.request.build_opener(handler)
+
+
 def default_downloader(url: str) -> bytes:
-    """Download ``url`` over HTTPS only; anything else is refused before a connection is made."""
+    """Download ``url`` over HTTPS only (redirects included); anything else is refused."""
     if not url.startswith("https://"):
         msg = f"only https:// sources are downloaded, not {url}"
         raise ValueError(msg)
+    LOG.debug("downloading %s", url)
     # GitHub's release CDN answers 403 to urllib's default User-Agent, so the request names itself.
     request = urllib.request.Request(url, headers={"User-Agent": f"groovyscope/{__version__}"})  # noqa: S310
-    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:  # noqa: S310 - https only
-        data: bytes = response.read(MAX_DOWNLOAD_BYTES + 1)
+    try:
+        with https_only_opener().open(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+            data: bytes = response.read(MAX_DOWNLOAD_BYTES + 1)
+    except http.client.HTTPException as exc:  # IncompleteRead and friends are not OSErrors
+        msg = f"download of {url} failed: {exc!r}"
+        raise ValueError(msg) from exc
     if len(data) > MAX_DOWNLOAD_BYTES:
         msg = f"{url} is larger than {MAX_DOWNLOAD_BYTES} bytes; refusing"
         raise ValueError(msg)
+    LOG.debug("downloaded %d bytes from %s", len(data), url)
     return data
+
+
+def write_atomically(target: Path, data: bytes) -> None:
+    """Write bytes via a temporary file and a rename, so a crash never leaves a truncated file behind."""
+    temporary = target.with_name(f".{target.name}.part")
+    temporary.write_bytes(data)
+    temporary.replace(target)
 
 
 def checksum_from_sums(text: str, name: str) -> str | None:
@@ -109,11 +142,18 @@ def fetch_jar(
         msg = f"no checksum for {name}: pass --sha256 or publish {SUMS_NAME} next to it"
         raise ValueError(msg)
     actual = hashlib.sha256(data).hexdigest()
+    LOG.debug("%s: sha256 %s, expected %s (%s)", origin, actual, expected, "given" if sha256 else SUMS_NAME)
     if actual != expected:
         msg = f"SHA-256 mismatch for {origin}: expected {expected}, got {actual}"
         raise ValueError(msg)
+    if not sha256:
+        LOG.warning(
+            "the checksum came from %s next to the JAR, so it detects corruption, not tampering at the source; "
+            "pass --sha256 from a channel you trust for that",
+            SUMS_NAME,
+        )
     destination.mkdir(parents=True, exist_ok=True)
     target = destination / name
-    target.write_bytes(data)
+    write_atomically(target, data)
     write_manifest(destination, version=version, jar_name=name, sha256=actual)
     return {"path": str(target), "version": version, "sha256": actual, "source": origin}

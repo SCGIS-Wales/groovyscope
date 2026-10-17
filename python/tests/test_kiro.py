@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from groovyscope import kiro_agent
 from groovyscope.kiro import (
     GLOBAL_FILES,
     KIRO_FILES,
     RETIRED_KEYS,
     apply_changes,
+    backup_path,
     has_global_setup,
     kiro_home,
     load_template,
@@ -17,6 +20,7 @@ from groovyscope.kiro import (
     plan_changes,
     present_files,
     unified_diff,
+    write_atomically,
 )
 
 
@@ -127,7 +131,9 @@ def test_agent_permissions_from_older_releases_are_retired(tmp_path: Path) -> No
     custom = {"rules": [{"capability": "shell", "match": ["make *"], "effect": "allow"}]}
     agent.write_text(json.dumps({"name": "groovy", "permissions": custom}), encoding="utf-8")
     kept = json.loads({c["path"]: c for c in plan_changes(tmp_path)}[".kiro/agents/groovy.json"]["after"])
-    assert kept["permissions"] == custom
+    assert kept["permissions"]["rules"][0] == custom["rules"][0]
+    assert {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"} in kept["permissions"]["rules"]
+    assert "tools" not in kept  # a V3-only agent stays V3-only
 
 
 def test_global_scope_targets_the_kiro_home(tmp_path: Path) -> None:
@@ -166,3 +172,126 @@ def test_profile_guidance_gets_its_own_steering_file(tmp_path: Path) -> None:
         "steering/groovyscope-profiles.md"
     )
     assert len(plan_changes(tmp_path)) == 4
+
+
+def fake_kiro(log: list[list[str]], *, upgrade: bool = True, verdict: str = "would upgrade") -> Any:
+    """A kiro-cli stand-in: `--version`, `agent upgrade --help`, `--dry-run` with a verdict, and a real rewrite."""
+
+    def run(arguments: list[str]) -> tuple[int, str]:
+        log.append(list(arguments))
+        if arguments == ["--version"]:
+            return (0, "kiro-cli 2.32.0\n")
+        if arguments[:3] == ["agent", "upgrade", "--help"]:
+            return (0, "Upgrade agent configs to the universal format both engines load.") if upgrade else (2, "")
+        if "--dry-run" in arguments:
+            return (0, f"  = {verdict}  groovy.json\n")
+        if arguments[:3] == ["agent", "upgrade", "--no-backup"]:
+            target = Path(arguments[3]) / "groovy.json"
+            agent = json.loads(target.read_text(encoding="utf-8"))
+            agent["permissions"] = {"rules": [{"capability": "fs_read", "effect": "allow"}]}
+            agent["kiroUpgrade"] = {"revision": 2, "fingerprint": "sha256:x", "source": "sha256:y"}
+            target.write_text(json.dumps(agent), encoding="utf-8")
+            return (0, "1 upgraded")
+        return (1, "unexpected")
+
+    return run
+
+
+def test_new_agent_is_universal_when_kiro_can_write_it(tmp_path: Path) -> None:
+    log: list[list[str]] = []
+    change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro(log))}[".kiro/agents/groovy.json"]
+    agent = json.loads(change["after"])
+    assert agent["kiroUpgrade"]["revision"] == 2 and "tools" in agent and "permissions" in agent
+    assert kiro_agent.kiro_version(fake_kiro([])) == "2.32.0"
+    assert kiro_agent.kiro_version(None) is None
+    without = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro([], upgrade=False))}
+    assert "kiroUpgrade" not in json.loads(without[".kiro/agents/groovy.json"]["after"])
+    v2_only = {c["path"]: c for c in plan_changes(tmp_path, run=None)}
+    assert "kiroUpgrade" not in json.loads(v2_only[".kiro/agents/groovy.json"]["after"])
+
+
+def test_existing_formats_are_kept(tmp_path: Path) -> None:
+    agent_file = tmp_path / ".kiro/agents/groovy.json"
+    agent_file.parent.mkdir(parents=True)
+    ours = json.loads(load_template("agents/groovy.json"))
+
+    # V2 with the user's own tool and resource: stays V2, user entries kept
+    agent_file.write_text(json.dumps({**ours, "tools": ["read", "my_tool"], "resources": ["file://NOTES.md"]}))
+    change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro([]))}[".kiro/agents/groovy.json"]
+    agent = json.loads(change["after"])
+    assert "kiroUpgrade" not in agent
+    assert agent["tools"][:2] == ["read", "my_tool"] and "@groovyscope" in agent["tools"]
+    assert agent["resources"][0] == "file://NOTES.md" and "file://AGENTS.md" in agent["resources"]
+
+    # universal and in sync: left byte for byte
+    stamped = {**ours, "permissions": {"rules": []}, "kiroUpgrade": {"revision": 2, "fingerprint": "f"}}
+    text = json.dumps(stamped, indent=2) + "\n"
+    agent_file.write_text(text)
+    log: list[list[str]] = []
+    change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro(log, verdict="already universal"))}
+    assert change[".kiro/agents/groovy.json"]["action"] == "unchanged"
+
+    # universal but out of sync: re-stamped by kiro-cli
+    agent_file.write_text(json.dumps({**stamped, "allowedTools": ["read"]}))
+    change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro([], verdict="would upgrade"))}
+    agent = json.loads(change[".kiro/agents/groovy.json"]["after"])
+    assert agent["kiroUpgrade"]["fingerprint"] == "sha256:x" and "@groovyscope" in agent["allowedTools"]
+
+    # a newer stamp groovyscope does not know: untouched, with a note
+    future = json.dumps({**ours, "kiroUpgrade": {"revision": 9}})
+    agent_file.write_text(future)
+    change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro([]))}[".kiro/agents/groovy.json"]
+    assert change["action"] == "unchanged" and "unknown format" in change["note"]
+
+    # managed externally: untouched
+    agent_file.write_text(json.dumps(ours))
+    change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro([], verdict="managed externally"))}
+    assert change[".kiro/agents/groovy.json"]["action"] == "unchanged"
+
+
+def test_requested_formats_convert(tmp_path: Path) -> None:
+    agent_file = tmp_path / ".kiro/agents/groovy.json"
+    agent_file.parent.mkdir(parents=True)
+    ours = json.loads(load_template("agents/groovy.json"))
+    agent_file.write_text(json.dumps({**ours, "permissions": {"rules": []}, "kiroUpgrade": {"revision": 2}}))
+    to_v2 = {c["path"]: c for c in plan_changes(tmp_path, run=None, agent_format="v2")}[".kiro/agents/groovy.json"]
+    assert "permissions" not in json.loads(to_v2["after"]) and "converted from universal" in to_v2["note"]
+    to_v3 = {c["path"]: c for c in plan_changes(tmp_path, run=None, agent_format="v3")}[".kiro/agents/groovy.json"]
+    v3 = json.loads(to_v3["after"])
+    assert "kiroUpgrade" not in v3 and {"capability": "fs_read", "effect": "allow"} in v3["permissions"]["rules"]
+    agent_file.unlink()
+    fresh = {c["path"]: c for c in plan_changes(tmp_path, agent_format="v3")}[".kiro/agents/groovy.json"]
+    assert "tools" not in json.loads(fresh["after"])
+    universal = {c["path"]: c for c in plan_changes(tmp_path, run=None, agent_format="universal")}
+    assert "cannot write the universal format" in universal[".kiro/agents/groovy.json"]["note"]
+
+
+def test_classify_and_helpers() -> None:
+    assert kiro_agent.classify("not json", None) == "unknown"
+    assert kiro_agent.classify("[1]", None) == "unknown"
+    assert kiro_agent.classify('{"permissions": {}}', None) == "v3"
+    assert kiro_agent.classify('{"tools": []}', fake_kiro([], verdict="v3-only")) == "v3"
+    assert kiro_agent.classify('{"kiroUpgrade": {"revision": "x"}}', None) == "unknown"
+    assert kiro_agent.classify('{"tools": []}', lambda _a: (1, "")) == "v2"
+    assert kiro_agent.union("x", ["a"]) == ["a"]
+    assert kiro_agent.get_path({"a": 1}, ["a", "b"]) is None
+    assert kiro_agent.upgrade("{}", None) is None
+    assert kiro_agent.upgrade("{}", lambda _a: (1, "")) is None
+    assert kiro_agent.upgrade("{}", lambda _a: (0, "")) is None  # nothing stamped
+    assert kiro_agent.merge_v3({"permissions": "odd"})["permissions"]["rules"][0]["capability"] == "mcp"
+    assert kiro_agent.kiro_runner(lambda _n: None) is None
+    run = kiro_agent.kiro_runner(lambda _n: "/bin/echo")
+    assert run is not None and run(["hello"]) == (0, "hello\n")
+    broken = kiro_agent.kiro_runner(lambda _n: "/nonexistent/kiro-cli")
+    assert broken is not None and broken(["--version"])[0] == -1
+
+
+def test_writes_are_atomic_and_backups_never_overwritten(tmp_path: Path) -> None:
+    target = tmp_path / "a" / "file.json"
+    write_atomically(target, "one")
+    target.chmod(0o640)
+    write_atomically(target, "two")
+    assert target.read_text() == "two" and (target.stat().st_mode & 0o777) == 0o640
+    assert not list(target.parent.glob(".*groovyscope-tmp"))
+    target.with_name("file.json.bak").write_text("old")
+    assert backup_path(target).name == "file.json.bak.1"

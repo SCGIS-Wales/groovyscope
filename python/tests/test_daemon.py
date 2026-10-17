@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from groovyscope import daemon
+
+
+@pytest.fixture(autouse=True)
+def long_socket_paths_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pytest's temporary folders exceed sun_path on macOS; the limit itself is tested on its own."""
+    monkeypatch.setattr(daemon, "MAX_SOCKET_PATH", 4096)
 
 
 def test_workspace_key_is_stable_and_short(tmp_path: Path) -> None:
@@ -149,3 +156,65 @@ def test_info(tmp_path: Path) -> None:
     assert (
         daemon.info(tmp_path, {"GROOVYSCOPE_SOCKET_DIR": str(tmp_path)}, probe_fn=lambda _p: None)["running"] is False
     )
+
+
+def test_socket_path_limit_and_private_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(daemon, "MAX_SOCKET_PATH", 20)
+    with pytest.raises(RuntimeError, match="GROOVYSCOPE_SOCKET_DIR"):
+        daemon.check_socket_path(tmp_path / "a-long-socket-name.sock")
+    loose = tmp_path / "loose"
+    loose.mkdir(mode=0o777)
+    loose.chmod(0o777)
+    daemon.secure_dir(loose)
+    assert (loose.stat().st_mode & 0o777) == 0o700
+    created = tmp_path / "new" / "run"
+    daemon.secure_dir(created)
+    assert (created.stat().st_mode & 0o777) == 0o700
+    monkeypatch.setattr(daemon.os, "getuid", lambda: -5)
+    with pytest.raises(RuntimeError, match="belongs to another user"):
+        daemon.secure_dir(created)
+
+
+def test_start_fails_fast_when_the_jvm_exits(tmp_path: Path) -> None:
+    log = tmp_path / "d.log"
+    log.write_text("Error: Could not create the Java Virtual Machine.\n")
+
+    def spawn(_command: list[str], **_kwargs: object) -> Any:
+        return type("P", (), {"poll": staticmethod(lambda: 1)})()
+
+    with pytest.raises(RuntimeError, match="exited with code 1"):
+        daemon.start(
+            ["java"], tmp_path / "s.sock", log, {}, spawn=spawn, probe_fn=lambda _p: None, sleep=lambda _s: None
+        )
+
+
+def test_ensure_running_replaces_a_daemon_of_another_engine_version(tmp_path: Path) -> None:
+    states = iter([{"engine": "0.6.2"}])
+    stopped: list[Path] = []
+    started: list[str] = []
+
+    def start_fn(*_a: object, **_k: object) -> dict[str, Any]:
+        started.append("new")
+        return {"engine": "0.8.0"}
+
+    status = daemon.ensure_running(
+        ["java"],
+        tmp_path / "s.sock",
+        tmp_path / "d.log",
+        {},
+        probe_fn=lambda _p: next(states, None),
+        start_fn=start_fn,
+        stop_fn=lambda p: stopped.append(p) or True,
+        expected_engine="0.8.0",
+    )
+    assert status == {"engine": "0.8.0"} and stopped == [tmp_path / "s.sock"] and started == ["new"]
+    same = daemon.ensure_running(
+        ["java"],
+        tmp_path / "s.sock",
+        tmp_path / "d.log",
+        {},
+        probe_fn=lambda _p: {"engine": "0.8.0"},
+        start_fn=start_fn,
+        expected_engine="0.8.0",
+    )
+    assert same == {"engine": "0.8.0"} and started == ["new"]

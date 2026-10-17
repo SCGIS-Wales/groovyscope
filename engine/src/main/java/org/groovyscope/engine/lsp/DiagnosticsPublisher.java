@@ -62,7 +62,19 @@ final class DiagnosticsPublisher {
         if (pending != null) {
             pending.cancel(false);
         }
-        pending = executor.schedule(this::publishNow, delayMillis, TimeUnit.MILLISECONDS);
+        if (executor.isShutdown()) {
+            return; // the connection has ended or shut down; nobody is listening
+        }
+        try {
+            pending = executor.schedule(this::publishNow, delayMillis, TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            pending = null;
+        }
+    }
+
+    /** True once {@link #shutdown()} has stopped the publishing thread. */
+    boolean isShutdown() {
+        return executor.isShutdown();
     }
 
     /** Compiles if needed and publishes every document's diagnostics now. */
@@ -100,7 +112,7 @@ final class DiagnosticsPublisher {
                 target.publishDiagnostics(new PublishDiagnosticsParams(uri, List.of()));
             }
         } catch (RuntimeException e) {
-            System.err.println("groovyscope-engine: diagnostics failed: " + e);
+            org.groovyscope.engine.log.EngineLog.warn("%s", "diagnostics failed: " + e);
         }
     }
 

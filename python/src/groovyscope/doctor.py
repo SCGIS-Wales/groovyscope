@@ -7,10 +7,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__, daemon, profiles
-from groovyscope.config import load_config
+from groovyscope import __version__, daemon, kiro_agent, profiles
+from groovyscope.config import load_config_with_notes
 from groovyscope.jar import locate_jar
-from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover_jdk, jdk_status
+from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover, jdk_status
 from groovyscope.kiro import has_global_setup, kiro_home, present_files
 from groovyscope.provision import jdk_dir, provisioned_homes
 
@@ -30,11 +30,14 @@ def config_check(
     root: Path, config_path: Path | None, environ: Mapping[str, str]
 ) -> tuple[Check, dict[str, Any] | None]:
     try:
-        config = load_config(root, config_path, environ)
+        config, notes = load_config_with_notes(root, config_path, environ)
     except (ValueError, OSError) as exc:
         return (("fail", "config", str(exc).replace("\n", " ")), None)
     source = str(config_path) if config_path else "defaults + .groovyscope.yaml when present"
-    return (("ok", "config", source), config)
+    trusted = "trusted workspace" if config["workspace"].get("trust") else "untrusted workspace"
+    if notes:
+        return (("warn", "config", f"{source}; {trusted}; " + "; ".join(notes)), config)
+    return (("ok", "config", f"{source}; {trusted}"), config)
 
 
 def jdk_check(config: Mapping[str, Any] | None, environ: Mapping[str, str]) -> tuple[Check, JdkInfo | None]:
@@ -42,10 +45,15 @@ def jdk_check(config: Mapping[str, Any] | None, environ: Mapping[str, str]) -> t
     configured = jdk_section.get("home")
     minimum = int(jdk_section.get("minimum", 17))
     provisioned = provisioned_homes(jdk_dir(environ))
-    info = discover_jdk(configured, environ, minimum=minimum, provisioned=provisioned)
+    found = discover(configured, environ, minimum=minimum, provisioned=provisioned)
+    info = found["jdk"]
     level, message = jdk_status(info, minimum, RECOMMENDED_JDK)
     if level == "fail" and info is None and jdk_section.get("autoProvision"):
         message += "; jdk.autoProvision is on, so the next `groovyscope lsp` will download Temurin"
+    if found["notes"]:
+        message += "; " + "; ".join(found["notes"])
+        if level == "ok":
+            level = "warn"
     return ((level, "jdk", message), info)
 
 
@@ -72,6 +80,32 @@ def kiro_check(root: Path, global_home: Path | None = None) -> Check:
     return ("warn", "kiro files", "missing: " + ", ".join(missing))
 
 
+def kiro_agent_check(root: Path, global_home: Path, run: kiro_agent.KiroRunner | None) -> Check:
+    """Which Kiro CLI is installed and which format the groovy agent is in (project first, then global)."""
+    version = kiro_agent.kiro_version(run)
+    label = f"kiro-cli {version}" if version else "kiro-cli not found on PATH"
+    for agent in (root / ".kiro" / "agents" / "groovy.json", global_home / "agents" / "groovy.json"):
+        if agent.is_file():
+            try:
+                found = kiro_agent.classify(agent.read_text(encoding="utf-8"), run)
+            except OSError as exc:
+                return ("warn", "kiro agent", f"{label}; cannot read {agent}: {exc}")
+            meaning = AGENT_FORMAT_MEANING.get(found, found)
+            level = "ok" if found in {"v2", "universal", "v3"} else "warn"
+            return (level, "kiro agent", f"{label}; {agent} is {found} ({meaning})")
+    return ("info", "kiro agent", f"{label}; no groovy agent yet (run `groovyscope kiro init --global`)")
+
+
+AGENT_FORMAT_MEANING = {
+    "v2": "loaded by the V2 engine, the Kiro CLI 2.x default",
+    "universal": "loaded by the V2 and V3 engines",
+    "universal-out-of-sync": "edited after its V3 rules were generated; run `groovyscope kiro repair`",
+    "v3": "loaded by the V3 engine only",
+    "unknown": "a format this groovyscope does not know; left as it is",
+    "external": "managed outside the project files; left as it is",
+}
+
+
 def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
     details = daemon.info(root, environ)
     if details["running"]:
@@ -90,7 +124,11 @@ def profiles_check(root: Path, config: Mapping[str, Any] | None, home: Path) -> 
 
 
 def build_report(
-    root: Path, config_path: Path | None, environ: Mapping[str, str], home: Path | None = None
+    root: Path,
+    config_path: Path | None,
+    environ: Mapping[str, str],
+    home: Path | None = None,
+    kiro: kiro_agent.KiroRunner | None = None,
 ) -> list[Check]:
     config_result, config = config_check(root, config_path, environ)
     jdk_result, _ = jdk_check(config, environ)
@@ -101,6 +139,7 @@ def build_report(
         jdk_result,
         jar_check(environ),
         kiro_check(root, kiro_home(environ, home or Path.home())),
+        kiro_agent_check(root, kiro_home(environ, home or Path.home()), kiro),
         profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
     ]

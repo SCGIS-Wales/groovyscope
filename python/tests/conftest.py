@@ -24,9 +24,17 @@ echo "fake java: $@"
 
 
 @pytest.fixture(autouse=True)
+def no_real_kiro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never run the developer's kiro-cli; tests that need one inject a fake."""
+    from groovyscope import cli  # noqa: PLC0415 - fixture-local import keeps conftest light
+
+    monkeypatch.setattr(cli, "_KIRO", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def isolated_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Every test gets its own HOME and no KIRO_HOME, so the developer's ~/.kiro and runtime profiles stay unread."""
-    home = tmp_path / "home"
+    home = tmp_path.parent / f"{tmp_path.name}-home"  # beside, not inside, the folder tests use as a workspace
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("KIRO_HOME", raising=False)
@@ -46,7 +54,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]
     cache = tmp_path / "cache"
     env = {
         "PATH": "/nonexistent-bin",
-        "HOME": str(tmp_path / "home"),
+        "HOME": str(tmp_path.parent / f"{tmp_path.name}-home"),
         "GROOVYSCOPE_CACHE_DIR": str(cache),
     }
     monkeypatch.setenv("PATH", env["PATH"])

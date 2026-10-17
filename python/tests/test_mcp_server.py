@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,17 @@ def symbol(name: str, kind: str = "method", path: str = "src/A.groovy") -> dict[
 def engine() -> dict[str, Any]:
     state: dict[str, Any] = {"calls": [], "responses": {}}
     return state
+
+
+@pytest.fixture
+def local_tools(engine: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
+    """Tools whose workspace root is tmp_path, for the tools that write files."""
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        engine["calls"].append((method, params))
+        return engine["responses"].get(method, {})
+
+    return mcp_server.build_tools(tmp_path, call, {"maxResults": 3, "maxBytes": 16000}, {})
 
 
 @pytest.fixture
@@ -158,8 +170,9 @@ def test_check_and_dynamic_code_and_status(tools: dict[str, Any], engine: dict[s
 
 
 def test_format_reports_and_applies(
-    tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    tools = local_tools
     target = tmp_path / "Messy.groovy"
     target.write_text("a  \n", encoding="utf-8")
     engine["responses"]["groovyscope/format"] = {
@@ -170,10 +183,10 @@ def test_format_reports_and_applies(
         },
         "checked": 1,
     }
-    dry = tools["format"](paths=[str(target)])
+    dry = tools["format"](paths=["Messy.groovy"])
     assert dry["changed"] == 1 and dry["files"][0]["linesChanged"] == 1 and dry["files"][0]["applied"] is False
     assert target.read_text(encoding="utf-8") == "a  \n"
-    applied = tools["format"](paths=[str(target)], apply=True)
+    applied = tools["format"](paths=["Messy.groovy"], apply=True)
     assert applied["files"][0]["applied"] is True
     assert target.read_text(encoding="utf-8") == "a\n"
 
@@ -200,6 +213,10 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "review",
         "fix",
         "profile_status",
+        "hover",
+        "type_definition",
+        "document_symbols",
+        "rename",
     }
     result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
     structured = result[1] if isinstance(result, tuple) else result
@@ -252,7 +269,9 @@ def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) ->
     ]
 
 
-def test_explain_review_and_fix(tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path) -> None:
+def test_explain_review_and_fix(
+    tools: dict[str, Any], local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+) -> None:
     engine["responses"]["groovyscope/explain"] = {"code": "GS001", "title": "Integer division with /", "why": "w"}
     assert tools["explain"]("GS001") == {"found": True, "code": "GS001", "title": "Integer division with /", "why": "w"}
     engine["responses"]["groovyscope/explain"] = None
@@ -305,13 +324,13 @@ def test_explain_review_and_fix(tools: dict[str, Any], engine: dict[str, Any], t
             ]
         },
         "applied": {target.as_uri(): ["GS001"]},
-        "rejected": {"file:///ws/src/B.groovy": "does not parse"},
+        "rejected": {(tmp_path / "src" / "B.groovy").as_uri(): "does not parse"},
     }
-    dry = tools["fix"](paths=[str(target)])
+    dry = local_tools["fix"](paths=["Fix.groovy"])
     assert dry["files"][0]["codes"] == ["GS001"] and dry["files"][0]["applied"] is False
     assert dry["rejected"] == {"src/B.groovy": "does not parse"}
     assert target.read_text(encoding="utf-8") == "int x = a / b\n"
-    tools["fix"](paths=[str(target)], codes=["GS001"], apply=True)
+    local_tools["fix"](paths=["Fix.groovy"], codes=["GS001"], apply=True)
     assert target.read_text(encoding="utf-8") == "int x = a.intdiv(b)\n"
     assert engine["calls"][-1][1]["codes"] == ["GS001"]
 
@@ -334,3 +353,111 @@ def test_profile_status_and_review_notes(tools: dict[str, Any], engine: dict[str
     assert reviewed["profiles"] == {"plugins/demo/DemoPlugin.groovy": "demo-runtime"}
     engine["responses"]["groovyscope/profile"] = None
     assert tools["profile_status"]("src/A.groovy") == {"path": "src/A.groovy", "governed": False}
+
+
+def test_writes_stay_inside_the_workspace_and_keep_line_endings(
+    local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.groovy"
+    outside.write_text("x\n", encoding="utf-8")
+    inside = tmp_path / "Crlf.groovy"
+    inside.write_bytes("def s = '\U0001f600'; int a = 1\r\nint b = 2\r\n".encode())
+    edit = {"range": {"start": {"line": 0, "character": 18}, "end": {"line": 0, "character": 19}}, "newText": "z"}
+    engine["responses"]["groovyscope/fix"] = {
+        "edits": {inside.as_uri(): [edit], outside.as_uri(): [edit], (tmp_path / "notes.txt").as_uri(): [edit]},
+        "applied": {inside.as_uri(): ["X"]},
+    }
+    (tmp_path / "notes.txt").write_text("text\n", encoding="utf-8")
+    result = local_tools["fix"](apply=True)
+    assert inside.read_bytes() == "def s = '\U0001f600'; int z = 1\r\nint b = 2\r\n".encode()
+    assert outside.read_text(encoding="utf-8") == "x\n"
+    assert set(result["rejected"].values()) == {"not a Groovy source inside the workspace"}
+    with pytest.raises(ValueError, match="outside the workspace"):
+        local_tools["fix"](paths=["../elsewhere.groovy"])
+
+
+def test_session_caller_reconnects_once_after_the_engine_went_away(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[Path] = []
+    attempts: list[str] = []
+
+    def call(session: dict[str, Any], method: str, _params: Any = None, timeout: float | None = None) -> Any:
+        attempts.append(session["name"])
+        if session["name"] == "first":
+            msg = "engine closed the session"
+            raise ConnectionError(msg)
+        return {"ok": method}
+
+    monkeypatch.setattr(mcp_server.rpc, "call", call)
+    monkeypatch.setattr(mcp_server.rpc, "close_session", lambda _s: None)
+    names = iter(["first", "second"])
+
+    def opener(path: Path) -> dict[str, Any]:
+        opened.append(path)
+        return {"name": next(names)}
+
+    caller, close = mcp_server.session_caller(Path("/a.sock"), lambda: Path("/b.sock"), open_session=opener)
+    assert caller("groovyscope/status", {}) == {"ok": "groovyscope/status"}
+    assert opened == [Path("/a.sock"), Path("/b.sock")] and attempts == ["first", "second"]
+    close()
+    no_retry, _ = mcp_server.session_caller(Path("/a.sock"), None, open_session=lambda _p: {"name": "first"})
+    with pytest.raises(ConnectionError):
+        no_retry("groovyscope/status", {})
+
+
+def test_insight_tools_and_rename(
+    tools: dict[str, Any], local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+) -> None:
+    engine["responses"]["groovyscope/hover"] = {"markdown": "`String greet(String name)`"}
+    assert tools["hover"]("src/A.groovy", 4, 6) == {"found": True, "markdown": "`String greet(String name)`"}
+    assert engine["calls"][-1] == (
+        "groovyscope/hover",
+        {"root": "/ws", "uri": "file:///ws/src/A.groovy", "line": 3, "character": 5},
+    )
+    engine["responses"]["groovyscope/hover"] = None
+    assert tools["hover"]("src/A.groovy", 1, 1) == {"found": False}
+    engine["responses"]["groovyscope/typeDefinition"] = {"symbol": symbol("String", "class"), "confidence": "STATIC"}
+    assert tools["type_definition"]("src/A.groovy", 1, 1)["symbol"]["name"] == "String"
+    engine["responses"]["groovyscope/typeDefinition"] = None
+    assert tools["type_definition"]("src/A.groovy", 1, 1) == {"found": False}
+    member = symbol("greet")
+    klass = {**symbol("A", "class"), "children": [{**member, "children": [symbol("local", "variable")]}]}
+    engine["responses"]["groovyscope/documentSymbols"] = {"symbols": [klass]}
+    outline = tools["document_symbols"]("src/A.groovy", depth=1)
+    assert outline["symbols"][0]["name"] == "A" and outline["symbols"][0]["members"] == 1 and not outline["truncated"]
+    deep = tools["document_symbols"]("src/A.groovy", depth=3)
+    assert deep["symbols"][0]["children"][0]["children"][0]["name"] == "local"
+
+    engine["responses"]["groovyscope/rename"] = {"refused": "matched by name only"}
+    assert local_tools["rename"]("A.groovy", 1, 1, "b") == {"renamed": False, "refused": "matched by name only"}
+    target = tmp_path / "A.groovy"
+    target.write_text("int a = 1\nprintln a\n", encoding="utf-8")
+    first = {"range": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 5}}, "newText": "b"}
+    second = {"range": {"start": {"line": 1, "character": 8}, "end": {"line": 1, "character": 9}}, "newText": "b"}
+    engine["responses"]["groovyscope/rename"] = {
+        "edits": {target.as_uri(): [first, second], "file:///etc/hosts.groovy": [first]}
+    }
+    dry = local_tools["rename"]("A.groovy", 1, 5, "b")
+    assert dry["files"] == [{"path": "A.groovy", "edits": 2, "linesChanged": 2}] and "skipped" in dry
+    assert target.read_text(encoding="utf-8") == "int a = 1\nprintln a\n"
+    applied = local_tools["rename"]("A.groovy", 1, 5, "b", apply=True)
+    assert applied["renamed"] is True and target.read_text(encoding="utf-8") == "int b = 1\nprintln b\n"
+
+
+def test_results_are_compact_and_annotated(engine: dict[str, Any]) -> None:
+    engine["responses"]["groovyscope/symbols"] = {"symbols": [symbol("Greeter", "class")]}
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        return engine["responses"].get(method, {})
+
+    server = mcp_server.build_server(ROOT, call, {"maxResults": 50, "maxBytes": 16000}, {})
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    assert tools["check"].annotations.read_only_hint is True and tools["check"].annotations.open_world_hint is False
+    assert tools["rename"].annotations.read_only_hint is False and tools["rename"].title == "Rename a symbol"
+    result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
+    text = result.content[0].text
+    assert "\n" not in text and json.loads(text)["items"][0]["name"] == "Greeter"
+    assert result.structured_content is None
+    structured = mcp_server.build_server(ROOT, call, {"maxResults": 50, "structured": True}, {})
+    again = asyncio.run(structured.call_tool("find_symbol", {"query": "gree"}))
+    assert again.structured_content["items"][0]["name"] == "Greeter"
+    assert mcp_server.clip("x" * 10, 4) == "xxx…" and mcp_server.clip(5, 1) == 5

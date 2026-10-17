@@ -7,7 +7,8 @@ groovy:
 jdk:
   home: null              # explicit JDK home; null = discover (JAVA_HOME, /usr/libexec/java_home, PATH)
   minimum: 17             # Groovy 6 needs JDK 17+
-  autoProvision: false    # true: download a checksum-verified Temurin JDK when none meets `minimum` (see `groovyscope jdk install`)
+  autoProvision: false    # true: download a checksum-verified JDK when none meets `minimum` (see `groovyscope jdk install`)
+  vendor: "temurin"       # JDK autoProvision downloads: temurin (Eclipse Temurin) | corretto (Amazon Corretto)
 workspace:
   sourceRoots: ["src/main/groovy", "src/test/groovy", "src/main/java", "src/test/java", "vars"]
   javaSources: true       # compile .java files under the roots too, so Groovy code resolves the project's Java classes
@@ -15,7 +16,9 @@ workspace:
   classpathFrom:
     gradleTask: null      # optional Gradle task that prints the classpath (Stage 1)
   exclude: ["**/build/**", "**/.gradle/**", "**/target/**", "**/node_modules/**"]
-  trust: false            # true allows global AST transforms from the workspace classpath to load
+  trust: false            # only honoured after `groovyscope trust` (or GROOVYSCOPE_WORKSPACE__TRUST=true): allows
+                          # global AST transforms from the workspace classpath, jdk.home and rule sets from this file
+  maxFileBytes: 2000000   # source files larger than this are skipped (0 = no limit)
 daemon:
   enabled: true           # Stage 2: warm JVM per workspace; until then the engine runs per session
   idleTimeoutMinutes: 60
@@ -48,6 +51,8 @@ format:
 output:
   maxResults: 50          # per response, with continuation tokens beyond that
   maxBytes: 16000         # hard cap on the JSON body returned to an agent
+  maxMessageChars: 400    # finding messages longer than this are clipped in MCP answers (0 = never)
+  structured: false       # MCP: also send results as structuredContent (doubles the payload; most clients read the text)
 logging:
   level: "warning"        # debug | info | warning | error
   file: null              # null = stderr

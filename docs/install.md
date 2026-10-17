@@ -44,22 +44,55 @@ The symlink lets `/usr/libexec/java_home` find the JDK. Without it, set `JAVA_HO
 export JAVA_HOME="$(brew --prefix)/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
 ```
 
+## macOS or Linux with Amazon Corretto
+
+Any Corretto 17 or newer works; 21 is recommended. Install it the usual way (the `.pkg` installer, `brew install
+--cask corretto@21`, or the Linux packages), or unpack the tarball into your user folder without admin rights:
+
+```bash
+mkdir -p ~/Library/Java/JavaVirtualMachines
+curl -fL https://corretto.aws/downloads/latest/amazon-corretto-21-aarch64-macos-jdk.tar.gz -o corretto-21.tar.gz
+curl -fsS https://corretto.aws/downloads/latest_sha256/amazon-corretto-21-aarch64-macos-jdk.tar.gz   # compare
+shasum -a 256 corretto-21.tar.gz
+tar -xzf corretto-21.tar.gz -C ~/Library/Java/JavaVirtualMachines
+groovyscope doctor     # jdk  JDK 21 (Corretto-21.0.x..., 21.0.x) at .../amazon-corretto-21.jdk/Contents/Home
+```
+
+Or let groovyscope do it, checksum included: `groovyscope jdk install --vendor corretto`.
+
 ## No JDK at hand: let groovyscope fetch one (opt-in)
 
 ```bash
-groovyscope jdk install            # latest Temurin 21 from the Adoptium API, SHA-256 checked, unpacked in the cache
-groovyscope doctor                 # reports it as "provisioned"
+groovyscope jdk install                    # latest Temurin 21 (Adoptium API), SHA-256 checked, unpacked in the cache
+groovyscope jdk install --vendor corretto  # or Amazon Corretto 21, checked against the SHA-256 Amazon publishes
+groovyscope doctor                         # reports it as "provisioned"
 ```
 
 `jdk.autoProvision: true` in `.groovyscope.yaml` does the same automatically the first time `groovyscope lsp`
-finds no JDK meeting `jdk.minimum`. A JDK you installed yourself always wins over a provisioned one. Supported:
+finds no JDK meeting `jdk.minimum` (`jdk.vendor: corretto` picks Corretto). A JDK you installed yourself always wins over a provisioned one. Supported:
 macOS and Linux on x64 and arm64.
 
 ## How the JDK is found
 
-In order: `jdk.home` in `.groovyscope.yaml`, `JAVA_HOME`, `/usr/libexec/java_home -v 17+` (macOS), `java` on
-`PATH`, then JDKs under the cache directory from `groovyscope jdk install`. The first one that meets
-`jdk.minimum` wins. `doctor` reports which one was chosen.
+In order, the first JDK that meets `jdk.minimum` (17 unless configured higher) wins:
+
+1. `jdk.home` (from your environment, an explicit `--config`, or a trusted workspace's `.groovyscope.yaml`);
+2. `JAVA_HOME`;
+3. `/usr/libexec/java_home -v <minimum>+` on macOS;
+4. `java` on `PATH` (version-manager shims such as asdf, jenv, mise and SDKMAN are followed to the real home);
+5. the conventional folders: `~/Library/Java/JavaVirtualMachines` and `/Library/Java/JavaVirtualMachines` on
+   macOS, `/usr/lib/jvm`, `/usr/java` and `/opt/java` on Linux;
+6. JDKs from `groovyscope jdk install`.
+
+A JDK's version and vendor are read from its `release` file (every modern JDK, Corretto included, has one), so
+no JVM is started to find out; `java -version` is the fallback. `JAVA_HOME` and `jdk.home` may point at the JDK
+home, at a macOS `.jdk` bundle (its `Contents/Home` is used), at its `bin` folder or at the `java` binary. When
+the one you named cannot be used (not a JDK, or older than `jdk.minimum`), `doctor` and every command say so and
+name the JDK used instead, rather than switching silently. `doctor` shows the vendor and full version:
+
+```text
+ok    jdk          JDK 21 (Corretto-21.0.12.12.1, 21.0.12.1) at ~/Library/Java/JavaVirtualMachines/amazon-corretto-21.jdk/Contents/Home (from JAVA_HOME)
+```
 
 ## Engine JAR without a wheel: `groovyscope fetch`
 

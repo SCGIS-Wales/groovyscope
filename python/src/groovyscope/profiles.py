@@ -107,9 +107,34 @@ def discover(root: Path, settings: Mapping[str, Any], home: Path) -> Discovery:
     return {"profiles": found, "shadowed": shadowed, "errors": errors}
 
 
-def engine_profiles(discovery: Discovery) -> list[dict[str, Any]]:
-    """The profile documents in the order the engine tries them."""
-    return [loaded["profile"] for loaded in discovery["profiles"]]
+def engine_profiles(discovery: Discovery, root: Path | None = None, *, trusted: bool = True) -> list[dict[str, Any]]:
+    """The profile documents in the order the engine tries them. Relative emulation jars are resolved against the
+    profile file's folder; a profile kept inside an untrusted workspace loses its emulation jars, because loading
+    them compiles code with jars the repository chose."""
+    documents: list[dict[str, Any]] = []
+    for loaded in discovery["profiles"]:
+        profile = dict(loaded["profile"])
+        target = dict(profile.get("target") or {})
+        jars = [str(jar) for jar in target.get("emulationJars", [])]
+        if jars:
+            folder = Path(loaded["path"]).parent
+            inside = root is not None and Path(loaded["path"]).resolve().is_relative_to(root.resolve())
+            target["emulationJars"] = (
+                [] if inside and not trusted else [str((folder / Path(jar).expanduser()).resolve()) for jar in jars]
+            )
+            profile["target"] = target
+        documents.append(profile)
+    return documents
+
+
+def untrusted_jar_notes(discovery: Discovery, root: Path) -> list[str]:
+    """Notes for workspace profiles whose emulation jars an untrusted workspace does not get to load."""
+    return [
+        f"profile {loaded['name']}: emulation jars from a workspace profile are ignored until `groovyscope trust`"
+        for loaded in discovery["profiles"]
+        if (loaded["profile"].get("target") or {}).get("emulationJars")
+        and Path(loaded["path"]).resolve().is_relative_to(root.resolve())
+    ]
 
 
 SKIPPED_DIRS = frozenset(

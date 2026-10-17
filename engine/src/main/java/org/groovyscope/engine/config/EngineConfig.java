@@ -42,10 +42,16 @@ import java.util.Set;
  * @param groovy the Groovy version the code targets and the versions it must stay compatible with
  * @param practices groovyscope's own practice diagnostics (GS codes, docs/practices.md)
  * @param profiles runtime profiles (docs/profiles.md), in the order they are tried
+ * @param maxFileBytes source files larger than this are skipped ({@code workspace.maxFileBytes}; 0 means no limit)
+ * @param configHash SHA-256 (hex) of the raw configuration JSON handed over in the environment, or empty; lets the
+ *     front end detect a daemon started with an older configuration
  */
 public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
         Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
-        List<org.groovyscope.engine.profiles.Profile> profiles) {
+        List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, String configHash) {
+
+    /** Default of {@code workspace.maxFileBytes}. */
+    public static final long DEFAULT_MAX_FILE_BYTES = 2_000_000L;
 
     /** File extensions treated as Groovy sources. */
     public static final Set<String> EXTENSIONS = Set.of("groovy", "gvy", "gy", "gsh", "gradle");
@@ -168,7 +174,9 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             true,
             Groovy.DEFAULTS,
             Practices.DEFAULTS,
-            List.of());
+            List.of(),
+            DEFAULT_MAX_FILE_BYTES,
+            "");
 
     public EngineConfig {
         sourceRoots = List.copyOf(sourceRoots);
@@ -180,12 +188,47 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         groovy = groovy == null ? Groovy.DEFAULTS : groovy;
         practices = practices == null ? Practices.DEFAULTS : practices;
         profiles = List.copyOf(profiles == null ? List.of() : profiles);
+        maxFileBytes = Math.max(0, maxFileBytes);
+        configHash = configHash == null ? "" : configHash;
+    }
+
+    /** Every setting, with the default file size limit and no configuration hash. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
+            List<org.groovyscope.engine.profiles.Profile> profiles) {
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
+                DEFAULT_MAX_FILE_BYTES, "");
     }
 
     /** This configuration with another Groovy target (used for files a runtime profile governs). */
     public EngineConfig withGroovy(Groovy target) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, target,
-                practices, profiles);
+                practices, profiles, maxFileBytes, configHash);
+    }
+
+    /** This configuration with the hash of the raw JSON it was read from. */
+    public EngineConfig withConfigHash(String hash) {
+        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
+                practices, profiles, maxFileBytes, hash);
+    }
+
+    /** This configuration with another file size limit (0 means no limit). */
+    public EngineConfig withMaxFileBytes(long limit) {
+        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
+                practices, profiles, limit, configHash);
+    }
+
+    /** SHA-256 (hex) of a raw configuration document, or empty when there is none. */
+    public static String hashOf(String json) {
+        if (json == null) {
+            return "";
+        }
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of().formatHex(digest.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     /** All settings except runtime profiles. */
@@ -265,7 +308,16 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         strings(groovy.get("compat"), Groovy.DEFAULTS.compat())),
                 new Practices(bool(practices.get("enabled"), Practices.DEFAULTS.enabled()),
                         stringMap(practices.get("severity"))),
-                profiles(document.get("profiles")));
+                profiles(document.get("profiles")),
+                longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
+                "");
+    }
+
+    private static long longValue(JsonElement element, long fallback) {
+        if (element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
+            return element.getAsLong();
+        }
+        return fallback;
     }
 
     private static List<org.groovyscope.engine.profiles.Profile> profiles(JsonElement element) {

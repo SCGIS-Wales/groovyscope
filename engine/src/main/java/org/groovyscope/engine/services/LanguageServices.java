@@ -288,26 +288,62 @@ public final class LanguageServices {
             // Captured before the sources are read: an edit that arrives while this compile runs leaves the
             // snapshot stale, so the next query recompiles instead of serving the pre-edit result.
             long target = changes.get();
-            // Taken before the sources are read, so an edit racing this compile shows up as a later change.
-            String fingerprint = workspace.diskFingerprint();
-            Map<String, String> sources = workspace.compileSources();
-            CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
-            Map<String, ModuleNode> modules = new HashMap<>(result.modules());
-            // A file that no longer parses keeps its last good AST so navigation degrades instead of vanishing.
-            for (Map.Entry<String, ModuleNode> previous : snapshot.result().modules().entrySet()) {
-                if (!modules.containsKey(previous.getKey()) && sources.containsKey(previous.getKey())) {
-                    modules.put(previous.getKey(), previous.getValue());
+            String fingerprint = null;
+            Map<String, String> sources = Map.of();
+            try {
+                // Taken before the sources are read, so an edit racing this compile shows up as a later change.
+                long started = System.nanoTime();
+                fingerprint = workspace.diskFingerprint();
+                sources = workspace.compileSources();
+                CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
+                org.groovyscope.engine.log.EngineLog.debug("compiled %d file(s) of %s in %d ms (%d with diagnostics)",
+                        sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,
+                        result.diagnostics().values().stream().filter(list -> !list.isEmpty()).count());
+                Map<String, ModuleNode> modules = new HashMap<>(result.modules());
+                // A file that no longer parses keeps its last good AST so navigation degrades instead of vanishing.
+                for (Map.Entry<String, ModuleNode> previous : snapshot.result().modules().entrySet()) {
+                    if (!modules.containsKey(previous.getKey()) && sources.containsKey(previous.getKey())) {
+                        modules.put(previous.getKey(), previous.getValue());
+                    }
                 }
+                AstIndex index = AstIndex.build(modules, sources);
+                Resolver resolver = new Resolver(index);
+                version++;
+                snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
+                persistSymbols(snapshot, sources);
+            } catch (RuntimeException | LinkageError | StackOverflowError e) {
+                org.groovyscope.engine.log.EngineLog.error(e, "compile of %s failed", workspace.root());
+                // Recorded as a snapshot with the failure as a diagnostic, so later requests answer from it until
+                // something changes, instead of repeating the same failure on every request.
+                org.groovyscope.engine.log.EngineLog.warn("%s", "analysis failed: " + e);
+                version++;
+                snapshot = failedSnapshot(snapshot, sources, e, version);
             }
-            AstIndex index = AstIndex.build(modules, sources);
-            Resolver resolver = new Resolver(index);
-            version++;
-            snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
             compiled = target;
             compiledFingerprint = fingerprint;
-            persistSymbols(snapshot, sources);
             return snapshot;
         }
+    }
+
+    /** The previous snapshot's trees and index with the failure reported on the first document. */
+    static Snapshot failedSnapshot(Snapshot previous, Map<String, String> sources, Throwable failure, long version) {
+        Map<String, List<Diagnostic>> diagnostics = new HashMap<>();
+        for (String uri : sources.keySet()) {
+            diagnostics.put(uri, new ArrayList<>());
+        }
+        String first = sources.keySet().stream().sorted().findFirst().orElse(null);
+        if (first != null) {
+            diagnostics.put(first, List.of(new Diagnostic(first, Range.of(0, 0, 0, 1), Diagnostic.Severity.ERROR,
+                    GroovyCompiler.SOURCE, "engine-crash", "groovyscope could not analyse the workspace: " + failure)));
+        }
+        Map<String, ModuleNode> modules = new HashMap<>();
+        for (Map.Entry<String, ModuleNode> entry : previous.result().modules().entrySet()) {
+            if (sources.containsKey(entry.getKey())) {
+                modules.put(entry.getKey(), entry.getValue());
+            }
+        }
+        CompilationResult result = new CompilationResult(modules, sources, diagnostics, 0, sources.keySet());
+        return new Snapshot(result, previous.index(), previous.resolver(), previous.symbols(), version);
     }
 
     private void persistSymbols(Snapshot fresh, Map<String, String> sources) {
@@ -319,7 +355,7 @@ public final class LanguageServices {
             try {
                 store.save(sources, symbols);
             } catch (IOException e) {
-                System.err.println("groovyscope-engine: symbol cache not saved: " + e.getMessage());
+                org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache not saved: " + e.getMessage());
             }
         });
     }
@@ -331,7 +367,7 @@ public final class LanguageServices {
             try {
                 cached = store == null ? List.of() : store.load(workspace.compileSources());
             } catch (IOException e) {
-                System.err.println("groovyscope-engine: symbol cache not read: " + e.getMessage());
+                org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache not read: " + e.getMessage());
                 cached = List.of();
             }
             cachedSymbols = cached;

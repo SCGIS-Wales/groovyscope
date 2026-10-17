@@ -16,41 +16,46 @@
 package org.groovyscope.engine.workspace;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import org.groovyscope.engine.config.EngineConfig;
+import org.groovyscope.engine.profiles.Contracts;
+import org.groovyscope.engine.profiles.Profile;
 
 /**
  * The files under analysis: Groovy sources discovered under the configured roots, overlaid with the
  * documents the client currently has open (whose unsaved text wins over the disk).
+ *
+ * <p>Several connections may share one model, so each open document is reference-counted: one connection
+ * closing a document does not drop the overlay another connection still has open.
  */
 public final class WorkspaceModel {
 
     private final Path root;
     private final EngineConfig config;
-    private final List<PathMatcher> excludes;
+    private final List<String> excludes;
     private final Map<String, String> openDocuments = new ConcurrentHashMap<>();
+    private final Map<String, Integer> openCounts = new HashMap<>();
+    private volatile Path realRoot;
 
     public WorkspaceModel(Path root, EngineConfig config) {
         this.root = root.toAbsolutePath().normalize();
         this.config = Objects.requireNonNull(config, "config");
-        this.excludes = config.exclude().stream()
-                .flatMap(WorkspaceModel::globVariants)
-                .map(glob -> FileSystems.getDefault().getPathMatcher("glob:" + glob))
-                .toList();
+        this.excludes = config.exclude().stream().flatMap(WorkspaceModel::globVariants).toList();
     }
 
     public Path root() {
@@ -66,16 +71,32 @@ public final class WorkspaceModel {
         return config.classpath().stream().map(entry -> root.resolve(entry).normalize()).toList();
     }
 
+    /** Opens a document (or opens it once more, from another connection) with the given text. */
     public void open(String uri, String text) {
-        openDocuments.put(uri, text);
+        synchronized (openCounts) {
+            openCounts.merge(uri, 1, Integer::sum);
+            openDocuments.put(uri, text);
+        }
     }
 
     public void change(String uri, String text) {
-        openDocuments.put(uri, text);
+        synchronized (openCounts) {
+            openCounts.putIfAbsent(uri, 1);
+            openDocuments.put(uri, text);
+        }
     }
 
+    /** Releases one opening of a document; its overlay goes once no connection has it open. */
     public void close(String uri) {
-        openDocuments.remove(uri);
+        synchronized (openCounts) {
+            Integer count = openCounts.get(uri);
+            if (count == null || count <= 1) {
+                openCounts.remove(uri);
+                openDocuments.remove(uri);
+            } else {
+                openCounts.put(uri, count - 1);
+            }
+        }
     }
 
     public boolean isOpen(String uri) {
@@ -87,14 +108,17 @@ public final class WorkspaceModel {
         return openDocuments.get(uri);
     }
 
-    /** The current text of a document: the open overlay, else the file on disk; {@code null} when neither. */
+    /**
+     * The current text of a document: the open overlay, else the file on disk; {@code null} when neither, and for
+     * files outside the workspace root (only documents an editor opened may live elsewhere).
+     */
     public String text(String uri) {
         String open = openDocuments.get(uri);
         if (open != null) {
             return open;
         }
         Path path = toPath(uri);
-        if (path == null || !Files.isRegularFile(path)) {
+        if (path == null || !Files.isRegularFile(path) || !contains(path)) {
             return null;
         }
         try {
@@ -128,29 +152,73 @@ public final class WorkspaceModel {
         if (roots.isEmpty() && Files.isDirectory(root)) {
             roots.add(root);
         }
-        List<Path> files = new ArrayList<>();
+        long limit = config.maxFileBytes();
+        Set<Path> files = new LinkedHashSet<>();
         for (Path start : roots) {
-            try (Stream<Path> stream = Files.walk(start)) {
-                stream.filter(Files::isRegularFile)
-                        .filter(path -> EngineConfig.isGroovyFileName(path.getFileName().toString())
-                                || withJava && EngineConfig.isJavaFileName(path.getFileName().toString()))
-                        .filter(path -> !isExcluded(path))
-                        .forEach(files::add);
-            } catch (IOException e) {
-                throw new UncheckedIOException("cannot walk " + start, e);
-            }
+            files.addAll(FileWalker.files(start, root, excludes, Set.of(), (path, attributes) -> {
+                String name = path.getFileName().toString();
+                if (!EngineConfig.isGroovyFileName(name) && !(withJava && EngineConfig.isJavaFileName(name))) {
+                    return false;
+                }
+                if (isExcluded(path)) {
+                    return false;
+                }
+                if (limit > 0 && attributes.size() > limit) {
+                    FileWalker.reportOnce("size:" + path, "skipping " + path + ": " + attributes.size()
+                            + " bytes is over workspace.maxFileBytes (" + limit + ")");
+                    return false;
+                }
+                return true;
+            }));
         }
-        Collections.sort(files);
-        return files;
+        List<Path> sorted = new ArrayList<>(files);
+        Collections.sort(sorted);
+        return sorted;
     }
 
     /**
-     * A cheap summary of what the compiler would read from disk: every compile file's path, size and modification
-     * time. It changes when a file is added, removed or edited outside the editor (an agent's write tool, git).
+     * Files outside the compile set whose edits change analysis results: the contract baseline and, with runtime
+     * profiles, the parameter descriptors and infrastructure variable files the profiles name.
+     */
+    public List<Path> profileInputs() {
+        List<Path> inputs = new ArrayList<>();
+        Path baseline = root.resolve(Contracts.BASELINE);
+        if (Files.isRegularFile(baseline)) {
+            inputs.add(baseline);
+        }
+        Set<String> descriptorNames = new HashSet<>();
+        List<String> variableGlobs = new ArrayList<>();
+        for (Profile profile : config.profiles()) {
+            if (profile.descriptor() != null && !profile.descriptor().file().isBlank()) {
+                descriptorNames.add(profile.descriptor().file());
+            }
+            if (profile.infrastructure() != null && !profile.infrastructure().variables().isBlank()) {
+                variableGlobs.add(profile.infrastructure().variables());
+            }
+        }
+        if (descriptorNames.isEmpty() && variableGlobs.isEmpty() || !Files.isDirectory(root)) {
+            return inputs;
+        }
+        inputs.addAll(FileWalker.files(root, root, excludes, Set.of(".terraform"), (path, attributes) -> {
+            if (descriptorNames.contains(path.getFileName().toString())) {
+                return true;
+            }
+            Path relative = root.relativize(path);
+            return variableGlobs.stream().anyMatch(glob -> Globs.matches(glob, relative));
+        }));
+        return inputs;
+    }
+
+    /**
+     * A cheap summary of what analysis reads from disk: every compile file's path, size and modification time,
+     * plus the {@link #profileInputs()}. It changes when a file is added, removed or edited outside the editor (an
+     * agent's write tool, a checkout), or when the contract baseline or a profile's descriptor changes.
      */
     public String diskFingerprint() {
         StringBuilder text = new StringBuilder();
-        for (Path file : discoverCompileFiles()) {
+        List<Path> files = new ArrayList<>(discoverCompileFiles());
+        files.addAll(profileInputs());
+        for (Path file : files) {
             text.append(file).append('|');
             try {
                 text.append(Files.size(file)).append('|').append(Files.getLastModifiedTime(file).toMillis());
@@ -184,7 +252,7 @@ public final class WorkspaceModel {
                     sources.put(uri, Files.readString(file, StandardCharsets.UTF_8));
                 } catch (IOException e) {
                     // Unreadable or non-UTF-8 files are skipped rather than failing the whole workspace.
-                    System.err.println("groovyscope-engine: skipping unreadable " + file + ": " + e.getMessage());
+                    FileWalker.reportOnce("read:" + file, "skipping unreadable " + file + ": " + e.getMessage());
                 }
             }
         }
@@ -212,12 +280,48 @@ public final class WorkspaceModel {
             return false;
         }
         Path relative = root.relativize(absolute);
-        for (PathMatcher matcher : excludes) {
-            if (matcher.matches(relative)) {
+        for (String glob : excludes) {
+            if (Globs.matcher(glob).map(matcher -> matcher.matches(relative)).orElse(false)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** True when a {@code file:} URI names a path inside the workspace root (after resolving symbolic links). */
+    public boolean contains(String uri) {
+        Path path = uri == null ? null : toPath(uri);
+        return path != null && contains(path);
+    }
+
+    /** True when a path lies inside the workspace root, comparing real paths so links cannot lead out of it. */
+    public boolean contains(Path path) {
+        Path top = realRoot;
+        if (top == null) {
+            top = realPath(root);
+            realRoot = top;
+        }
+        return realPath(path).startsWith(top);
+    }
+
+    /**
+     * The real path of a file, or for one that does not exist, the real path of its nearest existing ancestor with
+     * the rest appended.
+     */
+    static Path realPath(Path path) {
+        Path absolute = path.toAbsolutePath().normalize();
+        Path existing = absolute;
+        while (existing != null && !Files.exists(existing)) {
+            existing = existing.getParent();
+        }
+        if (existing == null) {
+            return absolute;
+        }
+        try {
+            return existing.toRealPath().resolve(existing.relativize(absolute)).normalize();
+        } catch (IOException e) {
+            return absolute;
+        }
     }
 
     /** True for a {@code .java} document. */
