@@ -32,7 +32,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   prepareRename/rename, compile diagnostics). Fixture projects. Security tests for `@Grab`, `@ASTTest`
   and untrusted global AST transforms. Done when a references query on a fixture returns correct locations
   through Kiro's `code` tool.
-- [ ] **Stage 2: daemon + Python relay** — branch `feat/daemon-relay`, PR open (2026-10-17).
+- [x] **Stage 2: daemon + Python relay** — branch `feat/daemon-relay`, PR #11 merged 2026-10-17.
   Delivered on the branch: `DaemonServer` (Unix domain socket, one LSP front end per connection, shared
   `WorkspaceRegistry`, idle watchdog, `groovyscope/status`, `groovyscope/shutdownDaemon`), `SymbolStore`
   (SQLite symbol cache keyed by content hash, answers symbol searches before the first compile), engine
@@ -40,7 +40,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   the daemon with direct-exec fallback, real `daemon start|stop|status`, CDS archive flags, doctor daemon
   line; specs and tests including a real daemon lifecycle integration test. Per-file incremental
   invalidation deferred (full recompile inside the warm JVM is fast enough for now).
-- [ ] **Stage 3: CodeNarc + formatter + diagnostics** — branch `feat/lint-format`.
+- [ ] **Stage 3: CodeNarc + formatter + diagnostics** — branch `feat/lint-format` (in progress since 2026-10-17).
   CodeNarc 4 in process with the bundled rulesets (prune unknown rules), Groovy 6 type-checker extensions,
   GrEclipse formatting via spotless-lib returning TextEdits, pull diagnostics, codeAction, `check` and
   `format` CLI commands, SARIF upload in CI.
@@ -68,3 +68,4 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
 - 2026-10-17: v0.1.0 released. Release PR #8 merged, publish workflow green (build, attest, PyPI, release assets).
   Stage 0 complete. Stage 1 started on `feat/engine-navigation`.
 - 2026-10-17: Stage 1 merged (PR #10). Stage 2 started on `feat/daemon-relay`.
+- 2026-10-17: Stage 2 merged (PR #11). Stage 3 started on `feat/lint-format`.
