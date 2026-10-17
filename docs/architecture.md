@@ -32,6 +32,9 @@ Packages under `org.groovyscope.engine`:
 | `search` | 10 | `CodeSearch` (structural search over the compiled trees: catch clauses, throws, calls, constructor calls, `return null`, string literals, annotations, `def` declarations, empty blocks, fields and methods, each with filters), `CloneFinder` (duplicated code by normalised statement hashes), `SymbolReader` (the source of one declaration with the comments and annotations above it) and `WorkspaceOverview` (sizes per package, largest files and classes, untested classes). Java documents are never searched. |
 | `compile.MissingDependencies` | 10 | Folds the unresolved-class errors of a file with no configured classpath into one `GS100` warning naming the missing packages. |
 | `services.DocumentSupport` | 10 | Per-document editor features: implementations, highlights, folding ranges and inlay type hints. |
+| `explain` | 11 | `CodeFacts`: what a class or method does as facts (members, calls and callers from the call graph, field reads and writes, throws and catches, external calls by category, branch count, public methods grouped by verb). |
+| `graph` | 11 | `RelationshipGraph`: classes as nodes; `extends`, `implements`, `has`, `uses` and aggregated `calls` edges with the weakest confidence; scoped to seeds and a hop depth, capped best-connected first; a method-level view of one class. |
+| `practices.NamingFinder` | 11 | GS020 to GS027 from the declared types and the body (a getter that assigns a field, a plural on a single string), with the team's abbreviations and vocabulary from `naming`. |
 
 Keeping the engine API free of LSP4J types outside `lsp` lets the front end be swapped for, or contribute to,
 Apache Groovy's own `groovy-lsp` (GROOVY-12411). That server was merged into Groovy's master branch on
@@ -227,6 +230,8 @@ deliberately loose so shared runners do not fail the build.
 | `benchmark.py` | the bundled CodeNarc corpus (`_benchmark/`), unpacked into the user's home with a version stamp |
 | `changes.py` | changed files and line ranges from git, and the pure review rules (split, bucket, touched declarations, verdict) |
 | `reports.py` | SARIF logs as findings and JaCoCo XML as coverage gaps, read as data |
+| `graph.py` | the relationship graph as a picture: layered layout (cycle break, longest-path layers, barycentre ordering), A4 fit with a readable minimum font, draw.io XML and Mermaid emitters, an overlap check |
+| `mcp_understanding.py` | `explain_code`, `relationship_graph` and `check_naming` over `groovyscope/explainCode`, `/graph` and `/check` |
 | `doctor.py` | pure report building for `doctor` |
 | `render.py` | relative paths, pagination with continuation cursors, byte caps for agent output |
 
@@ -284,6 +289,11 @@ pre-existing ones, bucketed blocking (errors, security and runtime groups), shou
 `find_code` for catch, `def` and `return null` is filtered to the changed lines; `coverage_gaps` names the
 uncovered methods inside the change; `changes.verdict` writes the sentence. The CLI's `review --changed`
 builds the same tools over the daemon socket and prints them.
+
+`rename` with `apply` is verified: the changed documents are compiled before and after the write (`check`
+with `compile` only), and when the count of compile errors rises the previous texts are written back and the
+answer says why. `relationship_graph` writes a draw.io file only inside the workspace and only with the
+`.drawio` extension; the layout is checked for overlapping or off-page boxes before the file is reported.
 
 `find_dynamic_code` has no LSP counterpart either: `DynamicCodeFinder` walks the index for the
 constructs that defeat static analysis (classes with neither `@CompileStatic` nor `@CompileDynamic`, `def`

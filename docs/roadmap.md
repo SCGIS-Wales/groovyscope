@@ -212,6 +212,14 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
     covered by tests.
   Done when: CI green on each PR, the owner's Kiro 2.29.1 checks recorded (hook output on start, one
   `review_changes`, one `explain_code`, one draw.io export opened, one naming pass), releases published.
+  Progress 2026-10-17: 0.10.0 merged (#47) and its release PR opened; 0.11.0 implemented on
+  `feat/understanding-naming`: `groovyscope/explainCode` and `groovyscope/graph` in the engine (CodeFacts,
+  RelationshipGraph), `explain_code`, `relationship_graph` (draw.io A4 layout checked for overlaps, Mermaid)
+  and `check_naming` (GS020 to GS027, NamingFinder) in the MCP server with `explain-code`, `graph` and
+  `naming` commands; `rename` recompiles the changed files and rolls back on new errors. Verified on the
+  CodeNarc corpus: `AbstractRule` explained, a 40-class graph on one landscape A4 page with no overlapping
+  boxes, 29 naming findings in `rule/basic` after calibrating GS022 so that role nouns (`...Rule`,
+  `...Visitor`) are not verb-first names. Remaining: the owner's Kiro checks and the 0.11.0 release.
 
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 

@@ -40,6 +40,10 @@ typecheck:
 practices:
   enabled: true           # groovyscope's GS diagnostics (docs/practices.md); per-code overrides below
   severity: {}            # e.g. {GS002: info, RP030: off}; values: error | warning | info | off
+naming:
+  enabled: true           # GS020 to GS027: names that say what things are and do (docs/practices.md, section 18)
+  allowedAbbreviations: []  # words the team reads fluently, never reported by GS024, e.g. [cfg, svc]
+  vocabulary: {}          # the verb to use per family of synonyms, e.g. {fetch: get, retrieve: get, remove: delete}
 profiles:
   paths: []              # runtime profile files or directories (YAML/JSON), see docs/profiles.md
   discover: true         # also load <root>/.groovyscope/profiles/ and ~/.groovyscope/profiles/

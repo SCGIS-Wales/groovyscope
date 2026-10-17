@@ -184,16 +184,38 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param enabled whether the GS diagnostics run at all
      * @param severities per-code overrides: {@code error}, {@code warning}, {@code info} or {@code off}
      */
-    public record Practices(boolean enabled, Map<String, String> severities) {
-        public static final Practices DEFAULTS = new Practices(true, Map.of());
+    public record Practices(boolean enabled, Map<String, String> severities, Naming naming) {
+        public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
             severities = Map.copyOf(severities == null ? Map.of() : severities);
+            naming = naming == null ? Naming.DEFAULTS : naming;
+        }
+
+        /** Practices with the default naming settings. */
+        public Practices(boolean enabled, Map<String, String> severities) {
+            this(enabled, severities, Naming.DEFAULTS);
         }
 
         /** The configured severity for a code, or {@code null} to keep the catalogue's default. */
         public String severityOf(String code) {
             return severities.get(code);
+        }
+    }
+
+    /**
+     * Naming checks (GS020 to GS027).
+     *
+     * @param enabled whether the naming checks run at all
+     * @param allowedAbbreviations words the team reads fluently, never reported by GS024
+     * @param vocabulary the verb to use for a family of synonyms ({@code fetch: get}), reported by GS027
+     */
+    public record Naming(boolean enabled, List<String> allowedAbbreviations, Map<String, String> vocabulary) {
+        public static final Naming DEFAULTS = new Naming(true, List.of(), Map.of());
+
+        public Naming {
+            allowedAbbreviations = List.copyOf(allowedAbbreviations == null ? List.of() : allowedAbbreviations);
+            vocabulary = Map.copyOf(vocabulary == null ? Map.of() : vocabulary);
         }
     }
 
@@ -327,6 +349,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject format = objectOrEmpty(document.get("format"));
         JsonObject groovy = objectOrEmpty(document.get("groovy"));
         JsonObject practices = objectOrEmpty(document.get("practices"));
+        JsonObject naming = objectOrEmpty(document.get("naming"));
         return new EngineConfig(
                 strings(workspace.get("sourceRoots"), DEFAULTS.sourceRoots()),
                 strings(workspace.get("classpath"), DEFAULTS.classpath()),
@@ -355,7 +378,10 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 new Groovy(string(groovy.get("version"), Groovy.DEFAULTS.version()),
                         strings(groovy.get("compat"), Groovy.DEFAULTS.compat())),
                 new Practices(bool(practices.get("enabled"), Practices.DEFAULTS.enabled()),
-                        stringMap(practices.get("severity"))),
+                        stringMap(practices.get("severity")),
+                        new Naming(bool(naming.get("enabled"), Naming.DEFAULTS.enabled()),
+                                strings(naming.get("allowedAbbreviations"), List.of()),
+                                stringMap(naming.get("vocabulary")))),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 "");

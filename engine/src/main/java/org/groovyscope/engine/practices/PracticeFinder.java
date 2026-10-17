@@ -125,6 +125,7 @@ public final class PracticeFinder {
         }
         Visitor visitor = new Visitor(uri, module, new TextLines(text), config, out);
         visitor.visitModule();
+        out.addAll(NamingFinder.find(uri, module, config));
         return out;
     }
 

@@ -18,6 +18,7 @@ package org.groovyscope.engine.lsp;
 import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.LinkedHashMap;
@@ -672,6 +673,127 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             sources.keySet().removeIf(uri -> !current.workspace().contains(uri));
             return SearchJson.overview(org.groovyscope.engine.search.WorkspaceOverview.of(current.workspace().root(),
                     sources, current.snapshot().result().modules()));
+        });
+    }
+
+    /**
+     * What a class, method or file does, as facts. Params: {@code symbol} (a qualified or hash-separated name) or
+     * {@code uri} (every class of the document), {@code root}.
+     */
+    @JsonRequest("groovyscope/explainCode")
+    public CompletableFuture<Map<String, Object>> explainCode(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            org.groovyscope.engine.services.Snapshot snapshot = current.snapshot();
+            org.groovyscope.engine.callgraph.CallGraph graph = current.callGraph();
+            String symbol = text(params, "symbol");
+            String uri = text(params, "uri");
+            List<Map<String, Object>> items = new ArrayList<>();
+            if (symbol != null) {
+                for (org.codehaus.groovy.ast.ASTNode declaration : current.findDeclarations(snapshot, symbol)) {
+                    if (declaration instanceof org.codehaus.groovy.ast.ClassNode classNode) {
+                        items.add(ExplainJson.classFacts(org.groovyscope.engine.explain.CodeFacts.ofClass(classNode,
+                                snapshot.index(), graph)));
+                    } else if (declaration instanceof org.codehaus.groovy.ast.MethodNode method) {
+                        Map<String, Object> facts = ExplainJson.methodFacts(
+                                org.groovyscope.engine.explain.CodeFacts.ofMethod(method, snapshot.index(), graph));
+                        facts.put("kind", "method");
+                        facts.put("class", method.getDeclaringClass().getName());
+                        facts.put("uri", snapshot.index().declarationEntry(method).map(
+                                org.groovyscope.engine.index.NodeEntry::uri).orElse(null));
+                        items.add(facts);
+                    } else if (declaration instanceof org.codehaus.groovy.ast.PropertyNode property) {
+                        Map<String, Object> facts = ExplainJson.fieldFacts(
+                                org.groovyscope.engine.explain.CodeFacts.fieldFacts(property.getField(), true));
+                        facts.put("kind", "property");
+                        facts.put("class", property.getDeclaringClass().getName());
+                        items.add(facts);
+                    } else if (declaration instanceof org.codehaus.groovy.ast.FieldNode field) {
+                        Map<String, Object> facts = ExplainJson.fieldFacts(
+                                org.groovyscope.engine.explain.CodeFacts.fieldFacts(field, false));
+                        facts.put("kind", "field");
+                        facts.put("class", field.getOwner() == null ? null : field.getOwner().getName());
+                        items.add(facts);
+                    }
+                }
+            } else if (uri != null) {
+                org.codehaus.groovy.ast.ModuleNode module = snapshot.result().modules().get(uri);
+                if (module != null && current.workspace().contains(uri)) {
+                    for (org.codehaus.groovy.ast.ClassNode classNode : module.getClasses()) {
+                        if (classNode.getLineNumber() > 0 && !classNode.getName().contains("$_")) {
+                            items.add(ExplainJson.classFacts(org.groovyscope.engine.explain.CodeFacts.ofClass(classNode,
+                                    snapshot.index(), graph)));
+                        }
+                    }
+                }
+            } else {
+                throw invalid("explainCode needs a symbol or a uri");
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("found", !items.isEmpty());
+            response.put("items", items);
+            return response;
+        });
+    }
+
+    /**
+     * The relationship graph. Params: {@code symbols} (seed classes) or {@code uris} (seed documents), {@code kinds}
+     * (extends, implements, has, uses, calls), {@code depth} (hops from the seeds, default 1), {@code maxNodes}
+     * (default 60), {@code level} ({@code class} or {@code method}), {@code root}.
+     */
+    @JsonRequest("groovyscope/graph")
+    public CompletableFuture<Map<String, Object>> graph(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            org.groovyscope.engine.services.Snapshot snapshot = current.snapshot();
+            List<org.codehaus.groovy.ast.ClassNode> seeds = new ArrayList<>();
+            for (String symbol : stringList(params.get("symbols"))) {
+                for (org.codehaus.groovy.ast.ASTNode declaration : current.findDeclarations(snapshot, symbol)) {
+                    if (declaration instanceof org.codehaus.groovy.ast.ClassNode classNode) {
+                        seeds.add(classNode);
+                    } else if (declaration instanceof org.codehaus.groovy.ast.MethodNode method) {
+                        seeds.add(method.getDeclaringClass());
+                    }
+                }
+            }
+            for (String uri : stringList(params.get("uris"))) {
+                org.codehaus.groovy.ast.ModuleNode module = snapshot.result().modules().get(uri);
+                if (module != null) {
+                    for (org.codehaus.groovy.ast.ClassNode classNode : module.getClasses()) {
+                        if (classNode.getLineNumber() > 0 && !classNode.getName().contains("$_")) {
+                            seeds.add(classNode);
+                        }
+                    }
+                }
+            }
+            boolean scoped = !stringList(params.get("symbols")).isEmpty() || !stringList(params.get("uris")).isEmpty();
+            if (scoped && seeds.isEmpty()) {
+                Map<String, Object> empty = new LinkedHashMap<>();
+                empty.put("nodes", List.of());
+                empty.put("edges", List.of());
+                empty.put("truncated", false);
+                empty.put("totalClasses", 0);
+                empty.put("note", "no workspace class matches the given symbols or documents");
+                return empty;
+            }
+            Integer depth = number(params, "depth");
+            Integer maxNodes = number(params, "maxNodes");
+            int cap = maxNodes == null ? org.groovyscope.engine.graph.RelationshipGraph.DEFAULT_MAX_NODES
+                    : Math.max(1, maxNodes);
+            String level = text(params, "level");
+            if ("method".equals(level)) {
+                return ExplainJson.graph(org.groovyscope.engine.graph.RelationshipGraph.methods(snapshot.index(),
+                        current.callGraph(), seeds, cap));
+            }
+            List<String> kinds = stringList(params.get("kinds"));
+            for (String kind : kinds) {
+                if (!org.groovyscope.engine.graph.RelationshipGraph.KINDS.contains(kind)) {
+                    throw invalid("unknown edge kind " + kind + "; expected one of "
+                            + String.join(", ", org.groovyscope.engine.graph.RelationshipGraph.KINDS));
+                }
+            }
+            return ExplainJson.graph(org.groovyscope.engine.graph.RelationshipGraph.build(snapshot.index(),
+                    current.callGraph(), seeds, kinds, depth == null ? 1 : Math.max(0, depth), cap));
         });
     }
 

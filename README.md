@@ -34,7 +34,7 @@ Then open any Groovy project:
 cd your-groovy-project
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
-> /mcp                            # expect: groovyscope running 23 tools
+> /mcp                            # expect: groovyscope running 26 tools
 ```
 
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
@@ -65,8 +65,10 @@ rather than guesses when a call site can only be matched by name. Findings come 
 - the compiler and Groovy 6's type checkers (NullChecker, SqlInjection, Regex, FormatString, Combiner, Purity);
 - CodeNarc 4 with a profile aligned with the [practices knowledge base](docs/practices.md);
 - groovyscope's own practice checks, GS001 to GS012 (integer division, Elvis on 0, GString logging, `Eval`,
-  `@Grab`, string `execute()`, XXE, Groovy 6-only syntax under a Groovy 5 target and more) and GS100, one
-  warning per file whose imports cannot resolve because no classpath is configured;
+  `@Grab`, string `execute()`, XXE, Groovy 6-only syntax under a Groovy 5 target and more), GS020 to GS027
+  (names that say what things are and do: booleans as questions, verbs on methods, no generic words,
+  abbreviations or type prefixes, names that match their types, one verb per idea), and GS100, one warning
+  per file whose imports cannot resolve because no classpath is configured;
 - optional [runtime profiles](docs/profiles.md) (RP codes) for plugin code that runs on a different Groovy and
   classpath than the local build: constructs not proven on the runtime, descriptor parameter mistakes, secret
   flows, contract drift against a recorded baseline, and an emulation compile with the runtime's own Groovy.
@@ -107,6 +109,9 @@ them returns a whole file.
 | `groovyscope lsp --stdio` / `groovyscope mcp` | What Kiro runs: LSP and MCP over the warm per-workspace daemon |
 | `groovyscope daemon start \| stop \| restart \| status` | Manages the daemon (idle exit after `daemon.idleTimeoutMinutes`; `restart` applies a changed configuration) |
 | `groovyscope jdk install [--vendor temurin\|corretto]` | Opt-in, checksum-verified JDK download into groovyscope's cache |
+| `groovyscope explain-code TARGET` | What a class, member or file does, as facts (members, calls, callers, field writes, exceptions, external calls, branches) |
+| `groovyscope graph [SYMBOLS] [--path FILE] [--kinds ...] [--depth N] [--level class\|method] [--format drawio\|mermaid\|json] [--out FILE]` | The class relationship graph as a draw.io file laid out on an A4 page (default `groovyscope-graph.drawio`), a Mermaid class diagram, or JSON |
+| `groovyscope naming [PATHS] [--json]` | Naming findings GS020 to GS027; `--json` adds the facts behind each name |
 | `groovyscope benchmark path [--to DIR] [--refresh]` | Where the bundled benchmark corpus (CodeNarc 4.0.0 `src/main`) is unpacked; `--to` puts it elsewhere. It unpacks itself on `kiro init --global` and at agent start |
 | `groovyscope fetch` / `groovyscope version` | Engine JAR fetch for packages without one; versions |
 
@@ -157,8 +162,11 @@ closed-world), and parallel calls are queued safely on the one engine session.
 | `review(paths?, top?, max_priority?)` | The same findings grouped by the review checklist, with counts per code and the profiles governing the paths |
 | `review_changes(base?, staged?, top?)` | The branch reviewed as a merge request: changed files and lines from git, findings on the changed lines grouped `blocking`, `shouldFix` and `nits`, pre-existing findings as counts, `impact` of changed declarations, `risky` constructs added, `uncovered` methods in the change, and a one-sentence `verdict` |
 | `coverage_gaps(paths?, limit?, cursor?)` | Classes and methods no test executed, from the JaCoCo XML report, most missed lines first, with the overall line coverage |
+| `explain_code(symbol?, path?)` | What a class, method, field or file does, as facts: members with types, each method's parameters, return, branches, calls made (with confidence) and received, fields read and written, exceptions thrown and caught, the external world touched (http, file, sql, process, environment, clock, random, logging), public methods grouped by verb, and the classes it is used by and uses. The agent writes the prose from these, never from names |
+| `relationship_graph(symbols?, paths?, kinds?, depth?, level?, max_nodes?, drawio_path?, mermaid?)` | How classes relate: `extends`, `implements`, `has` (a field typed with another class), `uses` (a public method takes or returns one), `calls` (aggregated, weakest confidence). Seeded by symbols or files with a hop depth, capped best-connected first, or one class's methods with `level: method`. `drawio_path` writes a draw.io file laid out on an A4 page (calm palette, no overlaps, legend); `mermaid` adds a class diagram |
+| `check_naming(paths?, limit?, cursor?)` | GS020 to GS027 naming findings plus the facts behind every class, field and method (type, what it writes and touches, how often it is called) so the agent can judge whether each name says what the thing is and does; renames go through `rename` |
 | `fix(paths?, codes?, apply?)` | Safe fixes; a dry run unless `apply` |
-| `rename(path, line, col, new_name, apply?)` | Rename everywhere it is used, refused when a use is matched by name only; a dry run unless `apply` |
+| `rename(path, line, col, new_name, apply?)` | Rename everywhere it is used, refused when a use is matched by name only; a dry run unless `apply`. An applied rename is verified by recompiling the changed files and rolled back when it leaves new compile errors |
 | `explain(code)` | What a code means (GS001 to GS012, GS100, RP codes, a Groovy 6 checker, a CodeNarc rule), why it matters and the fix |
 | `profile_status(path)` | Target Groovy, compiling service, construct status on the runtime, descriptor parameters, test seams and protected code of a governed file |
 | `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |
@@ -174,7 +182,8 @@ environment variable, for example `GROOVYSCOPE_DAEMON__HEAP=2g`. Worth knowing: 
 (written by `groovyscope classpath`, its entries join `workspace.classpath`), `lint.rules` (per-rule
 overrides such as `{CompileStatic: off, LineLength: {priority: 3}}`), `lint.publishMaxPriority` (only
 priority 1 and 2 lint findings reach the editor and the agent as diagnostics; 3 stays available through
-`check` and `review`), `practices.severity` (per GS or RP code, `GS100: off` included),
+`check` and `review`), `practices.severity` (per GS or RP code, `GS100: off` included), `naming`
+(`allowedAbbreviations`, `vocabulary`),
 `duplicates.minLines` / `duplicates.minStatements` for `find_duplicates`, and `reports.sarif` /
 `reports.jacoco` for the build's SpotBugs and JaCoCo reports. Runtime profiles live in
 `~/.groovyscope/profiles/` or `<workspace>/.groovyscope/profiles/` and stay out of the repository if you want

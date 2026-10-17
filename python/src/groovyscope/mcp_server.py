@@ -16,7 +16,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import changes, daemon, diagnostics, mcp_search, practices, reports, rpc
+from groovyscope import changes, daemon, diagnostics, mcp_search, mcp_understanding, practices, reports, rpc
 from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
@@ -571,6 +571,18 @@ def practice_tools(
         rejected.update({relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused})
         return {"changed": len(files), "files": files[:cap], "rejected": rejected}
 
+    return {
+        "explain": explain,
+        "review": review,
+        "fix": fix,
+        "profile_status": profile_status,
+        **rename_tools(root, call, cap),
+    }
+
+
+def rename_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+    """rename: refused on name-only matches, applied atomically, verified by a recompile, rolled back on new errors."""
+
     def rename(path: str, line: int, col: int, new_name: str, apply: bool = False) -> dict[str, Any]:
         """Rename the symbol at PATH:LINE:COL (1-based) to NEW_NAME everywhere it is used. Refused when any use is
         matched by name only (dynamic Groovy). A dry run listing the edits per file unless APPLY."""
@@ -578,6 +590,8 @@ def practice_tools(
         if raw.get("refused"):
             return {"renamed": False, "refused": raw["refused"]}
         changed, refused = file_edits(raw.get("edits", {}), root)
+        uris = [edit["path"].as_uri() for edit in changed]
+        errors_before = compile_errors(uris) if apply and changed else 0
         files = []
         for edit in changed:
             if apply:
@@ -590,17 +604,33 @@ def practice_tools(
                 }
             )
         result: dict[str, Any] = {"renamed": apply, "files": files[:cap], "fileCount": len(files)}
+        if apply and changed:
+            errors_after = compile_errors(uris)
+            if errors_after > errors_before:
+                for edit in changed:
+                    write_document(edit["path"], edit["before"])
+                result.update(
+                    {
+                        "renamed": False,
+                        "rolledBack": True,
+                        "reason": f"the rename left {errors_after - errors_before} new compile error(s); the files "
+                        "were restored. Check the symbol (a same-named member in another class?) or rename by hand",
+                    }
+                )
+            else:
+                result["verified"] = "the changed files compile with no new errors"
         if refused:
             result["skipped"] = [relative_path(uri, root) for uri in refused][:cap]
         return result
 
-    return {
-        "explain": explain,
-        "review": review,
-        "fix": fix,
-        "rename": rename,
-        "profile_status": profile_status,
-    }
+    def compile_errors(uris: list[str]) -> int:
+        """Compile errors in the given documents, as the engine reports them after re-reading the files."""
+        raw = call("groovyscope/check", {"root": str(root), "uris": uris, "include": ["compile"]})
+        return sum(
+            1 for items in raw.get("diagnostics", {}).values() for item in items if int(item.get("severity", 3)) == 1
+        )
+
+    return {"rename": rename}
 
 
 def flat_outline(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -757,6 +787,7 @@ def build_tools(
         **practice_tools(root, call, cap, clip_at, report_settings),
     }
     tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
+    tools.update(mcp_understanding.understanding_tools(root, call, cap, tools))
     return tools
 
 
@@ -785,6 +816,9 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "workspace_overview": ("Workspace overview", True),
     "review_changes": ("Review the branch as a merge request", True),
     "coverage_gaps": ("Uncovered classes and methods", True),
+    "explain_code": ("Explain what code does", True),
+    "relationship_graph": ("Class relationship graph", False),
+    "check_naming": ("Naming findings and facts", True),
 }
 
 

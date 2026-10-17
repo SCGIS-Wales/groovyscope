@@ -352,6 +352,27 @@
           "description": "JaCoCo XML report read by coverage_gaps."
         }
       }
+    },
+    "naming": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "allowedAbbreviations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "vocabulary": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

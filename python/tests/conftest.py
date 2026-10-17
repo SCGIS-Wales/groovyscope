@@ -8,11 +8,15 @@ import stat
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
+from groovyscope import mcp_server
 from groovyscope.jar import sha256_of, write_manifest
+
+MCP_ROOT = Path("/ws")
 
 FAKE_JAVA_SCRIPT = """#!/bin/sh
 if [ "$1" = "-version" ]; then
@@ -103,3 +107,33 @@ def short_dir() -> Iterator[Path]:
         yield path
     finally:
         shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture
+def engine() -> dict[str, Any]:
+    """A fake engine: the calls the MCP tools made, and the responses to give them."""
+    state: dict[str, Any] = {"calls": [], "responses": {}}
+    return state
+
+
+@pytest.fixture
+def local_tools(engine: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
+    """Tools whose workspace root is tmp_path, for the tools that write files."""
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        engine["calls"].append((method, params))
+        return engine["responses"].get(method, {})
+
+    return mcp_server.build_tools(tmp_path, call, {"maxResults": 3, "maxBytes": 16000}, {})
+
+
+@pytest.fixture
+def tools(engine: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    def call(method: str, params: dict[str, Any]) -> Any:
+        engine["calls"].append((method, params))
+        return engine["responses"].get(method, {})
+
+    monkeypatch.setattr(
+        mcp_server.daemon, "info", lambda _root, _environ: {"socket": "/s", "running": True, "status": {}, "log": "/l"}
+    )
+    return mcp_server.build_tools(MCP_ROOT, call, {"maxResults": 3, "maxBytes": 16000}, {})
