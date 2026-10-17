@@ -50,8 +50,61 @@ class TypeCheckAnalyzerSpec extends Specification {
     def 'settings choose the extensions'() {
         expect:
         TypeCheckAnalyzer.extensionsFor(new EngineConfig.TypeCheck('strict', true, true)) ==
-            [TypeCheckAnalyzer.NULL_CHECKER, TypeCheckAnalyzer.SQL_INJECTION_CHECKER, TypeCheckAnalyzer.PURITY_CHECKER, TypeCheckAnalyzer.MODIFIES_CHECKER]
-        TypeCheckAnalyzer.extensionsFor(new EngineConfig.TypeCheck('off', false, false)).empty
+            [TypeCheckAnalyzer.STRICT_NULL_CHECKER, TypeCheckAnalyzer.SQL_INJECTION_CHECKER, TypeCheckAnalyzer.PURITY_CHECKER,
+             TypeCheckAnalyzer.MODIFIES_CHECKER, TypeCheckAnalyzer.REGEX_CHECKER, TypeCheckAnalyzer.FORMAT_STRING_CHECKER,
+             TypeCheckAnalyzer.COMBINER_CHECKER]
+        TypeCheckAnalyzer.extensionsFor(new EngineConfig.TypeCheck('lenient', false, false, false, false, false)) == [TypeCheckAnalyzer.NULL_CHECKER]
+        TypeCheckAnalyzer.extensionsFor(new EngineConfig.TypeCheck('off', false, false, false, false, false)).empty
+        TypeCheckAnalyzer.extensionsFor(EngineConfig.TypeCheck.DEFAULTS, new EngineConfig.Groovy('5.1', [])).empty
+        !TypeCheckAnalyzer.extensionsFor(EngineConfig.TypeCheck.DEFAULTS, new EngineConfig.Groovy('6.0', ['5.1'])).empty
+    }
+
+    static final Map<String, String> CHECKED = [
+        'file:///w/Nulls.groovy' : 'import groovy.transform.CompileStatic\n@CompileStatic\nclass Nulls {\n  int len(String t) { String u = t ? null : "x"; u.length() }\n}',
+        'file:///w/Regex.groovy' : 'import groovy.transform.CompileStatic\n@CompileStatic\nclass Regex { boolean m(String s) { s ==~ /a(b/ } }',
+        'file:///w/Fmt.groovy'   : 'import groovy.transform.CompileStatic\n@CompileStatic\nclass Fmt { String f() { String.format("%d items", "three") } }',
+        'file:///w/Comb.groovy'  : 'import groovy.transform.CompileStatic\n@CompileStatic\nclass Comb { int c(List<Integer> n) { n.injectParallel(0) { int a, int b -> a - b } } }',
+        'file:///w/SqlUse.groovy': 'import groovy.transform.CompileStatic\nimport groovy.sql.Sql\n@CompileStatic\nclass SqlUse { List q(Sql sql, String name) { sql.rows("SELECT * FROM t WHERE n = \'$name\'".toString()) } }',
+    ]
+
+    def 'each Groovy 6 checker reports under its own code, and strict null checking needs no annotations'() {
+        when:
+        def strict = new TypeCheckAnalyzer().analyze(CHECKED, [], false, EngineConfig.TypeCheck.DEFAULTS)
+        def lenient = new TypeCheckAnalyzer().analyze(CHECKED, [], false, new EngineConfig.TypeCheck('lenient', true, false))
+
+        then:
+        strict['file:///w/Nulls.groovy']*.code() == ['NullChecker']
+        strict['file:///w/Nulls.groovy'][0].message().startsWith('Potential null dereference')
+        lenient['file:///w/Nulls.groovy'].empty
+        strict['file:///w/Regex.groovy']*.code() == ['RegexChecker']
+        strict['file:///w/Fmt.groovy']*.code() == ['FormatStringChecker']
+        strict['file:///w/Comb.groovy']*.code() == ['CombinerChecker']
+        strict['file:///w/SqlUse.groovy']*.code() == ['SqlInjectionChecker']
+        strict.values().flatten().every { !it.message().startsWith('[Static type checking]') }
+    }
+
+    def 'a file that does not resolve no longer keeps the rest from being checked'() {
+        given:
+        def sources = CHECKED + [
+            'file:///w/Broken.groovy': 'import does.not.Exist\nclass Broken { Exist e }',
+            'file:///w/UsesBroken.groovy': 'class UsesBroken { Broken b }',
+        ]
+
+        when:
+        def skipping = new TypeCheckAnalyzer().analyze(sources, [], false, EngineConfig.TypeCheck.DEFAULTS,
+                EngineConfig.Groovy.DEFAULTS, ['file:///w/Broken.groovy'] as Set)
+        def retrying = new TypeCheckAnalyzer().analyze(sources, [], false, EngineConfig.TypeCheck.DEFAULTS,
+                EngineConfig.Groovy.DEFAULTS, [] as Set)
+        def groovy5 = new TypeCheckAnalyzer().analyze(CHECKED, [], false, EngineConfig.TypeCheck.DEFAULTS,
+                new EngineConfig.Groovy('5.1', []), [] as Set)
+
+        then: 'checking still runs on the healthy files, whether the broken one is skipped up front or dropped on retry'
+        skipping['file:///w/Nulls.groovy']*.code() == ['NullChecker']
+        retrying['file:///w/Nulls.groovy']*.code() == ['NullChecker']
+        retrying['file:///w/Broken.groovy'].empty
+
+        and: 'a Groovy 5 target gets the core type checker only'
+        groovy5.values().flatten().every { it.code() == 'typecheck' }
     }
 
     def 'the customizer extends existing annotations without duplicates'() {

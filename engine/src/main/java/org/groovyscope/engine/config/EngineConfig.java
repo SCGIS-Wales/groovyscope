@@ -22,6 +22,7 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,9 +39,11 @@ import java.util.Set;
  * @param format formatter settings
  * @param javaSources whether {@code .java} files under the source roots join the compile, so Groovy code that
  *     uses Java classes of the same project resolves (they are never linted, formatted or reported on)
+ * @param groovy the Groovy version the code targets and the versions it must stay compatible with
+ * @param practices groovyscope's own practice diagnostics (GS codes, docs/practices.md)
  */
 public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-        Lint lint, TypeCheck typecheck, Format format, boolean javaSources) {
+        Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices) {
 
     /** File extensions treated as Groovy sources. */
     public static final Set<String> EXTENSIONS = Set.of("groovy", "gvy", "gy", "gsh", "gradle");
@@ -69,8 +72,75 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param sqlInjection whether to add the SQL injection checker
      * @param purity whether to add the purity and modifies checkers
      */
-    public record TypeCheck(String nullChecker, boolean sqlInjection, boolean purity) {
-        public static final TypeCheck DEFAULTS = new TypeCheck("strict", true, false);
+    public record TypeCheck(String nullChecker, boolean sqlInjection, boolean purity, boolean regex,
+            boolean formatString, boolean combiner) {
+        public static final TypeCheck DEFAULTS = new TypeCheck("strict", true, false, true, true, true);
+
+        /** The original three settings; the regex, format-string and combiner checkers stay on. */
+        public TypeCheck(String nullChecker, boolean sqlInjection, boolean purity) {
+            this(nullChecker, sqlInjection, purity, true, true, true);
+        }
+    }
+
+    /**
+     * The Groovy language level.
+     *
+     * @param version the version the code is compiled with (the engine itself runs Groovy 6)
+     * @param compat older versions the code must still compile on
+     */
+    public record Groovy(String version, List<String> compat) {
+        public static final Groovy DEFAULTS = new Groovy("6.0", List.of("5.1"));
+
+        public Groovy {
+            version = version == null || version.isBlank() ? "6.0" : version;
+            compat = List.copyOf(compat == null ? List.of() : compat);
+        }
+
+        /** True when the target is Groovy 6 or later, so the Groovy 6 type checkers apply. */
+        public boolean hasGroovy6Checkers() {
+            return major(version) >= 6;
+        }
+
+        /** True when any supported version (target or compat) is older than 6, so Groovy 6-only syntax is flagged. */
+        public boolean mustCompileOnGroovy5() {
+            if (major(version) < 6) {
+                return true;
+            }
+            for (String older : compat) {
+                if (major(older) < 6) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static int major(String version) {
+            String head = version.strip().split("\\.", 2)[0];
+            try {
+                return Integer.parseInt(head);
+            } catch (NumberFormatException e) {
+                return 6;
+            }
+        }
+    }
+
+    /**
+     * groovyscope's practice diagnostics.
+     *
+     * @param enabled whether the GS diagnostics run at all
+     * @param severities per-code overrides: {@code error}, {@code warning}, {@code info} or {@code off}
+     */
+    public record Practices(boolean enabled, Map<String, String> severities) {
+        public static final Practices DEFAULTS = new Practices(true, Map.of());
+
+        public Practices {
+            severities = Map.copyOf(severities == null ? Map.of() : severities);
+        }
+
+        /** The configured severity for a code, or {@code null} to keep the catalogue's default. */
+        public String severityOf(String code) {
+            return severities.get(code);
+        }
     }
 
     /**
@@ -93,7 +163,9 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             Lint.DEFAULTS,
             TypeCheck.DEFAULTS,
             Format.DEFAULTS,
-            true);
+            true,
+            Groovy.DEFAULTS,
+            Practices.DEFAULTS);
 
     public EngineConfig {
         sourceRoots = List.copyOf(sourceRoots);
@@ -102,17 +174,28 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         lint = lint == null ? Lint.DEFAULTS : lint;
         typecheck = typecheck == null ? TypeCheck.DEFAULTS : typecheck;
         format = format == null ? Format.DEFAULTS : format;
+        groovy = groovy == null ? Groovy.DEFAULTS : groovy;
+        practices = practices == null ? Practices.DEFAULTS : practices;
+    }
+
+    /** Everything except the Groovy target and practice settings, which keep their defaults. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+            Lint lint, TypeCheck typecheck, Format format, boolean javaSources) {
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, Groovy.DEFAULTS,
+                Practices.DEFAULTS);
     }
 
     /** Convenience for callers that only care about workspace settings. */
     public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust) {
-        this(sourceRoots, classpath, exclude, trust, Lint.DEFAULTS, TypeCheck.DEFAULTS, Format.DEFAULTS, true);
+        this(sourceRoots, classpath, exclude, trust, Lint.DEFAULTS, TypeCheck.DEFAULTS, Format.DEFAULTS, true,
+                Groovy.DEFAULTS, Practices.DEFAULTS);
     }
 
     /** All settings except {@code javaSources}, which stays on. */
     public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
             Lint lint, TypeCheck typecheck, Format format) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, true);
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, true, Groovy.DEFAULTS,
+                Practices.DEFAULTS);
     }
 
     /**
@@ -137,6 +220,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject lint = objectOrEmpty(document.get("lint"));
         JsonObject typecheck = objectOrEmpty(document.get("typecheck"));
         JsonObject format = objectOrEmpty(document.get("format"));
+        JsonObject groovy = objectOrEmpty(document.get("groovy"));
+        JsonObject practices = objectOrEmpty(document.get("practices"));
         return new EngineConfig(
                 strings(workspace.get("sourceRoots"), DEFAULTS.sourceRoots()),
                 strings(workspace.get("classpath"), DEFAULTS.classpath()),
@@ -150,13 +235,32 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 new TypeCheck(
                         string(typecheck.get("nullChecker"), TypeCheck.DEFAULTS.nullChecker()),
                         bool(typecheck.get("sqlInjection"), TypeCheck.DEFAULTS.sqlInjection()),
-                        bool(typecheck.get("purity"), TypeCheck.DEFAULTS.purity())),
+                        bool(typecheck.get("purity"), TypeCheck.DEFAULTS.purity()),
+                        bool(typecheck.get("regex"), TypeCheck.DEFAULTS.regex()),
+                        bool(typecheck.get("formatString"), TypeCheck.DEFAULTS.formatString()),
+                        bool(typecheck.get("combiner"), TypeCheck.DEFAULTS.combiner())),
                 new Format(
                         string(format.get("engine"), Format.DEFAULTS.engine()),
                         integer(format.get("indentSize"), Format.DEFAULTS.indentSize()),
                         integer(format.get("maxBlankLines"), Format.DEFAULTS.maxBlankLines()),
                         bool(format.get("removeSemicolons"), Format.DEFAULTS.removeSemicolons())),
-                bool(workspace.get("javaSources"), DEFAULTS.javaSources()));
+                bool(workspace.get("javaSources"), DEFAULTS.javaSources()),
+                new Groovy(string(groovy.get("version"), Groovy.DEFAULTS.version()),
+                        strings(groovy.get("compat"), Groovy.DEFAULTS.compat())),
+                new Practices(bool(practices.get("enabled"), Practices.DEFAULTS.enabled()),
+                        stringMap(practices.get("severity"))));
+    }
+
+    private static Map<String, String> stringMap(JsonElement element) {
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        if (element != null && element.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+                if (entry.getValue().isJsonPrimitive()) {
+                    values.put(entry.getKey(), entry.getValue().getAsString());
+                }
+            }
+        }
+        return values;
     }
 
     /** True when the file name denotes a Java source ({@code Foo.java}). */

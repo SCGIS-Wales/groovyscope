@@ -64,7 +64,22 @@
       "properties": {
         "nullChecker": { "type": "string", "enum": ["off", "lenient", "strict"] },
         "sqlInjection": { "type": "boolean" },
-        "purity": { "type": "boolean" }
+        "purity": { "type": "boolean" },
+        "regex": { "type": "boolean" },
+        "formatString": { "type": "boolean" },
+        "combiner": { "type": "boolean" }
+      }
+    },
+    "practices": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "severity": {
+          "type": "object",
+          "propertyNames": { "pattern": "^GS[0-9]{3}$" },
+          "additionalProperties": { "type": "string", "enum": ["error", "warning", "info", "off"] }
+        }
       }
     },
     "format": {

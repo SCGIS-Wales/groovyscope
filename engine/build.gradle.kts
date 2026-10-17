@@ -28,6 +28,11 @@ dependencies {
     runtimeOnly("org.apache.groovy:groovy-templates:${libs.versions.groovy.get()}")
     runtimeOnly("org.apache.groovy:groovy-groovydoc:${libs.versions.groovy.get()}")
     runtimeOnly("org.apache.groovy:groovy-ant:${libs.versions.groovy.get()}")
+    // Groovy modules workspace code commonly uses without declaring them; visible through
+    // WorkspaceParentClassLoader so their types resolve and the Groovy 6 checkers can see them.
+    for (module in listOf("groovy-sql", "groovy-datetime", "groovy-nio", "groovy-dateutil", "groovy-test", "groovy-contracts")) {
+        runtimeOnly("org.apache.groovy:$module:${libs.versions.groovy.get()}")
+    }
 
     testImplementation(libs.spock.core)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

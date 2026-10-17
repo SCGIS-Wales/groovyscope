@@ -155,7 +155,8 @@ public final class QualityServices {
         }
         if (wanted.contains(INCLUDE_TYPECHECK)) {
             Map<String, List<Diagnostic>> typed = typeChecker.analyze(workspace.compileSources(), workspace.classpath(),
-                    workspace.config().trust(), workspace.config().typecheck());
+                    workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
+                    navigation.snapshot().result().unresolvedUris());
             for (String uri : targets) {
                 for (Diagnostic diagnostic : typed.getOrDefault(uri, List.of())) {
                     if (!result.get(uri).contains(diagnostic)) {
