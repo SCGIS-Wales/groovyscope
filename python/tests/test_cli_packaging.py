@@ -53,7 +53,7 @@ def test_jdk_install(runner: CliRunner, clean_env: dict[str, str], monkeypatch: 
     monkeypatch.setattr(cli.provision, "provision_jdk", fake_provision)
     result = runner.invoke(cli.main, ["jdk", "install", "--feature", "25"])
     assert result.exit_code == 0, result.output
-    assert "installed Temurin jdk-25 at /cache/jdk/jdk-25" in result.output
+    assert "installed jdk-25 at /cache/jdk/jdk-25" in result.output
 
     def failing(install_dir: Path, **_kwargs: Any) -> provision.ProvisionedJdk:
         raise OSError("network down")

@@ -266,7 +266,9 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
         f"groovyscope: no JDK {minimum}+ found; jdk.autoProvision is on, downloading Temurin {feature}", err=True
     )
     try:
-        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature)
+        installed = provision.provision_jdk(
+            provision.jdk_dir(environ), feature=feature, vendor=str(effective["jdk"].get("vendor", "temurin"))
+        )
     except (OSError, ValueError, KeyError) as exc:
         click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
         return None
@@ -808,15 +810,19 @@ def jdk() -> None:
 
 @jdk.command("install")
 @click.option("--feature", type=int, default=provision.DEFAULT_FEATURE, show_default=True, help="Java feature release.")
-def jdk_install(feature: int) -> None:
-    """Download the latest Temurin JDK of a feature release from Adoptium, verify it, unpack it into the cache."""
+@click.option(
+    "--vendor", type=click.Choice(list(provision.VENDORS)), default="temurin", show_default=True, help="JDK vendor."
+)
+def jdk_install(feature: int, vendor: str) -> None:
+    """Download the latest JDK of a feature release (Eclipse Temurin or Amazon Corretto), verify its SHA-256 against
+    the vendor's published checksum, and unpack it into groovyscope's cache."""
     environ = dict(os.environ)
     try:
-        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature)
+        installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature, vendor=vendor)
     except (OSError, ValueError, KeyError) as exc:
         click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"installed Temurin {installed['release']} at {installed['home']}")
+    click.echo(f"installed {installed['release']} at {installed['home']}")
     click.echo("groovyscope will use it when no other JDK meets jdk.minimum; `groovyscope doctor` shows which wins")
 
 

@@ -105,3 +105,52 @@ def test_provision_rejects_an_archive_without_java(tmp_path: Path) -> None:
         provision.provision_jdk(tmp_path / "jdk", feature=21, downloader=download, system="linux", machine="x86_64")
     assert provision.provisioned_homes(tmp_path / "jdk") == []
     assert provision.provisioned_homes(tmp_path / "absent") == []
+
+
+def test_corretto_is_verified_and_named_from_its_release_file(tmp_path: Path) -> None:
+    staging = tmp_path / "staging" / "amazon-corretto-21.jdk"
+    home = staging / "Contents" / "Home"
+    make_fake_jdk(home.parent, "21.0.12.1").rename(home)
+    (home / "release").write_text('JAVA_VERSION="21.0.12.1"\n', encoding="utf-8")
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        archive.add(staging, arcname=staging.name)
+    tarball = buffer.getvalue()
+    name = "amazon-corretto-21-aarch64-macos-jdk.tar.gz"
+    files = {
+        f"{provision.CORRETTO_BASE}/latest_sha256/{name}": hashlib.sha256(tarball).hexdigest().encode() + b"\n",
+        f"{provision.CORRETTO_BASE}/latest/{name}": tarball,
+    }
+    installed = provision.provision_jdk(
+        tmp_path / "jdk", feature=21, downloader=files.__getitem__, system="darwin", machine="arm64", vendor="corretto"
+    )
+    assert installed["release"] == "corretto-21.0.12.1"
+    assert installed["home"].endswith("corretto-21.0.12.1/Contents/Home")
+    files[f"{provision.CORRETTO_BASE}/latest_sha256/{name}"] = b"<html>not found</html>"
+    with pytest.raises(ValueError, match="no SHA-256"):
+        provision.provision_jdk(
+            tmp_path / "jdk2", downloader=files.__getitem__, system="darwin", machine="arm64", vendor="corretto"
+        )
+    with pytest.raises(ValueError, match="unknown JDK vendor"):
+        provision.provision_jdk(
+            tmp_path / "jdk3", downloader=files.__getitem__, system="darwin", machine="arm64", vendor="other"
+        )
+
+
+def test_release_names_are_validated_and_versions_sorted_numerically(tmp_path: Path) -> None:
+    tarball = jdk_tarball(tmp_path, mac_layout=False)
+    download, _ = fake_adoptium(tarball)
+
+    def evil(url: str) -> bytes:
+        data = download(url)
+        return data.replace(b"jdk-21.0.9+10", b"../../escape") if url.startswith(provision.ADOPTIUM_API) else data
+
+    with pytest.raises(ValueError, match="unexpected release name"):
+        provision.provision_jdk(tmp_path / "jdk", downloader=evil, system="linux", machine="x86_64")
+    with pytest.raises(ValueError, match="could not be unpacked"):
+        bad, _ = fake_adoptium(b"not a tarball")
+        provision.provision_jdk(tmp_path / "jdk", downloader=bad, system="linux", machine="x86_64")
+    for name in ("jdk-21.0.9+11", "jdk-21.0.10+7"):
+        make_fake_jdk(tmp_path / "many", "21").rename(tmp_path / "many" / name)
+    assert [p.name for p in provision.provisioned_homes(tmp_path / "many")] == ["jdk-21.0.10+7", "jdk-21.0.9+11"]
+    assert provision.release_from(tmp_path / "nowhere", "corretto") == "corretto"

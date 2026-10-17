@@ -1,8 +1,8 @@
-"""Opt-in Temurin JDK provisioning: ``groovyscope jdk install`` or ``jdk.autoProvision: true``.
+"""Opt-in JDK provisioning: ``groovyscope jdk install`` or ``jdk.autoProvision: true``.
 
-Off by default, because groovyscope promises to download nothing unless asked. When asked, the JDK comes
-from the Adoptium API, its SHA-256 is checked against the checksum the API publishes, and it is unpacked
-under the cache directory where JDK discovery then finds it.
+Off by default, because groovyscope promises to download nothing unless asked. When asked, the JDK comes from
+Eclipse Temurin (the Adoptium API) or Amazon Corretto (corretto.aws), its SHA-256 is checked against the checksum
+the vendor publishes, and it is unpacked under the cache directory where JDK discovery then finds it.
 """
 
 from __future__ import annotations
@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import platform as platform_module
+import re
 import shutil
 import sys
 import tarfile
@@ -23,7 +25,12 @@ from groovyscope import daemon
 from groovyscope.fetch import Downloader, default_downloader
 
 ADOPTIUM_API = "https://api.adoptium.net/v3"
+CORRETTO_BASE = "https://corretto.aws/downloads"
 DEFAULT_FEATURE = 21
+VENDORS = ("temurin", "corretto")
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,100}$")
+_CORRETTO_OS = {"mac": "macos", "linux": "linux"}
+LOG = logging.getLogger("groovyscope.provision")
 _OS_NAMES = {"darwin": "mac", "linux": "linux"}
 _ARCH_NAMES = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x64", "amd64": "x64"}
 
@@ -94,16 +101,42 @@ def home_within(extracted: Path) -> Path | None:
     return None
 
 
+def version_key(name: str) -> tuple[int, ...]:
+    """``jdk-21.0.10+7`` sorts after ``jdk-21.0.9+11``: compare the numbers, not the text."""
+    return tuple(int(part) for part in re.findall(r"\d+", name))
+
+
 def provisioned_homes(install_dir: Path) -> list[Path]:
-    """Homes of every JDK under ``install_dir``, newest release name first."""
+    """Homes of every JDK under ``install_dir``, newest release first."""
     if not install_dir.is_dir():
         return []
     homes = []
-    for child in sorted(install_dir.iterdir(), reverse=True):
+    for child in sorted(install_dir.iterdir(), key=lambda p: version_key(p.name), reverse=True):
         home = home_within(child) if child.is_dir() else None
         if home is not None:
             homes.append(home)
     return homes
+
+
+def corretto_asset(feature: int, os_name: str, arch: str, downloader: Downloader) -> Asset:
+    """The latest Amazon Corretto ``feature`` build and the SHA-256 Amazon publishes for it."""
+    name = f"amazon-corretto-{feature}-{arch}-{_CORRETTO_OS[os_name]}-jdk.tar.gz"
+    checksum = downloader(f"{CORRETTO_BASE}/latest_sha256/{name}").decode("ascii", "replace").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        msg = f"corretto.aws returned no SHA-256 for {name}"
+        raise ValueError(msg)
+    return {"url": f"{CORRETTO_BASE}/latest/{name}", "sha256": checksum, "name": name, "release": ""}
+
+
+def release_from(home: Path, fallback: str) -> str:
+    """``corretto-21.0.12.1`` from the unpacked JDK's ``release`` file."""
+    try:
+        for line in (home / "release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("JAVA_VERSION="):
+                return f"{fallback}-{line.split('=', 1)[1].strip().strip(chr(34))}"
+    except OSError:
+        pass
+    return fallback
 
 
 def provision_jdk(
@@ -113,22 +146,40 @@ def provision_jdk(
     downloader: Downloader = default_downloader,
     system: str = sys.platform,
     machine: str = platform_module.machine(),
+    vendor: str = "temurin",
 ) -> ProvisionedJdk:
-    """Download the latest Temurin ``feature`` release for this platform, verify it, unpack it."""
+    """Download the latest ``feature`` release from ``vendor`` for this platform, verify it, unpack it."""
     os_name, arch = adoptium_platform(system, machine)
-    asset = pick_asset(json.loads(downloader(assets_url(feature, os_name, arch)).decode("utf-8")))
+    if vendor == "corretto":
+        asset = corretto_asset(feature, os_name, arch, downloader)
+    elif vendor == "temurin":
+        asset = pick_asset(json.loads(downloader(assets_url(feature, os_name, arch)).decode("utf-8")))
+    else:
+        msg = f"unknown JDK vendor {vendor!r}; choose one of {', '.join(VENDORS)}"
+        raise ValueError(msg)
+    if asset["release"] and not _SAFE_NAME.match(asset["release"]):
+        msg = f"refusing an unexpected release name {asset['release']!r}"
+        raise ValueError(msg)
+    LOG.debug("JDK asset %s (sha256 %s)", asset["url"], asset["sha256"])
     data = downloader(asset["url"])
     actual = hashlib.sha256(data).hexdigest()
     if actual != asset["sha256"]:
         msg = f"SHA-256 mismatch for {asset['name']}: expected {asset['sha256']}, got {actual}"
         raise ValueError(msg)
     install_dir.mkdir(parents=True, exist_ok=True)
-    target = install_dir / asset["release"]
     with tempfile.TemporaryDirectory(dir=install_dir) as scratch:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-            archive.extractall(scratch, filter="data")
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+                archive.extractall(scratch, filter="data")
+        except tarfile.TarError as exc:
+            msg = f"{asset['name']} could not be unpacked safely: {exc}"
+            raise ValueError(msg) from exc
         entries = list(Path(scratch).iterdir())
         unpacked = entries[0] if len(entries) == 1 and entries[0].is_dir() else Path(scratch)
+        release = asset["release"] or release_from(home_within(unpacked) or unpacked, vendor)
+        if not _SAFE_NAME.match(release):
+            release = f"{vendor}-{feature}"
+        target = install_dir / release
         if target.exists():
             shutil.rmtree(target)
         shutil.move(str(unpacked), str(target))
@@ -137,4 +188,4 @@ def provision_jdk(
         shutil.rmtree(target, ignore_errors=True)
         msg = f"{asset['name']} contains no bin/java"
         raise ValueError(msg)
-    return {"home": str(home), "version": feature, "release": asset["release"]}
+    return {"home": str(home), "version": feature, "release": release}

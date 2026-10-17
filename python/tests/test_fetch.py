@@ -90,3 +90,22 @@ def test_default_downloader_refuses_non_https() -> None:
         fetch.default_downloader("http://example.test/x.jar")
     with pytest.raises(ValueError, match="only https"):
         fetch.default_downloader("file:///etc/passwd")
+
+
+def test_redirects_to_plain_http_are_refused() -> None:
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    opener = fetch.https_only_opener()
+    handler = next(h for h in opener.handlers if isinstance(h, urllib.request.HTTPRedirectHandler))
+    request = urllib.request.Request("https://example.test/a")
+    with pytest.raises(urllib.error.URLError, match="non-https"):
+        handler.redirect_request(request, None, 302, "Found", {}, "http://example.test/b")
+    followed = handler.redirect_request(request, None, 302, "Found", {}, "https://example.test/b")
+    assert followed is not None and followed.full_url == "https://example.test/b"
+
+
+def test_atomic_jar_write(tmp_path: Path) -> None:
+    target = tmp_path / "x.jar"
+    fetch.write_atomically(target, b"abc")
+    assert target.read_bytes() == b"abc" and not (tmp_path / ".x.jar.part").exists()
