@@ -17,7 +17,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from groovyscope import changes, daemon, diagnostics, mcp_search, mcp_understanding, practices, reports, rpc
-from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
+from groovyscope import classpath as classpath_export
+from groovyscope.edits import FileEdit, changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
 
@@ -370,9 +371,11 @@ def quality_tools(
     *,
     clip_at: int = MESSAGE_CHARS,
     report_settings: Mapping[str, Any] | None = None,
+    classpath_settings: Mapping[str, Any] | None = None,
 ) -> dict[str, Callable[..., Any]]:
-    """check, format, find_dynamic_code, coverage_gaps and workspace_status."""
+    """check, format, find_dynamic_code, coverage_gaps, refresh_classpath and workspace_status."""
     settings = report_settings or {}
+    classpath = classpath_settings or {}
 
     def check(
         *,
@@ -407,6 +410,9 @@ def quality_tools(
         result["summary"] = raw.get("summary", {})
         result.update(extra)
         result.update(imported_summary)
+        state = classpath_state(root, classpath)
+        if state is not None and state["state"] in ATTENTION_STATES:
+            result["classpath"] = state
         return result
 
     def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
@@ -446,14 +452,19 @@ def quality_tools(
         return result
 
     def workspace_status() -> dict[str, Any]:
-        """Daemon, engine version, root, file count, trust flag and index state."""
+        """Daemon, engine version, root, file count, trust flag, index state and whether the classpath still
+        matches the build (fresh, stale, missing, configured, none)."""
         status = call("groovyscope/status", {"root": str(root)})
         info = daemon.info(root, environ)
-        return {
+        result: dict[str, Any] = {
             "root": str(root),
             "daemon": {"socket": info["socket"], "running": info["running"], "log": info["log"]},
             "engine": status,
         }
+        state = classpath_state(root, classpath)
+        if state is not None:
+            result["classpath"] = state
+        return result
 
     return {
         "check": check,
@@ -461,7 +472,67 @@ def quality_tools(
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
         **coverage_tools(root, paged, settings),
+        **classpath_tools(root, environ, classpath, clip_at=clip_at),
     }
+
+
+# How many inline merge request comments review_changes drafts per unit of `top`.
+COMMENTS_PER_TOP = 3
+# Classpath states worth a line in a check or review answer; fresh, configured and none need no action.
+ATTENTION_STATES = frozenset({"stale", "missing"})
+
+
+def classpath_state(root: Path, settings: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Whether the classpath the engine resolves against still matches the build files (stat calls only), or
+    None when the front end gave no classpath settings."""
+    file = settings.get("file")
+    if not file:
+        return None
+    try:
+        return dict(classpath_export.status(root, Path(str(file)), configured=bool(settings.get("configured"))))
+    except OSError as exc:
+        return {"state": "unknown", "entries": 0, "message": f"classpath file unreadable: {exc}"}
+
+
+def classpath_tools(
+    root: Path, environ: Mapping[str, str], settings: Mapping[str, Any], *, clip_at: int = MESSAGE_CHARS
+) -> dict[str, Callable[..., Any]]:
+    """refresh_classpath: the build's classpath exported again after dependencies changed."""
+
+    def refresh_classpath(timeout: int = classpath_export.DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
+        """Export the compile and test classpath again from the project's Gradle or Maven build, after a
+        dependency changed in build.gradle, pom.xml or libs.versions.toml (check and workspace_status say
+        `classpath.state: stale`); the engine picks the new classpath up on its next request, no restart. Runs
+        the build, which can take minutes, and only in a trusted workspace: otherwise ask the user to run
+        `groovyscope trust` and `groovyscope classpath`."""
+        if not settings.get("file"):
+            return {"error": "no classpath settings in this session; run `groovyscope classpath` in a terminal"}
+        if not settings.get("trusted"):
+            return {
+                "error": "refused: the export runs the project's build scripts, which only a trusted workspace "
+                "may do; ask the user to run `groovyscope trust` and then `groovyscope classpath`"
+            }
+        env = dict(environ)
+        if not env.get("JAVA_HOME") and settings.get("javaHome"):
+            env["JAVA_HOME"] = str(settings["javaHome"])
+        try:
+            export = classpath_export.export(root, env, timeout=max(1, int(timeout)))
+        except ValueError as exc:
+            return {"error": clip(str(exc), clip_at)}
+        target = Path(str(settings["file"]))
+        try:
+            classpath_export.write_file(target, export, fingerprint=classpath_export.build_fingerprint(root))
+        except OSError as exc:
+            return {"error": f"classpath exported but {target} could not be written: {exc}"}
+        return {
+            "tool": export["tool"],
+            "entries": len(export["paths"]),
+            "missing": len(export["missing"]),
+            "file": relative_path(target.resolve().as_uri(), root),
+            "note": "the engine reloads the classpath on its next request",
+        }
+
+    return {"refresh_classpath": refresh_classpath}
 
 
 def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:
@@ -590,38 +661,61 @@ def rename_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., An
         if raw.get("refused"):
             return {"renamed": False, "refused": raw["refused"]}
         changed, refused = file_edits(raw.get("edits", {}), root)
-        uris = [edit["path"].as_uri() for edit in changed]
-        errors_before = compile_errors(uris) if apply and changed else 0
-        files = []
-        for edit in changed:
-            if apply:
-                write_document(edit["path"], edit["after"])
-            files.append(
-                {
-                    "path": relative_path(edit["path"].as_uri(), root),
-                    "edits": len(raw["edits"].get(edit["path"].as_uri(), [])) or None,
-                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
-                }
-            )
+        files = [
+            {
+                "path": relative_path(edit["path"].as_uri(), root),
+                "edits": len(raw["edits"].get(edit["path"].as_uri(), [])) or None,
+                "linesChanged": changed_line_count(edit["before"], edit["after"]),
+            }
+            for edit in changed
+        ]
         result: dict[str, Any] = {"renamed": apply, "files": files[:cap], "fileCount": len(files)}
-        if apply and changed:
-            errors_after = compile_errors(uris)
-            if errors_after > errors_before:
-                for edit in changed:
-                    write_document(edit["path"], edit["before"])
-                result.update(
-                    {
-                        "renamed": False,
-                        "rolledBack": True,
-                        "reason": f"the rename left {errors_after - errors_before} new compile error(s); the files "
-                        "were restored. Check the symbol (a same-named member in another class?) or rename by hand",
-                    }
-                )
-            else:
-                result["verified"] = "the changed files compile with no new errors"
         if refused:
             result["skipped"] = [relative_path(uri, root) for uri in refused][:cap]
+        if apply and changed:
+            result.update(apply_verified(changed))
         return result
+
+    def apply_verified(changed: list[FileEdit]) -> dict[str, Any]:
+        """Write the edits, recompile the changed files, and restore every file when a write fails, the engine
+        cannot verify, or the rename left new compile errors: the workspace is either fully renamed or untouched."""
+        uris = [edit["path"].as_uri() for edit in changed]
+        try:
+            errors_before = compile_errors(uris)
+        except (OSError, RuntimeError) as exc:
+            return {"renamed": False, "reason": f"nothing written: the engine could not compile first ({exc})"}
+        written: list[FileEdit] = []
+        try:
+            for edit in changed:
+                write_document(edit["path"], edit["after"])
+                written.append(edit)
+            errors_after = compile_errors(uris)
+        except (OSError, RuntimeError) as exc:
+            failed = restore(written)
+            reason = f"{exc}; the files already changed were restored"
+            if failed:
+                reason += f", except {', '.join(failed)}: restore them from version control"
+            return {"renamed": False, "rolledBack": True, "reason": reason}
+        if errors_after > errors_before:
+            failed = restore(written)
+            reason = (
+                f"the rename left {errors_after - errors_before} new compile error(s); the files were restored. "
+                "Check the symbol (a same-named member in another class?) or rename by hand"
+            )
+            if failed:
+                reason += f". Restore {', '.join(failed)} from version control"
+            return {"renamed": False, "rolledBack": True, "reason": reason}
+        return {"verified": "the changed files compile with no new errors"}
+
+    def restore(written: list[FileEdit]) -> list[str]:
+        """Put the original text back; the paths that could not be restored."""
+        failed: list[str] = []
+        for edit in written:
+            try:
+                write_document(edit["path"], edit["before"])
+            except OSError:
+                failed.append(relative_path(edit["path"].as_uri(), root))
+        return failed
 
     def compile_errors(uris: list[str]) -> int:
         """Compile errors in the given documents, as the engine reports them after re-reading the files."""
@@ -673,7 +767,8 @@ def review_tools(
         the changed Groovy, Gradle and Jenkinsfile files, every finding on their changed lines grouped blocking,
         shouldFix and nits, pre-existing findings elsewhere in those files as counts, the impact of changed
         declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), and a
-        one-sentence verdict. Nothing is run but git."""
+        one-sentence verdict, plus `comments` (path, line, body) ready to post as inline merge request discussions
+        and a `summaryComment` for the merge request itself. Nothing is run but git."""
         try:
             change = changes.changed_files(root, base, staged=staged)
         except ValueError as exc:
@@ -758,9 +853,15 @@ def review_tools(
                 "riskyCount": len(risky),
                 "uncovered": uncovered[:limit],
                 "uncoveredCount": len(uncovered),
+                "classpath": others["workspace_status"]().get("classpath") if "workspace_status" in others else None,
                 **extra,
                 **imported_summary,
             }
+        )
+        comments = changes.draft_comments(buckets, risky[:limit], uncovered[:limit], limit=limit * COMMENTS_PER_TOP)
+        result["comments"] = comments
+        result["summaryComment"] = changes.summary_comment(
+            result["verdict"], result["counts"], impact, len(uncovered), len(comments)
         )
         return result
 
@@ -777,13 +878,23 @@ def build_tools(
     paged, cap = pager(output)
     clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
     report_settings = output.get("reports") if isinstance(output.get("reports"), Mapping) else {}
+    classpath_settings = output.get("classpath") if isinstance(output.get("classpath"), Mapping) else {}
     tools: dict[str, Callable[..., Any]] = {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, paged, cap),
         **mcp_search.search_tools(
             root, call, paged, cap, settings=output, max_chars=int(output.get("maxBytes", 16000))
         ),
-        **quality_tools(root, call, paged, cap, environ, clip_at=clip_at, report_settings=report_settings),
+        **quality_tools(
+            root,
+            call,
+            paged,
+            cap,
+            environ,
+            clip_at=clip_at,
+            report_settings=report_settings,
+            classpath_settings=classpath_settings,
+        ),
         **practice_tools(root, call, cap, clip_at, report_settings),
     }
     tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
@@ -807,6 +918,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "profile_status": ("Runtime profile of a file", True),
     "find_dynamic_code": ("Find dynamic Groovy", True),
     "workspace_status": ("Workspace and daemon status", True),
+    "refresh_classpath": ("Refresh the classpath from the build", False),
     "format": ("Format files", False),
     "fix": ("Apply safe fixes", False),
     "rename": ("Rename a symbol", False),
@@ -864,31 +976,66 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     return server
 
 
+Configuration = Callable[[], tuple[str, str] | None]
+RELOAD_METHOD = "groovyscope/reloadConfig"
+CALL_TIMEOUT_SECONDS = 600.0
+
+
 def session_caller(
     socket_file: Path,
     reconnect: Callable[[], Path] | None = None,
     *,
     open_session: Callable[[Path], rpc.Session] | None = None,
+    configuration: Configuration | None = None,
 ) -> tuple[Call, Callable[[], None]]:
     """A ``call`` bound to one engine session that, when the engine has gone away (daemon stopped, JVM killed,
-    upgraded), restarts it through ``reconnect`` and retries the request once. Also returns a closer."""
+    upgraded), restarts it through ``reconnect`` and retries the request once. Also returns a closer.
+
+    ``configuration`` returns the current effective configuration as ``(hash, json)``; before each request, a
+    hash the engine has not seen yet is sent as ``groovyscope/reloadConfig`` first, so a re-exported classpath or
+    an edited ``.groovyscope.yaml`` applies in place, without a restart."""
     opener = rpc.open_session if open_session is None else open_session
-    state: dict[str, Any] = {"session": opener(socket_file)}
+    state: dict[str, Any] = {"session": opener(socket_file), "applied": None}
     # The SDK runs tools on worker threads and agents call tools in parallel; one session carries one exchange
     # at a time, so calls queue here instead of interleaving their frames.
     lock = threading.Lock()
 
+    def apply_configuration() -> None:
+        current = configuration() if configuration is not None else None
+        if current is None or current[0] == state["applied"]:
+            return
+        digest, document = current
+        try:
+            reply = rpc.call(state["session"], RELOAD_METHOD, {"config": document}, timeout=60.0)
+        except RuntimeError as exc:  # the engine refused the document; the old configuration stays in force
+            LOG.warning("engine kept its configuration: %s", exc)
+        else:
+            if isinstance(reply, Mapping) and reply.get("reloaded"):
+                LOG.info("engine configuration reloaded (%s)", digest[:12])
+        state["applied"] = digest
+
     def call(method: str, params: dict[str, Any]) -> Any:
         with lock:
             try:
-                return rpc.call(state["session"], method, params, timeout=600.0)
-            except OSError as exc:
+                apply_configuration()
+                return rpc.call(state["session"], method, params, timeout=CALL_TIMEOUT_SECONDS)
+            except TimeoutError as exc:
+                # The engine is still working on it; sending the same request again would only double the work.
+                msg = (
+                    f"{method} did not answer within {CALL_TIMEOUT_SECONDS:.0f}s; the engine is still busy with it. "
+                    "Narrow the paths or retry in a moment"
+                )
+                raise RuntimeError(msg) from exc
+            except (OSError, ValueError) as exc:
+                # The socket died or the stream is out of frame: only a fresh session can answer.
                 if reconnect is None:
                     raise
                 LOG.info("engine session lost (%s); reconnecting", exc)
                 rpc.close_session(state["session"])
                 state["session"] = opener(reconnect())
-                return rpc.call(state["session"], method, params, timeout=600.0)
+                state["applied"] = None
+                apply_configuration()
+                return rpc.call(state["session"], method, params, timeout=CALL_TIMEOUT_SECONDS)
 
     def close() -> None:
         rpc.close_session(state["session"])
@@ -902,11 +1049,13 @@ def serve(
     output: Mapping[str, Any],
     environ: Mapping[str, str],
     reconnect: Callable[[], Path] | None = None,
+    *,
+    configuration: Configuration | None = None,
 ) -> int:
     """Open one engine session, run the MCP server on stdio until the client disconnects, close the session."""
     # No LSP initialize: every groovyscope/* request names its root, and an initialized session would make
     # the engine lint the whole workspace and push diagnostics for every file to a client that ignores them.
-    call, close = session_caller(socket_file, reconnect)
+    call, close = session_caller(socket_file, reconnect, configuration=configuration)
     try:
         build_server(root, call, output, environ).run(transport="stdio")
     finally:

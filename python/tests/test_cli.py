@@ -180,8 +180,8 @@ def test_mcp_command_serves_over_the_daemon(
     monkeypatch.setattr(
         cli,
         "_MCP_SERVE",
-        lambda root, socket_file, output, environ, reconnect: (
-            served.append((root, socket_file, output, environ, reconnect)) or 0
+        lambda root, socket_file, output, environ, reconnect, configuration=None: (
+            served.append((root, socket_file, output, environ, reconnect, configuration)) or 0
         ),
     )
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "mcp"])
@@ -291,7 +291,7 @@ def test_daemon_commands(
     )
     restarted = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"])
     assert restarted.exit_code == 0 and "daemon restarted" in restarted.output
-    assert "started with a different configuration" in restarted.output
+    assert "could not reload it" in restarted.output and "daemon restart" in restarted.output
 
     def stop_fails(_s: object) -> bool:
         msg = "did not stop"
@@ -367,8 +367,11 @@ def test_kiro_init_global_merges_into_the_kiro_home(
 
 
 def test_checkup_and_benchmark_commands(
-    runner: CliRunner, tmp_path: Path, isolated_home: Path, clean_env: dict[str, str]
+    runner: CliRunner, tmp_path: Path, isolated_home: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))  # the matrix jobs run without a bundled engine
     (tmp_path / "build.gradle").write_text("", encoding="utf-8")
     report = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup"])
     assert report.exit_code == 0, report.output

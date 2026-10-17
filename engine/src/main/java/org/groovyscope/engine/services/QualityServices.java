@@ -79,6 +79,28 @@ public final class QualityServices {
     private record PracticeEntry(long version, List<PracticeFinder.Practice> practices) {
     }
 
+    private record TypeCheckEntry(long version, Map<String, List<Diagnostic>> typed) {
+    }
+
+    private volatile TypeCheckEntry typeCache;
+
+    /**
+     * The type check of the whole workspace, run once per snapshot: every {@code check} asks for all of it (the
+     * checkers need every class), so a request for one file must not pay for a full compile each time.
+     */
+    private Map<String, List<Diagnostic>> typeCheckAll() {
+        org.groovyscope.engine.services.Snapshot current = navigation.snapshot();
+        TypeCheckEntry cached = typeCache;
+        if (cached != null && cached.version() == current.version()) {
+            return cached.typed();
+        }
+        Map<String, List<Diagnostic>> typed = typeChecker.analyze(workspace.compileSources(), workspace.classpath(),
+                workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
+                current.result().unresolvedUris());
+        typeCache = new TypeCheckEntry(current.version(), typed);
+        return typed;
+    }
+
     /** What {@link #fix} changed in one document. */
     public record FixResult(Map<String, List<TextEdit>> edits, Map<String, List<String>> applied,
             Map<String, String> rejected) {
@@ -479,9 +501,7 @@ public final class QualityServices {
             }
         }
         if (wanted.contains(INCLUDE_TYPECHECK)) {
-            Map<String, List<Diagnostic>> typed = typeChecker.analyze(workspace.compileSources(), workspace.classpath(),
-                    workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
-                    navigation.snapshot().result().unresolvedUris());
+            Map<String, List<Diagnostic>> typed = typeCheckAll();
             for (String uri : targets) {
                 for (Diagnostic diagnostic : profileCheckerPolicy(uri, typed.getOrDefault(uri, List.of()))) {
                     if (!result.get(uri).contains(diagnostic)) {

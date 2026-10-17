@@ -139,7 +139,8 @@ def test_daemon_item_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         "info",
         lambda *_a, **_k: {"running": True, "status": {"configHash": "old", "engineVersion": "1"}},
     )
-    assert checkup.daemon_item(tmp_path, {}, "abc")["fix"] == "groovyscope daemon restart"
+    older = checkup.daemon_item(tmp_path, {}, "abc")
+    assert older["level"] == "info" and "reloads it in place" in older["message"] and "fix" not in older
     assert checkup.daemon_item(tmp_path, {}, "old")["message"] == "running (engine 1)"
 
 

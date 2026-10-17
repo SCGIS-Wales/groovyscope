@@ -128,6 +128,11 @@ public class GroovyCompiler {
                 remaining.remove(broken);
                 dropped.add(broken);
             }
+            if (cascaded(first, dropped)) {
+                // Every further round would only drop the users of the files already dropped; the first
+                // attempt's trees are kept below, so the remaining compiles would be thrown away.
+                break;
+            }
         }
         if (first != null && cascaded(first, dropped)) {
             if (previous != first) {
@@ -147,6 +152,7 @@ public class GroovyCompiler {
             if (module != null) {
                 modules.put(uri, module);
             }
+            release(parsed); // a CONVERSION tree never decompiles classpath types
         }
         // Java files are compiled only so Groovy code can resolve them; Groovy's view of Java code is not
         // something to report on (javac and the IDE own that), so their diagnostics are dropped.
@@ -230,8 +236,8 @@ public class GroovyCompiler {
         } catch (CompilationFailedException e) {
             failed = true;
             failure = e;
-        } catch (RuntimeException | LinkageError | StackOverflowError e) {
-            // A compiler bug on exotic input, a class that fails to link, or a stack overflow on deeply nested code
+        } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
+            // A compiler bug on exotic input (Groovy reports its own as GroovyBugError, an AssertionError), a class that fails to link, or a stack overflow on deeply nested code
             // must not take the server down. OutOfMemoryError is left to propagate.
             Map<String, List<Diagnostic>> crash = new HashMap<>();
             String firstUri = sources.keySet().iterator().next();
@@ -309,10 +315,10 @@ public class GroovyCompiler {
                 resolver.setClassNodeResolver(unit.getClassNodeResolver());
                 resolver.startResolving(classNode, source);
                 new StaticImportVisitor(classNode, source).visitClass(classNode);
-            } catch (RuntimeException | LinkageError e) {
+            } catch (RuntimeException | LinkageError | AssertionError e) {
                 try {
                     new VariableScopeVisitor(source).visitClass(classNode);
-                } catch (RuntimeException | LinkageError ignored) {
+                } catch (RuntimeException | LinkageError | AssertionError ignored) {
                     // Scoping is best effort on a file that did not fully compile.
                 }
             }
@@ -324,7 +330,7 @@ public class GroovyCompiler {
         for (ClassNode classNode : module.getClasses()) {
             try {
                 new VariableScopeVisitor(source).visitClass(classNode);
-            } catch (RuntimeException | LinkageError e) {
+            } catch (RuntimeException | LinkageError | AssertionError e) {
                 // Scoping is best effort on a file that did not fully compile (or uses classes missing from the
                 // configured classpath).
             }

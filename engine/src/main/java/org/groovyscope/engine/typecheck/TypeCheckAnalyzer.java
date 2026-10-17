@@ -160,7 +160,7 @@ public final class TypeCheckAnalyzer {
             unit.compile(Phases.INSTRUCTION_SELECTION);
         } catch (CompilationFailedException e) {
             // Errors are read from the collectors below.
-        } catch (RuntimeException | LinkageError e) {
+        } catch (RuntimeException | LinkageError | AssertionError e) {
             return new Pass(false, Set.of(), Map.of(), new IllegalStateException(e.toString(), e));
         } finally {
             closeQuietly(loader);

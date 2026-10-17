@@ -22,6 +22,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import org.groovyscope.engine.compile.GroovyCompiler;
@@ -36,7 +37,7 @@ import org.groovyscope.engine.workspace.WorkspaceModel;
  */
 public final class WorkspaceRegistry implements Function<Path, LanguageServices> {
 
-    private final EngineConfig config;
+    private volatile EngineConfig config;
     private final Path cacheDir;
     private final Map<Path, LanguageServices> services = new ConcurrentHashMap<>();
 
@@ -76,6 +77,22 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
             return HexFormat.of().formatHex(hash).substring(0, 16);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    /** The configuration every workspace currently runs with. */
+    public EngineConfig config() {
+        return config;
+    }
+
+    /**
+     * Replaces the configuration for every open workspace and for the ones opened later, without a restart: each
+     * workspace drops its caches and recompiles on its next request. Connections keep their open documents.
+     */
+    public void reload(EngineConfig replacement) {
+        config = Objects.requireNonNull(replacement, "replacement");
+        for (LanguageServices open : services.values()) {
+            open.reconfigure(replacement);
         }
     }
 

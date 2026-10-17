@@ -8,6 +8,7 @@ them; AST transformations from the workspace classpath load only in a trusted wo
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -16,7 +17,7 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 LOG = logging.getLogger("groovyscope.classpath")
 MARKER = "GROOVYSCOPE_CLASSPATH "
@@ -24,6 +25,17 @@ DEFAULT_FILE = ".groovyscope/classpath.txt"
 DEFAULT_TIMEOUT_SECONDS = 900
 GRADLE_FILES = ("settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts")
 MAVEN_OUTPUT = "target/groovyscope-classpath.txt"
+# The files whose change means the exported classpath may be out of date: the root build files plus every
+# nested module build file (Gradle subprojects, Maven modules, buildSrc) down to FINGERPRINT_DEPTH levels.
+ROOT_BUILD_FILES = (*GRADLE_FILES, "pom.xml", "gradle.properties", "gradle/libs.versions.toml")
+NESTED_BUILD_FILES = ("build.gradle", "build.gradle.kts", "pom.xml", "settings.gradle", "settings.gradle.kts")
+SKIPPED_DIRS = frozenset(
+    {".git", ".gradle", ".groovyscope", ".idea", ".kiro", "build", "node_modules", "out", "target"}
+)
+FINGERPRINT_DEPTH = 4
+FINGERPRINT_LIMIT = 500
+FINGERPRINT_MARKER = "# build-fingerprint: "
+FIX = "groovyscope classpath"
 
 Runner = Callable[[Sequence[str], Path, Mapping[str, str], int], tuple[int, str]]
 Which = Callable[[str], str | None]
@@ -133,18 +145,61 @@ def export(
     return {"tool": chosen, "command": command, "paths": existing, "missing": [p for p in unique if p not in existing]}
 
 
-def write_file(target: Path, result: Export) -> None:
-    """Write the list with a header saying how it was produced; atomically."""
+def build_files(root: Path) -> list[Path]:
+    """The build files under ``root`` that decide its classpath, nearest first and in a stable order."""
+    found = [root / name for name in ROOT_BUILD_FILES if (root / name).is_file()]
+    pending: list[tuple[Path, int]] = [(root, 0)]
+    while pending and len(found) < FINGERPRINT_LIMIT:
+        folder, depth = pending.pop(0)
+        try:
+            entries = sorted(os.scandir(folder), key=lambda entry: entry.name)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name not in SKIPPED_DIRS and not entry.name.startswith(".") and depth < FINGERPRINT_DEPTH:
+                    pending.append((Path(entry.path), depth + 1))
+            elif depth > 0 and entry.name in NESTED_BUILD_FILES and entry.is_file(follow_symlinks=False):
+                found.append(Path(entry.path))
+    return found[:FINGERPRINT_LIMIT]
+
+
+def build_fingerprint(root: Path) -> str:
+    """A digest of every build file's path, size and modification time: the same value means the exported
+    classpath still matches the build."""
+    digest = hashlib.sha256()
+    for file in build_files(root):
+        try:
+            stat = file.stat()
+        except OSError:
+            continue
+        digest.update(f"{file.relative_to(root).as_posix()}|{stat.st_size}|{stat.st_mtime_ns}\n".encode())
+    return digest.hexdigest()
+
+
+def write_file(target: Path, result: Export, *, fingerprint: str | None = None) -> None:
+    """Write the list with a header saying how it was produced and which build it matches; atomically."""
     target.parent.mkdir(parents=True, exist_ok=True)
     command = [Path(result["command"][0]).name, *result["command"][1:]]
     header = [
         "# groovyscope classpath export: one path per line; regenerate with `groovyscope classpath`",
         f"# produced by: {' '.join(command)}",
     ]
+    if fingerprint:
+        header.append(f"{FINGERPRINT_MARKER}{fingerprint}")
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as handle:
         handle.write("\n".join([*header, *result["paths"]]) + "\n")
         temporary = Path(handle.name)
-    temporary.replace(target)
+    try:
+        if target.exists():
+            shutil.copymode(target, temporary)
+        else:
+            mask = os.umask(0)
+            os.umask(mask)
+            temporary.chmod(0o666 & ~mask)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_file(path: Path) -> list[str]:
@@ -155,3 +210,78 @@ def read_file(path: Path) -> list[str]:
         return []
     entries = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
     return [entry for entry in entries if Path(entry).exists()]
+
+
+def count_entries(path: Path) -> int:
+    """How many paths a classpath file lists (existing or not); 0 when it cannot be read."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+    return sum(1 for line in lines if line.strip() and not line.lstrip().startswith("#"))
+
+
+def read_fingerprint(path: Path) -> str | None:
+    """The build fingerprint recorded in a classpath file, or None for a file written before fingerprints."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith(FINGERPRINT_MARKER):
+            return line[len(FINGERPRINT_MARKER) :].strip() or None
+        if line.strip() and not line.startswith("#"):
+            break
+    return None
+
+
+class Status(TypedDict):
+    """Whether the engine's classpath still matches the build: ``fresh``, ``stale`` (a build file changed after
+    the export), ``missing`` (a build exists but nothing was exported), ``configured`` (``workspace.classpath``
+    lists the jars by hand) or ``none`` (no build tool, nothing to resolve)."""
+
+    state: str
+    entries: int
+    message: str
+    fix: NotRequired[str]
+
+
+def status(root: Path, classpath_file: Path, *, configured: bool = False) -> Status:
+    """The classpath state for ``root``; cheap enough to run on every request (stat calls only)."""
+    tool = detect_tool(root)
+    if classpath_file.is_file():
+        entries = count_entries(classpath_file)
+        recorded = read_fingerprint(classpath_file)
+        if recorded is None:
+            try:
+                exported_at = classpath_file.stat().st_mtime
+                changed = any(file.stat().st_mtime > exported_at for file in build_files(root))
+            except OSError:
+                changed = False
+            reason = "a build file changed after the classpath was exported"
+        else:
+            changed = recorded != build_fingerprint(root)
+            reason = "the build files changed after the classpath was exported"
+        if changed:
+            return {
+                "state": "stale",
+                "entries": entries,
+                "message": f"{reason}; unresolved library classes may be new dependencies, not defects",
+                "fix": FIX,
+            }
+        return {"state": "fresh", "entries": entries, "message": f"{entries} entries from {classpath_file.name}"}
+    if configured:
+        return {"state": "configured", "entries": 0, "message": "workspace.classpath set in the configuration"}
+    if tool is not None:
+        return {
+            "state": "missing",
+            "entries": 0,
+            "message": f"no classpath yet ({tool} build found): library classes do not resolve and files with "
+            "library imports get one GS100 warning each",
+            "fix": FIX,
+        }
+    return {
+        "state": "none",
+        "entries": 0,
+        "message": "no build tool here; list jars under workspace.classpath if needed",
+    }

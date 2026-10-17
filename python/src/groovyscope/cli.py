@@ -492,6 +492,7 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
         archive.parent.mkdir(parents=True, exist_ok=True)
     command = build_engine_command(Path(jdk["home"]), Path(jar["path"]), effective, [], cds_archive=archive)
     obj["engine_version"] = jar["version"]
+    obj["jdk_home"] = jdk["home"]
     LOG.debug("engine command: %s", " ".join(command))
     return (command, effective)
 
@@ -565,15 +566,66 @@ def config_hash() -> str:
     return hashlib.sha256(os.environ.get(CONFIG_ENV, "").encode("utf-8")).hexdigest()
 
 
-def warn_if_stale(status: dict[str, Any]) -> None:
-    """A daemon started with another configuration keeps serving it; say so instead of failing silently."""
+RELOAD_METHOD = "groovyscope/reloadConfig"
+RELOAD_TIMEOUT_SECONDS = 60.0
+
+
+def reload_if_stale(socket_file: Path, status: dict[str, Any]) -> bool:
+    """A daemon running another configuration (a re-exported classpath, an edited .groovyscope.yaml, changed
+    profiles) is handed the current one and applies it in place. True when a reload was sent and accepted; when
+    the engine cannot take it, the user is told how to restart instead."""
     running = status.get("configHash")
-    if isinstance(running, str) and running and running != config_hash():
+    if not (isinstance(running, str) and running and running != config_hash()):
+        return False
+    try:
+        _RPC(socket_file, RELOAD_METHOD, {"config": os.environ.get(CONFIG_ENV, "")}, RELOAD_TIMEOUT_SECONDS)
+    except (OSError, RuntimeError, ValueError) as exc:
         click.echo(
-            "groovyscope: the daemon was started with a different configuration (.groovyscope.yaml, profiles or "
-            "environment changed); run `groovyscope daemon restart` to apply it",
+            f"groovyscope: the daemon runs an older configuration and could not reload it ({exc}); "
+            "run `groovyscope daemon restart` to apply it",
             err=True,
         )
+        return False
+    LOG.info("daemon configuration reloaded in place")
+    return True
+
+
+def config_source(obj: dict[str, Any]) -> Callable[[], tuple[str, str] | None]:
+    """A function the MCP server calls before each engine request: the current effective configuration as
+    ``(hash, json)``, recomputed only when the configuration file or the classpath file changed on disk (stat
+    calls otherwise), or None when the configuration cannot be loaded (the engine keeps the last good one)."""
+    memo: dict[str, Any] = {"stamp": None, "effective": None}
+    value: list[tuple[str, str] | None] = [None]
+
+    def stamps() -> tuple[tuple[int, int] | None, ...]:
+        config_file = obj["config_path"] or obj["root"] / ".groovyscope.yaml"
+        listed = (memo.get("effective") or {}).get("workspace", {}).get("classpathFile")
+        classpath_file = obj["root"] / Path(listed or classpath_export.DEFAULT_FILE).expanduser()
+        found: list[tuple[int, int] | None] = []
+        for file in (config_file, classpath_file):
+            try:
+                stat = file.stat()
+                found.append((stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                found.append(None)
+        return tuple(found)
+
+    def current() -> tuple[str, str] | None:
+        stamp = stamps()
+        if stamp == memo["stamp"]:
+            return value[0]
+        try:
+            effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+            hand_over_config(obj, effective)
+        except (ValueError, OSError) as exc:
+            LOG.warning("configuration not reloaded: %s", exc)
+            memo["stamp"] = stamp
+            return value[0]
+        memo.update({"stamp": stamp, "effective": effective})
+        value[0] = (config_hash(), os.environ[CONFIG_ENV])
+        return value[0]
+
+    return current
 
 
 def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
@@ -585,7 +637,7 @@ def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, 
     status = daemon_lifecycle.ensure_running(
         daemon_command, socket_file, log_file, dict(os.environ), expected_engine=obj.get("engine_version")
     )
-    warn_if_stale(status)
+    reload_if_stale(socket_file, status)
     return (socket_file, status)
 
 
@@ -822,12 +874,27 @@ def review_command(
         sys.exit(1)
 
 
-def tool_settings(effective: Mapping[str, Any]) -> dict[str, Any]:
-    """What the MCP tools read beyond the output section: duplicate thresholds and the build's reports."""
+def tool_settings(effective: Mapping[str, Any], classpath: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """What the MCP tools read beyond the output section: duplicate thresholds, the build's reports and the
+    classpath file to watch."""
     return {
         **effective["output"],
         "duplicates": effective.get("duplicates", {}),
         "reports": reports.reports_settings(effective),
+        "classpath": dict(classpath or {}),
+    }
+
+
+def classpath_settings(obj: dict[str, Any], effective: Mapping[str, Any]) -> dict[str, Any]:
+    """Where the exported classpath lives, whether jars are listed by hand, whether the workspace is trusted
+    (so `refresh_classpath` may run the build) and which JDK the build should use."""
+    workspace = effective.get("workspace", {})
+    listed = workspace.get("classpathFile") or classpath_export.DEFAULT_FILE
+    return {
+        "file": str(obj["root"] / Path(listed).expanduser()),
+        "configured": bool(workspace.get("classpath")),
+        "trusted": bool(workspace.get("trust")),
+        "javaHome": obj.get("jdk_home"),
     }
 
 
@@ -1333,8 +1400,10 @@ def mcp(obj: dict[str, Any]) -> None:
             msg = "the engine daemon could not be restarted; run `groovyscope doctor`"
             raise ConnectionError(msg) from exc
 
-    settings = tool_settings(effective)
-    sys.exit(_MCP_SERVE(obj["root"], socket_file, settings, dict(os.environ), reconnect))
+    settings = tool_settings(effective, classpath_settings(obj, effective))
+    sys.exit(
+        _MCP_SERVE(obj["root"], socket_file, settings, dict(os.environ), reconnect, configuration=config_source(obj))
+    )
 
 
 @main.command()
@@ -1414,16 +1483,25 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int) -> No
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
     target = obj["root"] / Path(effective["workspace"].get("classpathFile") or classpath_export.DEFAULT_FILE)
-    classpath_export.write_file(target, result)
+    classpath_export.write_file(target, result, fingerprint=classpath_export.build_fingerprint(obj["root"]))
     click.echo(
         f"{len(result['paths'])} classpath entries from {result['tool']} written to {shown_path(target, obj['root'])}"
     )
     if result["missing"]:
         click.echo(f"{len(result['missing'])} listed path(s) do not exist yet (not built?) and were left out", err=True)
     socket_file = daemon_paths(obj["root"])[0]
-    if daemon_lifecycle.probe(socket_file) is not None:
-        daemon_lifecycle.stop(socket_file)
-        click.echo("the running daemon was stopped; the next request starts it with the new classpath")
+    status = daemon_lifecycle.probe(socket_file)
+    if status is not None:
+        hand_over_config(obj, load_config(obj["root"], obj["config_path"], dict(os.environ)))
+        if reload_if_stale(socket_file, status):
+            click.echo("the running daemon reloaded the new classpath; the next request recompiles against it")
+        else:
+            try:
+                daemon_lifecycle.stop(socket_file)
+            except (OSError, RuntimeError) as exc:
+                click.echo(f"groovyscope: {exc}; run `groovyscope daemon restart` to apply the classpath", err=True)
+            else:
+                click.echo("the running daemon was stopped; the next request starts it with the new classpath")
 
 
 @main.command("init")

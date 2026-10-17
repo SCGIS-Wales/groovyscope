@@ -153,6 +153,21 @@ def daemon_command(
     return command
 
 
+LOG_TAIL_BYTES = 2000
+
+
+def log_tail(log_file: Path, limit: int = LOG_TAIL_BYTES) -> str:
+    """The last ``limit`` bytes of a log file, without reading the whole file."""
+    try:
+        with log_file.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def start(
     command: Sequence[str],
     socket_file: Path,
@@ -189,9 +204,12 @@ def start(
             return status
         exited = getattr(process, "poll", lambda: None)()
         if exited is not None or time.monotonic() >= deadline:
-            tail = log_file.read_text(encoding="utf-8", errors="replace")[-2000:] if log_file.exists() else ""
+            if exited is None:
+                # Not answering yet, and a later bind would race the next start: stop it now.
+                with contextlib.suppress(OSError):
+                    getattr(process, "kill", lambda: None)()
             reason = f"exited with code {exited}" if exited is not None else f"did not answer within {timeout:.0f}s"
-            msg = f"daemon on {socket_file} {reason}; log {log_file} ends with:\n{tail}"
+            msg = f"daemon on {socket_file} {reason}; log {log_file} ends with:\n{log_tail(log_file)}"
             raise RuntimeError(msg)
         sleep(0.2)
 

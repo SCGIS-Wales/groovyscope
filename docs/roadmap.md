@@ -225,6 +225,36 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   tap to verify afterwards, and the owner's Kiro 2.29.1 checks to record in the log below. Prompt:
   "continue Stage 11 from docs/roadmap.md: verify the 0.10.0 release and record my Kiro checks".
 
+- [ ] **Stage 12: live configuration, classpath state and reliability** — branch `feat/live-config`,
+  2026-10-17, from the owner's concern that the classpath the engine resolves against goes stale while the
+  agent changes code, and that nobody could tell. Done in this stage:
+  - A. The engine takes a new configuration in place (`groovyscope/reloadConfig`): the workspace model swaps
+    it, the services drop their caches, the next query recompiles, connections stay open; `status` reports the
+    live `configHash`. The CLI sends it whenever the daemon's hash differs, the MCP server before any request
+    once `.groovyscope.yaml` or the classpath file changed on disk. `groovyscope classpath` reloads instead of
+    stopping the daemon. The disk fingerprint covers the classpath entries, so a rebuilt jar marks the
+    snapshot stale.
+  - B. Classpath state: the export records a fingerprint of every build file (root and nested); `checkup`,
+    `check`, `review_changes` and `workspace_status` report `fresh`, `stale`, `missing`, `configured` or
+    `none` with the fix; `refresh_classpath` (27th MCP tool) runs the export for the agent in a trusted
+    workspace. Steering and prompts say what `stale` means before unresolved classes are judged.
+  - C. Reliability fixes from two independent reviews: a request timeout is reported instead of re-sent; a
+    framing error reconnects; `rename` restores every file when a write or the verification fails; draw.io
+    output only to `.drawio` files, atomically; SARIF logs indexed once and malformed ones never crash a tool;
+    a universal Kiro agent file is never downgraded without kiro-cli; unique temporary names for atomic
+    writes; a daemon that never answered is killed; the LSP relay ends instead of starting a second engine
+    when the daemon dies mid-session. Engine: Groovy compiler bugs (`GroovyBugError`) are contained like
+    other crashes and logged on the diagnostics thread; the resolver cache is thread safe; the type check runs
+    once per snapshot; cascading retries stop early; per-file parse loaders are closed; open Java documents
+    stay in the compile and oversized open documents are skipped; the idle exit waits for a connection
+    accepted meanwhile; a reload in stdio mode reaches the registry.
+  - D. Merge request review for GitLab: `review_changes` drafts one inline comment per finding (path, line,
+    body written to the author: the observation, why it matters, a concrete suggestion) and a summary note;
+    the steering tells the agent to post them through a GitLab MCP server after a yes, never to approve or
+    merge, and to show a table when no such server is present.
+  Done when: CI green, merged, released; the owner's Kiro check of one `stale` classpath round trip and one
+  review posted on a merge request recorded here.
+
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
 Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.
@@ -302,3 +332,6 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   PR #49 (`explain_code`, `relationship_graph` with draw.io and Mermaid output, `check_naming` GS020 to
   GS027, verified `rename`). 26 MCP tools. Release-please PR #48 carries both as 0.10.0 and waits for the
   owner to approve its workflow runs.
+- 2026-10-17: Stage 12 implemented on `feat/live-config` (engine specs green, Python 311 tests at 96%): live
+  configuration reload, classpath state and fingerprint, `refresh_classpath`, the reliability fixes from the
+  two reviews, merge request comment drafts for GitLab.

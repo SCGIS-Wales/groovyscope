@@ -212,3 +212,111 @@ def verdict(buckets: Mapping[str, Sequence[Any]], risky: Sequence[Any], impact: 
     if parts:
         return "approve with comments: " + ", ".join(parts)
     return "approve: nothing blocking on the changed lines"
+
+
+# The wording of merge request comments the agent posts (GitLab inline discussions): respectful and inviting,
+# one observation and one concrete suggestion each, the reason stated, never a verdict on the author.
+COMMENT_OPENERS = {
+    "blocking": "This needs a change before we merge",
+    "shouldFix": "Worth fixing in this merge request",
+    "nits": "Nit, optional",
+}
+RISKY_QUESTIONS = {
+    "catch": "A new `catch` block arrived here. Could we make sure the handling is deliberate: rethrow, log with "
+    "context, or return a documented default? Swallowed exceptions are the hardest bugs to find later.",
+    "def": "This new declaration uses `def`. Could we give it a declared type? Static typing lets the compiler, "
+    "the IDE and the reviewers catch mistakes before runtime.",
+    "return-null": "This new `return null` can surprise callers. Could we return an empty value, an Optional, or "
+    "document the null case where the method is declared?",
+}
+
+
+class Comment(TypedDict):
+    """One comment to post on the merge request: ``path`` and ``line`` place it on the diff; ``kind`` is
+    blocking, shouldFix, nits, risky or uncovered."""
+
+    path: str
+    line: int
+    kind: str
+    body: str
+
+
+def finding_comment(finding: Mapping[str, Any], kind: str) -> Comment:
+    code = str(finding.get("code") or finding.get("source") or "finding")
+    message = str(finding.get("message") or "").strip().rstrip(".")
+    body = f"{COMMENT_OPENERS[kind]}: {message} (`{code}`)."
+    if finding.get("fixable"):
+        body += " groovyscope can apply this one mechanically, so it costs nothing to accept."
+    body += f" `groovyscope explain {code}` says why it matters and shows the fix."
+    return {"path": str(finding.get("path") or ""), "line": int(finding.get("line") or 1), "kind": kind, "body": body}
+
+
+def risky_comment(site: Mapping[str, Any]) -> Comment:
+    kind = str(site.get("kind") or "")
+    detail = site.get("meaning") or site.get("detail") or site.get("handling")
+    body = RISKY_QUESTIONS.get(kind, f"A new `{kind}` construct arrived here; is it intended?")
+    if detail:
+        body += f" (groovyscope sees: {detail}.)"
+    return {"path": str(site.get("path") or ""), "line": int(site.get("line") or 1), "kind": "risky", "body": body}
+
+
+def uncovered_comment(gap: Mapping[str, Any]) -> Comment:
+    name = str(gap.get("name") or gap.get("symbol") or "this method")
+    missed = gap.get("missedLines") or gap.get("missed")
+    detail = f" ({missed} line(s) never executed)" if missed else ""
+    body = (
+        f"No test executes `{name}` yet{detail}. A test for the new behaviour would protect this change the next "
+        "time someone touches it; happy to help draft one."
+    )
+    return {"path": str(gap.get("path") or ""), "line": int(gap.get("line") or 1), "kind": "uncovered", "body": body}
+
+
+def draft_comments(
+    buckets: Mapping[str, Sequence[Mapping[str, Any]]],
+    risky: Sequence[Mapping[str, Any]],
+    uncovered: Sequence[Mapping[str, Any]],
+    *,
+    limit: int,
+) -> list[Comment]:
+    """The inline comments for a merge request, most important first and never more than ``limit``: blocking
+    findings, then warnings, then risky constructs, then uncovered methods, then nits."""
+    drafted: list[Comment] = []
+    drafted += [finding_comment(f, "blocking") for f in buckets.get("blocking", ())]
+    drafted += [finding_comment(f, "shouldFix") for f in buckets.get("shouldFix", ())]
+    drafted += [risky_comment(site) for site in risky]
+    drafted += [uncovered_comment(gap) for gap in uncovered]
+    drafted += [finding_comment(f, "nits") for f in buckets.get("nits", ())]
+    return drafted[: max(0, limit)]
+
+
+def summary_comment(
+    verdict: str,
+    counts: Mapping[str, int],
+    impact: Sequence[Mapping[str, Any]],
+    uncovered_count: int,
+    comments: int,
+) -> str:
+    """The note that goes on the merge request itself: thanks, the verdict in plain words, the numbers, and what
+    the reviewer looked at, so the author knows the comments are complete."""
+    blocking = int(counts.get("blocking", 0))
+    should = int(counts.get("shouldFix", 0))
+    nits = int(counts.get("nits", 0))
+    high = [r for r in impact if r.get("riskLevel") == "high"]
+    lines = ["Thanks for this merge request. I reviewed the changed lines with groovyscope; here is where it stands."]
+    if blocking:
+        lines.append(
+            f"There are {blocking} finding(s) to resolve before merging; each has an inline comment with the fix."
+        )
+    elif should or nits:
+        lines.append("Nothing blocks the merge. The inline comments are suggestions, the nits are optional.")
+    else:
+        lines.append("Nothing blocks the merge and I found nothing to fix on the changed lines. Nice work.")
+    if should or nits:
+        lines.append(f"Suggestions: {should} worth fixing here, {nits} nit(s).")
+    if high:
+        names = ", ".join(f"`{r.get('symbol') or r.get('name')}`" for r in high[:3])
+        lines.append(f"Changed declarations with many callers: {names}. Please run their callers' tests too.")
+    if uncovered_count:
+        lines.append(f"Tests: {uncovered_count} changed method(s) have no test executing them yet.")
+    lines.append(f"Verdict: {verdict}. ({comments} inline comment(s) posted.)")
+    return " ".join(lines)

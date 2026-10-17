@@ -52,6 +52,39 @@ counts only. SpotBugs findings from the build's SARIF report appear next to groo
 
 Add `against develop` or `only what is staged` to change the base or review the index.
 
+### Post the review on the merge request
+
+```text
+Review this branch as a merge request reviewer and post the comments on merge request !42.
+```
+
+The answer carries `comments` (one per finding: file, line, a body written to the author with the reason and
+a concrete suggestion, respectful and inviting) and a `summaryComment` (thanks, the verdict in plain words,
+the counts). With a GitLab MCP server in the session the agent posts each comment as an inline discussion on
+the diff and the summary as a note, after you say yes; it never approves or merges. Without one, it shows the
+comments as a table to paste. To add GitLab's MCP server to Kiro, put its entry next to groovyscope in
+`~/.kiro/settings/mcp.json` (the URL is your GitLab's, the tool names come from that server):
+
+```json
+{
+  "mcpServers": {
+    "gitlab": { "url": "https://gitlab.example.com/api/v4/mcp" }
+  }
+}
+```
+
+### When the classpath is stale
+
+A `check` or `review_changes` answer with `classpath.state: stale` means a build file changed after the last
+`groovyscope classpath`, so classes from a new dependency do not resolve yet. Say:
+
+```text
+Refresh the classpath, then review again.
+```
+
+Calls `refresh_classpath()` (it runs the build, so only in a trusted workspace) and the engine picks the new
+classpath up on its next request. No restart of Kiro or of the daemon.
+
 ## 2. Review my changes and fix what is safe
 
 ```text
@@ -223,6 +256,10 @@ construct is proven there. RP001 and RP002 findings are blocking.
 - **Imported findings.** Findings from the build's own SARIF reports (SpotBugs) merged into `check` and
   `review`, marked with their tool as `source`.
 - **Coverage gap.** A class or method with lines no test executed, from the JaCoCo report.
+- **Classpath state.** `fresh`: the exported classpath matches the build files (a fingerprint of every build
+  file is recorded at export). `stale`: a build file changed since, so new dependencies may be unresolved.
+  `missing`: a build exists but nothing was exported. `configured`: jars listed by hand under
+  `workspace.classpath`. `none`: no build tool, nothing to resolve.
 - **RP codes.** Findings from a runtime profile: the code runs somewhere other than where it is built. See
   [docs/profiles.md](profiles.md).
 - **Externals.** The categories `explain_code` reports when a method touches the world outside the JVM: `http`,

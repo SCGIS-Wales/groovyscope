@@ -172,3 +172,53 @@ def test_touched_declarations_and_risky_sites() -> None:
         {"path": "src/C.groovy", "line": 4},
     ]
     assert changes.risky_in_change(matches, {"src/A.groovy": [[4, 5]]}) == [{"path": "src/A.groovy", "line": 4}]
+
+
+def test_draft_comments_are_ordered_capped_and_friendly() -> None:
+    buckets = {
+        "blocking": [
+            {
+                "path": "src/A.groovy",
+                "line": 4,
+                "code": "GS003",
+                "message": "Catch swallows the exception.",
+                "fixable": True,
+            }
+        ],
+        "shouldFix": [{"path": "src/A.groovy", "line": 9, "code": "NoDef", "message": "def on a public method"}],
+        "nits": [{"path": "src/A.groovy", "line": 12, "code": "TrailingWhitespace", "message": "trailing whitespace"}],
+    }
+    risky = [{"kind": "catch", "path": "src/A.groovy", "line": 4, "meaning": "swallowed: the exception is dropped"}]
+    uncovered = [{"path": "src/A.groovy", "line": 20, "name": "total", "missedLines": 3}]
+    comments = changes.draft_comments(buckets, risky, uncovered, limit=10)
+    assert [c["kind"] for c in comments] == ["blocking", "shouldFix", "risky", "uncovered", "nits"]
+    first = comments[0]
+    assert first["path"] == "src/A.groovy" and first["line"] == 4
+    assert first["body"].startswith("This needs a change before we merge: Catch swallows the exception (`GS003`).")
+    assert "costs nothing to accept" in first["body"] and "groovyscope explain GS003" in first["body"]
+    assert comments[1]["body"].startswith("Worth fixing in this merge request")
+    assert "deliberate" in comments[2]["body"] and "swallowed" in comments[2]["body"]
+    assert "No test executes `total` yet (3 line(s) never executed)" in comments[3]["body"]
+    assert comments[4]["body"].startswith("Nit, optional")
+    assert "you" not in " ".join(c["body"].lower().split("happy")[0] for c in comments)
+    assert len(changes.draft_comments(buckets, risky, uncovered, limit=2)) == 2
+    assert changes.draft_comments({}, [], [], limit=0) == []
+
+
+def test_summary_comment_matches_the_verdict() -> None:
+    blocking = changes.summary_comment(
+        "request changes: 1 blocking finding(s)", {"blocking": 1, "shouldFix": 2, "nits": 1}, [], 1, 4
+    )
+    assert blocking.startswith("Thanks for this merge request.")
+    assert (
+        "1 finding(s) to resolve before merging" in blocking
+        and "Suggestions: 2 worth fixing here, 1 nit(s)." in blocking
+    )
+    assert "Tests: 1 changed method(s)" in blocking and blocking.endswith("(4 inline comment(s) posted.)")
+    clean = changes.summary_comment("approve: nothing blocking", {"blocking": 0, "shouldFix": 0, "nits": 0}, [], 0, 0)
+    assert "Nice work." in clean and "Suggestions" not in clean
+    impact = [{"symbol": "app.A.total", "riskLevel": "high"}, {"symbol": "app.A.x", "riskLevel": "low"}]
+    with_impact = changes.summary_comment(
+        "approve with comments", {"blocking": 0, "shouldFix": 1, "nits": 0}, impact, 0, 1
+    )
+    assert "`app.A.total`" in with_impact and "Nothing blocks the merge." in with_impact

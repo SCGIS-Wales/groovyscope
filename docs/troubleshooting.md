@@ -16,7 +16,9 @@ hard failures.
 | `classpath`: `Cannot find a Java installation ... matching: {languageVersion=11 ...}` | The project's build pins a Gradle toolchain this machine lacks; install that JDK (Gradle finds it in the standard folders) or add its path to `org.gradle.java.installations.paths` in `~/.gradle/gradle.properties`. The requirement is the build's, not groovyscope's |
 | `classpath` wrote fewer entries than the build declares | Gradle resolves leniently, so a dependency the repository could not fetch (offline, rate limited) is skipped silently; rerun once the network is back |
 | `groovyscope init` says `already has these settings` | Nothing to add: the existing `.groovyscope.yaml` already covers what the layout and build files suggest |
-| `the daemon was started with a different configuration` | `.groovyscope.yaml`, a profile or the environment changed since the daemon started; `groovyscope daemon restart` |
+| `the daemon runs an older configuration and could not reload it` | A changed `.groovyscope.yaml`, profile or classpath is normally applied in place; this daemon refused it (an older engine, or an invalid document named in the message); `groovyscope daemon restart` |
+| `classpath.state: stale` in a `check`, `review` or `checkup` answer | A build file changed after `groovyscope classpath` ran, so new dependencies may not resolve; rerun it, or let the agent call `refresh_classpath` |
+| `refused: the export runs the project's build scripts` from `refresh_classpath` | The workspace is not trusted; `groovyscope trust`, then `groovyscope classpath` or the tool again |
 | `socket path ... is longer than ... bytes` | Set `GROOVYSCOPE_SOCKET_DIR` to a short directory such as `/tmp/gs` |
 | `... belongs to another user; set GROOVYSCOPE_SOCKET_DIR` | The socket folder was created by someone else; point `GROOVYSCOPE_SOCKET_DIR` at a folder you own |
 | `doctor` warns `kiro agent ... universal-out-of-sync` | The agent was edited after Kiro generated its V3 rules; `groovyscope kiro repair` re-stamps it |

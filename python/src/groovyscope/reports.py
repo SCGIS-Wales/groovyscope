@@ -42,7 +42,23 @@ def sarif_files(root: Path, configured: Sequence[str]) -> list[Path]:
     return [path for path in chosen if path.is_file()]
 
 
-def locate(root: Path, uri: str) -> str:
+SourceIndex = dict[str, list[str]]
+
+
+def source_index(root: Path) -> SourceIndex:
+    """Every file under the source roots by base name (one walk, reused for every result of a SARIF log)."""
+    index: SourceIndex = {}
+    for source in SOURCE_ROOTS:
+        folder = root / source
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*"):
+            if path.is_file():
+                index.setdefault(path.name, []).append(path.relative_to(root).as_posix())
+    return index
+
+
+def locate(root: Path, uri: str, index: SourceIndex | None = None) -> str:
     """A workspace-relative path for a SARIF artifact URI: as given when it exists, else the unique file under the
     source roots whose path ends with it (SpotBugs reports class-relative paths), else the URI unchanged."""
     cleaned = uri.removeprefix("file://").lstrip("/") if uri.startswith("file:") else uri
@@ -50,14 +66,9 @@ def locate(root: Path, uri: str) -> str:
     if (root / cleaned).is_file():
         return cleaned
     suffix = "/" + cleaned.lstrip("/")
-    found = {
-        p.relative_to(root).as_posix()
-        for source in SOURCE_ROOTS
-        if (root / source).is_dir()
-        for p in (root / source).rglob(Path(cleaned).name)
-        if p.as_posix().endswith(suffix)
-    }
-    return sorted(found)[0] if len(found) == 1 else cleaned
+    candidates = (source_index(root) if index is None else index).get(Path(cleaned).name, [])
+    found = sorted({p for p in candidates if ("/" + p).endswith(suffix)})  # roots overlap: src and src/main/groovy
+    return found[0] if len(found) == 1 else cleaned
 
 
 def read_sarif(path: Path, root: Path) -> list[dict[str, Any]]:
@@ -75,10 +86,13 @@ def read_sarif(path: Path, root: Path) -> list[dict[str, Any]]:
         msg = f"{path} is not a SARIF log (no runs)"
         raise ValueError(msg)
     findings: list[dict[str, Any]] = []
+    index: SourceIndex | None = None
     for run in log["runs"]:
+        if not isinstance(run, dict):
+            continue
         driver = (run.get("tool") or {}).get("driver") or {}
         source = str(driver.get("name") or "sarif").lower().replace(" ", "")
-        rules = {rule.get("id"): rule for rule in driver.get("rules", []) if isinstance(rule, dict)}
+        rules = {rule.get("id"): rule for rule in driver.get("rules") or [] if isinstance(rule, dict)}
         for result in run.get("results", []) or []:
             if not isinstance(result, dict):
                 continue
@@ -89,9 +103,11 @@ def read_sarif(path: Path, root: Path) -> list[dict[str, Any]]:
             uri = str((location.get("artifactLocation") or {}).get("uri") or "")
             region = location.get("region") or {}
             text = (result.get("message") or {}).get("text") or (rule.get("shortDescription") or {}).get("text")
+            if uri and index is None:
+                index = source_index(root)
             findings.append(
                 {
-                    "path": locate(root, uri) if uri else "",
+                    "path": locate(root, uri, index) if uri else "",
                     "line": int(region.get("startLine") or 1),
                     "col": int(region.get("startColumn") or 1),
                     "severity": SARIF_SEVERITIES.get(level, "warning"),
@@ -115,6 +131,8 @@ def merge_sarif(
             findings.extend(read_sarif(path, root))
         except (OSError, ValueError) as exc:
             notes.append(str(exc))
+        except (TypeError, AttributeError, KeyError) as exc:
+            notes.append(f"{path} is not a SARIF log groovyscope can read ({exc.__class__.__name__}: {exc})")
     return (findings, notes)
 
 

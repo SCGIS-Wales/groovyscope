@@ -25,8 +25,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntConsumer;
+import java.util.function.Supplier;
 import org.eclipse.lsp4j.CodeActionKind;
 import org.eclipse.lsp4j.CodeActionOptions;
 import org.eclipse.lsp4j.CompletionOptions;
@@ -67,7 +69,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
 
     private final IntConsumer exitHandler;
     private final Path fallbackRoot;
-    private final EngineConfig config;
+    private final Supplier<EngineConfig> liveConfig;
+    private final Consumer<EngineConfig> reloader;
     private final Function<Path, LanguageServices> servicesProvider;
     private final Runnable daemonShutdown;
     private final AtomicReference<Path> workspaceRoot = new AtomicReference<>();
@@ -94,11 +97,37 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     public GroovyscopeLanguageServer(IntConsumer exitHandler, Path fallbackRoot, EngineConfig config,
             Function<Path, LanguageServices> servicesProvider, Runnable daemonShutdown) {
+        this(exitHandler, fallbackRoot, config, servicesProvider, daemonShutdown, null, null);
+    }
+
+    /**
+     * @param liveConfig the configuration currently in force (shared with other connections in the daemon);
+     *                   {@code null} keeps a private copy of {@code config}
+     * @param reloader applies a replacement configuration everywhere ({@code groovyscope/reloadConfig});
+     *                 {@code null} reconfigures this connection's services only
+     */
+    public GroovyscopeLanguageServer(IntConsumer exitHandler, Path fallbackRoot, EngineConfig config,
+            Function<Path, LanguageServices> servicesProvider, Runnable daemonShutdown,
+            Supplier<EngineConfig> liveConfig, Consumer<EngineConfig> reloader) {
         this.exitHandler = Objects.requireNonNull(exitHandler, "exitHandler");
         this.fallbackRoot = Objects.requireNonNull(fallbackRoot, "fallbackRoot");
-        this.config = Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(config, "config");
         this.servicesProvider = Objects.requireNonNull(servicesProvider, "servicesProvider");
         this.daemonShutdown = daemonShutdown;
+        if (liveConfig == null || reloader == null) {
+            AtomicReference<EngineConfig> own = new AtomicReference<>(config);
+            this.liveConfig = own::get;
+            this.reloader = replacement -> {
+                own.set(replacement);
+                LanguageServices current = services.get();
+                if (current != null) {
+                    current.reconfigure(replacement);
+                }
+            };
+        } else {
+            this.liveConfig = liveConfig;
+            this.reloader = reloader;
+        }
         this.diagnostics = new DiagnosticsPublisher(services::get, client::get);
         this.textDocumentService = new GroovyscopeTextDocumentService(services::get, diagnostics);
         this.workspaceService = new GroovyscopeWorkspaceService(services::get, diagnostics);
@@ -180,7 +209,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         status.put("engine", EngineVersion.current());
         status.put("root", workspaceRoot.get() == null ? null : workspaceRoot.get().toString());
         status.put("daemon", daemonShutdown != null);
-        status.put("configHash", config.configHash());
+        status.put("configHash", liveConfig.get().configHash());
         LanguageServices current = services.get();
         if (current != null) {
             status.put("dirty", current.isDirty());
@@ -188,6 +217,37 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             status.put("trust", current.workspace().config().trust());
         }
         return CompletableFuture.completedFuture(status);
+    }
+
+    /**
+     * Replaces the engine configuration in place: the front end sends the same effective JSON it would hand over
+     * at start (a re-exported classpath, an edited {@code .groovyscope.yaml}), every open workspace drops its
+     * caches and recompiles on its next request, and {@code status} reports the new {@code configHash}. Params:
+     * {@code config} (the JSON text). Returns {@code configHash} and {@code reloaded}.
+     */
+    @JsonRequest("groovyscope/reloadConfig")
+    public CompletableFuture<Map<String, Object>> reloadConfig(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            Object json = params == null ? null : params.get("config");
+            if (!(json instanceof String text) || text.isBlank()) {
+                throw new IllegalArgumentException("reloadConfig needs the configuration JSON in `config`");
+            }
+            EngineConfig replacement;
+            try {
+                replacement = EngineConfig.fromJson(text).withConfigHash(EngineConfig.hashOf(text));
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("configuration not accepted: " + e.getMessage(), e);
+            }
+            boolean changed = !replacement.configHash().equals(liveConfig.get().configHash());
+            if (changed) {
+                reloader.accept(replacement);
+                org.groovyscope.engine.log.EngineLog.info("configuration reloaded (%s)", replacement.configHash());
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("configHash", liveConfig.get().configHash());
+            response.put("reloaded", changed);
+            return response;
+        });
     }
 
     /**
@@ -862,7 +922,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                 org.groovyscope.engine.log.EngineLog.warn("%s", "ignoring " + uri + ": outside the workspace root");
             }
         }
-        return expandDirectories(inside, current.workspace().sources().keySet());
+        return expandDirectories(inside, current.workspace().sourceUris());
     }
 
     /** True when the request named documents but none of them is inside the workspace (so nothing is checked). */

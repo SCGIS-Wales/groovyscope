@@ -98,6 +98,14 @@ The classpath is `workspace.classpath` plus the entries of `workspace.classpathF
 classpath` writes by running the project's Gradle build with a bundled init script (a `groovyscopeClasspath`
 task per project printing its resolved compile and test classpath and class folders) or Maven's
 `dependency:build-classpath`; the command is refused in an untrusted workspace because build scripts execute.
+The file records a fingerprint of every build file, so the front end can tell a stale export from a fresh one
+with stat calls alone (`classpath.status`). The engine receives the classpath inside its configuration, and a
+changed configuration (a re-exported classpath, an edited `.groovyscope.yaml`) reaches a running daemon
+through `groovyscope/reloadConfig`: the CLI sends it when the daemon's `configHash` differs from its own, the
+MCP server before any request once the configuration or classpath file changed on disk. The workspace model
+takes the new configuration in place, the services drop their caches and the next query recompiles; no
+connection is dropped. The disk fingerprint also covers the classpath entries, so a rebuilt module jar or
+classes folder marks the snapshot stale like an edited source.
 With no classpath at all, every import of a library class and every use of it is a compile error that hides
 the one real cause, so `MissingDependencies` folds those errors into one `GS100` warning per file (severity
 from `practices.severity`, `off` drops them) before diagnostics are published or returned.
@@ -212,7 +220,7 @@ deliberately loose so shared runners do not fail the build.
 | `cli.py` | click commands; nothing but wiring and exit codes |
 | `config.py` | defaults ← `.groovyscope.yaml` ← `GROOVYSCOPE_*`; JSON-schema validation |
 | `workspace_init.py` | `groovyscope init`: a starting `.groovyscope.yaml` from the layout and build files, read as text |
-| `classpath.py` | `groovyscope classpath`: the Gradle init script or Maven command, parsing, `workspace.classpathFile` |
+| `classpath.py` | `groovyscope classpath`: the Gradle init script or Maven command, parsing, `workspace.classpathFile`, the build fingerprint and the classpath state |
 | `trust.py` | the per-user trust record that gates `workspace.trust`, `jdk.home`, rule sets and `classpath` |
 | `java.py` | JDK discovery with injected `runner`/`which` for testability |
 | `jar.py` | JAR lookup (`GROOVYSCOPE_JAR`, bundled, fetched) and SHA-256 verification |
@@ -221,14 +229,14 @@ deliberately loose so shared runners do not fail the build.
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
 | `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing); one-shot requests and persistent sessions |
-| `mcp_server.py` | the MCP server: twenty-three tool functions over one engine session, compact output through `render.py` |
+| `mcp_server.py` | the MCP server: twenty-seven tool functions over one engine session, compact output through `render.py`; reloads the engine configuration in place when it changes |
 | `mcp_search.py`, `mcp_server_support.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview`; the shared helpers (paging, paths, clipping) |
 | `relay.py` | asyncio byte relay between this process's stdio and the socket |
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
 | `kiro_agent.py` | agent format detection (V2, universal, out of sync, V3) and format-preserving merges; the servers an agent's `tools` hides |
 | `checkup.py` | `groovyscope checkup`: the post-install report with the fix per item and the safe repairs the agent start hook applies |
 | `benchmark.py` | the bundled CodeNarc corpus (`_benchmark/`), unpacked into the user's home with a version stamp |
-| `changes.py` | changed files and line ranges from git, and the pure review rules (split, bucket, touched declarations, verdict) |
+| `changes.py` | changed files and line ranges from git, the pure review rules (split, bucket, touched declarations, verdict) and the merge request comment drafts |
 | `reports.py` | SARIF logs as findings and JaCoCo XML as coverage gaps, read as data |
 | `graph.py` | the relationship graph as a picture: layered layout (cycle break, longest-path layers, barycentre ordering), A4 fit with a readable minimum font, draw.io XML and Mermaid emitters, an overlap check |
 | `mcp_understanding.py` | `explain_code`, `relationship_graph` and `check_naming` over `groovyscope/explainCode`, `/graph` and `/check` |

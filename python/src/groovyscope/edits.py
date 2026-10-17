@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
@@ -102,9 +103,17 @@ def read_document(path: Path) -> str:
 
 def write_document(path: Path, text: str) -> None:
     """Replace the file atomically (temporary file, then rename), keeping its mode and line endings."""
-    temporary = path.with_name(f".{path.name}.groovyscope-tmp")
-    with temporary.open("w", encoding="utf-8", newline="") as handle:
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        newline="",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".groovyscope-tmp",
+        delete=False,
+    ) as handle:
         handle.write(text)
+        temporary = Path(handle.name)
     try:
         shutil.copymode(path, temporary)
         os.replace(temporary, path)  # noqa: PTH105 - os.replace keeps the intent (atomic rename) explicit

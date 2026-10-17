@@ -94,6 +94,41 @@ jobs:
           groovyscope version
           groovyscope doctor
 
+  python-versions:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14", "3.15"]
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv with Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync Python dependencies
+        working-directory: python
+        run: uv sync --frozen
+
+      - name: Lint and type check
+        working-directory: python
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy
+
+      - name: Test (the engine integration tests are skipped without the JAR; the build job runs them)
+        working-directory: python
+        run: uv run pytest -p no:cacheprovider
+
       - name: Upload distributions
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

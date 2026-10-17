@@ -57,7 +57,8 @@ import org.groovyscope.engine.model.Confidence;
 public final class Resolver {
 
     private final AstIndex index;
-    private final Map<NodeEntry, Resolution> cache = new IdentityHashMap<>();
+    // Shared by every request thread of a snapshot (LSP workers, the diagnostics thread, call graph building).
+    private final Map<NodeEntry, Resolution> cache = java.util.Collections.synchronizedMap(new IdentityHashMap<>());
     private final Map<ASTNode, ClassNode> variableTypes = new IdentityHashMap<>();
 
     public Resolver(AstIndex index) {
@@ -78,8 +79,10 @@ public final class Resolver {
 
     /** Resolves an entry, caching the answer for the life of the snapshot. */
     public Optional<Resolution> resolve(NodeEntry entry) {
-        if (cache.containsKey(entry)) {
-            return Optional.ofNullable(cache.get(entry));
+        synchronized (cache) {
+            if (cache.containsKey(entry)) {
+                return Optional.ofNullable(cache.get(entry));
+            }
         }
         Resolution resolution;
         try {

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from groovyscope import graph as graphs
+from groovyscope.kiro import write_atomically
 from groovyscope.mcp_server_support import Call, relative_path, to_uri
 
 NAMING_CODES = tuple(f"GS{n:03d}" for n in range(20, 28))
@@ -153,9 +154,18 @@ def drawio_target(root: Path, path: str) -> Path:
     if not target.is_relative_to(root.resolve()):
         msg = f"{path} is outside the workspace"
         raise ValueError(msg)
-    if target.suffix.lower() not in {".drawio", ".xml"}:
+    if target.suffix.lower() != ".drawio":
         msg = f"{path} must end in .drawio"
         raise ValueError(msg)
+    if target.exists():
+        try:
+            head = target.read_text(encoding="utf-8", errors="replace")[:200]
+        except OSError as exc:
+            msg = f"{path} cannot be read: {exc}"
+            raise ValueError(msg) from exc
+        if not target.is_file() or "<mxfile" not in head:
+            msg = f"{path} exists and is not a draw.io file; choose another name"
+            raise ValueError(msg)
     return target
 
 
@@ -256,7 +266,7 @@ def graph_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any
                 return result
             drawn = graphs.layout(raw)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(graphs.to_drawio(raw, drawn, title=target.stem), encoding="utf-8")
+            write_atomically(target, graphs.to_drawio(raw, drawn, title=target.stem))
             result["written"] = relative_path(target.as_uri(), root)
             result["page"] = {"orientation": drawn["orientation"], "font": drawn["font"]}
             problems = graphs.check_layout(drawn)
