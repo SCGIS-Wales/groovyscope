@@ -103,6 +103,18 @@ class MainSpec extends Specification {
         Main.configFrom([], null, temp) == EngineConfig.DEFAULTS
     }
 
+    def 'the configuration hash is the SHA-256 of the raw environment value, empty without one'() {
+        given:
+        String json = '{"workspace": {"maxFileBytes": 10}}'
+
+        expect:
+        Main.configFrom([], [(Main.CONFIG_ENV): json], temp).configHash() ==
+                java.security.MessageDigest.getInstance('SHA-256').digest(json.getBytes('UTF-8')).encodeHex().toString()
+        Main.configFrom([], [(Main.CONFIG_ENV): json], temp).maxFileBytes() == 10
+        Main.configFrom([], [:], temp).configHash() == ''
+        EngineConfig.hashOf(null) == ''
+    }
+
     def 'bad configuration options exit 2 with a message'() {
         expect:
         run('lsp', '--stdio', '--config') == 2
@@ -118,7 +130,7 @@ class MainSpec extends Specification {
 
     def 'daemon mode needs a socket and exits on its own when idle'() {
         given:
-        Path socket = Paths.get('/tmp', "gs-main-${UUID.randomUUID().toString().take(8)}.sock")
+        Path socket = Files.createTempDirectory(Paths.get('/tmp'), 'gs').resolve('main.sock')
 
         expect:
         run('daemon') == 2
@@ -127,6 +139,10 @@ class MainSpec extends Specification {
         stderr().contains('whole number')
         run('daemon', '--socket', socket.toString(), '--idle-seconds', '0', '--cache-dir', temp.resolve('cache').toString()) == 0
         !Files.exists(socket)
+
+        cleanup:
+        Files.deleteIfExists(socket)
+        Files.deleteIfExists(socket.parent)
     }
 
     def 'lsp options accept a cache directory'() {

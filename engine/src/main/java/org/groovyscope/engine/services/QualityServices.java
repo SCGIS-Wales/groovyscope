@@ -107,9 +107,11 @@ public final class QualityServices {
     RuleSet ruleSet(String profile) {
         EngineConfig.Lint lint = workspace.config().lint();
         if (PROFILE_JENKINS.equals(profile)) {
-            return codeNarc.ruleSet(lint.jenkinsRuleset() == null ? CodeNarcAnalyzer.BUNDLED_JENKINS : lint.jenkinsRuleset());
+            return codeNarc.ruleSet(lint.jenkinsRuleset() == null ? CodeNarcAnalyzer.BUNDLED_JENKINS : lint.jenkinsRuleset(),
+                    workspace.root(), CodeNarcAnalyzer.BUNDLED_JENKINS);
         }
-        return codeNarc.ruleSet(lint.ruleset() == null ? CodeNarcAnalyzer.BUNDLED_DEFAULT : lint.ruleset());
+        return codeNarc.ruleSet(lint.ruleset() == null ? CodeNarcAnalyzer.BUNDLED_DEFAULT : lint.ruleset(),
+                workspace.root(), CodeNarcAnalyzer.BUNDLED_DEFAULT);
     }
 
     /** Lint one document; {@code profile} may be {@code null} to pick one from the path. */
@@ -135,17 +137,23 @@ public final class QualityServices {
         return diagnostics.stream().filter(d -> !disabled.contains(d.code())).toList();
     }
 
+    private final Map<String, java.util.Set<String>> seamCache = new ConcurrentHashMap<>();
     private volatile long seamVersion = -1;
-    private volatile java.util.Set<String> seamCache = java.util.Set.of();
 
-    /** Methods tests stub through instance dispatch, for the profile's test sources (cached per snapshot). */
+    /** Methods tests stub through instance dispatch, for the profile's test sources (cached per profile and snapshot). */
     java.util.Set<String> seams(Profile profile) {
         org.groovyscope.engine.services.Snapshot snapshot = navigation.snapshot();
         if (seamVersion != snapshot.version()) {
-            seamCache = Contracts.seams(profile, workspace.root(), snapshot.result().modules());
+            seamCache.clear();
             seamVersion = snapshot.version();
         }
-        return seamCache;
+        String key = profile.name() + "@" + snapshot.version();
+        java.util.Set<String> cached = seamCache.get(key);
+        if (cached == null) {
+            cached = Contracts.seams(profile, workspace.root(), snapshot.result().modules());
+            seamCache.put(key, cached);
+        }
+        return cached;
     }
 
     /** The contract items of a governed document. */
@@ -263,7 +271,28 @@ public final class QualityServices {
         return modules;
     }
 
-    private final Map<String, Map<String, List<Diagnostic>>> emulationCache = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Most emulation results kept; each holds the findings of one profile's governed sources. */
+    static final int EMULATION_CACHE_LIMIT = 8;
+    private final Map<String, Map<String, List<Diagnostic>>> emulationCache = lru(EMULATION_CACHE_LIMIT);
+
+    /** A map that keeps its {@code limit} most recently used entries (not thread-safe; callers lock it). */
+    static <K, V> Map<K, V> lru(int limit) {
+        return new java.util.LinkedHashMap<K, V>(16, 0.75f, true) {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+                return size() > limit;
+            }
+        };
+    }
+
+    /** Number of cached emulation results (for tests). */
+    int emulationCacheSize() {
+        synchronized (emulationCache) {
+            return emulationCache.size();
+        }
+    }
 
     /** The runtime-emulation compile (RP050) of governed targets, per profile, cached by the sources' content. */
     private Map<String, List<Diagnostic>> emulate(List<String> targets) {
@@ -280,8 +309,20 @@ public final class QualityServices {
                 }
             }
             String key = profile.name() + ":" + hash(String.join("\u0000", governed.values()) + governed.keySet());
-            Map<String, List<Diagnostic>> compiled = emulationCache.computeIfAbsent(key, k -> RemoteCompiler.compile(
-                    profile, governed, workspace.classpath(), workspace.config().trust(), workspace.config()));
+            Map<String, List<Diagnostic>> compiled;
+            synchronized (emulationCache) {
+                compiled = emulationCache.get(key);
+            }
+            if (compiled == null) {
+                // Compiled outside the lock: an emulation compile can take seconds.
+                compiled = RemoteCompiler.compile(profile, governed, workspace.classpath(), workspace.config().trust(),
+                        workspace.config(), workspace.root());
+                if (!couldNotRun(compiled)) {
+                    synchronized (emulationCache) {
+                        emulationCache.put(key, compiled);
+                    }
+                }
+            }
             for (Map.Entry<String, List<Diagnostic>> entry : compiled.entrySet()) {
                 if (targets.contains(entry.getKey())) {
                     result.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
@@ -289,6 +330,12 @@ public final class QualityServices {
             }
         }
         return result;
+    }
+
+    /** True when an emulation result only says the compile could not run (worth retrying, so never cached). */
+    static boolean couldNotRun(Map<String, List<Diagnostic>> compiled) {
+        return compiled.values().stream().flatMap(List::stream)
+                .anyMatch(d -> d.message().startsWith(RemoteCompiler.COULD_NOT_RUN));
     }
 
     private String relative(String uri) {

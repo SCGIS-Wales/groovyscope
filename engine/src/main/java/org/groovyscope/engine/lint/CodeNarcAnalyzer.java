@@ -50,6 +50,7 @@ public final class CodeNarcAnalyzer {
     /** Resource path of the bundled Jenkins pipeline profile. */
     public static final String BUNDLED_JENKINS = "org/groovyscope/engine/lint/jenkins.groovy";
 
+    private static final java.util.Set<String> REFUSED = ConcurrentHashMap.newKeySet();
     private final Map<String, RuleSet> ruleSets = new ConcurrentHashMap<>();
     private final ResourceBundle messages;
 
@@ -68,7 +69,16 @@ public final class CodeNarcAnalyzer {
      * resource. Loaded once; a failure to load propagates so the configuration error is visible.
      */
     public RuleSet ruleSet(String path) {
-        return ruleSets.computeIfAbsent(resolve(path), CodeNarcAnalyzer::load);
+        return ruleSet(path, null, BUNDLED_DEFAULT);
+    }
+
+    /**
+     * The rule set at {@code path}, with a relative file path resolved against the workspace root (not the
+     * engine's working directory). Remote ({@code http:}/{@code https:}) locations are refused: the engine does
+     * not fetch configuration over the network, so a warning goes to stderr and {@code fallback} is used.
+     */
+    public RuleSet ruleSet(String path, Path root, String fallback) {
+        return ruleSets.computeIfAbsent(resolve(path, root, fallback), CodeNarcAnalyzer::load);
     }
 
     private static RuleSet load(String resolved) {
@@ -80,15 +90,36 @@ public final class CodeNarcAnalyzer {
     }
 
     static String resolve(String path) {
+        return resolve(path, null, BUNDLED_DEFAULT);
+    }
+
+    static String resolve(String path, Path root, String fallback) {
         if (path == null || path.isBlank()) {
-            return BUNDLED_DEFAULT;
+            return fallback;
         }
-        if (path.startsWith("file:") || path.startsWith("http:") || path.startsWith("https:")) {
+        String lower = path.strip().toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("http:") || lower.startsWith("https:")) {
+            if (REFUSED.add(path)) {
+                System.err.println("groovyscope-engine: refusing remote CodeNarc rule set " + path
+                        + "; using the bundled " + fallback);
+            }
+            return fallback;
+        }
+        if (path.startsWith("file:")) {
             return path;
         }
-        Path candidate = Paths.get(path);
-        if (candidate.isAbsolute() || Files.isRegularFile(candidate)) {
-            return candidate.toAbsolutePath().toUri().toString();
+        Path candidate;
+        try {
+            candidate = Paths.get(path);
+        } catch (java.nio.file.InvalidPathException e) {
+            return path;
+        }
+        if (candidate.isAbsolute()) {
+            return candidate.toUri().toString();
+        }
+        Path relative = root == null ? candidate.toAbsolutePath() : root.resolve(candidate).normalize();
+        if (Files.isRegularFile(relative)) {
+            return relative.toAbsolutePath().toUri().toString();
         }
         return path;
     }
@@ -110,7 +141,9 @@ public final class CodeNarcAnalyzer {
                 analyzer.setSource(new SourceString(text, path, path.substring(path.lastIndexOf('/') + 1)));
             }
             results = analyzer.analyze(ruleSet);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | LinkageError | StackOverflowError e) {
+            // A rule that breaks on exotic input (or overflows the stack on deep nesting) must not take the
+            // server down; OutOfMemoryError is left to propagate.
             return List.of(new Diagnostic(uri, Range.of(0, 0, 0, 1), Severity.WARNING, SOURCE, "codenarc-failed",
                     "CodeNarc could not analyse this file: " + e.getMessage()));
         }

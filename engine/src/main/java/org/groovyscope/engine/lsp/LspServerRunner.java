@@ -57,6 +57,8 @@ public final class LspServerRunner {
         } catch (ExecutionException e) {
             // The stream closed or the client misbehaved; the server state tells the caller what happened.
             System.err.println("groovyscope-engine: LSP session ended: " + e.getCause());
+        } finally {
+            server.connectionClosed();
         }
         return server;
     }

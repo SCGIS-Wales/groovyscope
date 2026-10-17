@@ -20,6 +20,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,11 +30,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 import org.groovyscope.engine.model.Location;
 import org.groovyscope.engine.model.Range;
+import org.groovyscope.engine.workspace.FileWalker;
 
 /**
  * Reads the parameter descriptor that defines a governed file's inputs, and the infrastructure variable files
@@ -75,23 +77,27 @@ public final class Descriptors {
         return Optional.empty();
     }
 
+    /** Directory names the descriptor and variable walks never enter. */
+    static final Set<String> SKIPPED_DIRECTORIES = Set.of("build", ".terraform", "node_modules");
+
     /** Every descriptor file under the root (for workspace-wide checks). */
     public static List<Document> all(Profile.Descriptor descriptor, Path root) {
+        return all(descriptor, root, List.of());
+    }
+
+    /**
+     * Every descriptor file under the root, without entering directories the workspace exclude globs cover; an
+     * unreadable or malformed descriptor is skipped and the walk goes on.
+     */
+    public static List<Document> all(Profile.Descriptor descriptor, Path root, List<String> excludes) {
         List<Document> documents = new ArrayList<>();
         if (descriptor == null || descriptor.file().isBlank()) {
             return documents;
         }
         Path top = root.toAbsolutePath().normalize();
-        try (Stream<Path> stream = Files.walk(top)) {
-            stream.filter(path -> path.getFileName().toString().equals(descriptor.file()))
-                    .filter(path -> {
-                        String relative = "/" + top.relativize(path).toString().replace('\\', '/');
-                        return !relative.contains("/build/") && !relative.contains("/.git/");
-                    })
-                    .sorted()
-                    .forEach(path -> read(descriptor, path).ifPresent(documents::add));
-        } catch (IOException e) {
-            return documents;
+        for (Path path : FileWalker.files(top, top, excludes, SKIPPED_DIRECTORIES,
+                (file, attributes) -> file.getFileName().toString().equals(descriptor.file()))) {
+            read(descriptor, path).ifPresent(documents::add);
         }
         return documents;
     }
@@ -179,21 +185,27 @@ public final class Descriptors {
 
     /** Variable blocks in the infrastructure files matching the glob under the root. */
     public static List<Variable> variables(Profile.Infrastructure infrastructure, Path root) {
+        return variables(infrastructure, root, List.of());
+    }
+
+    /**
+     * Variable blocks in the infrastructure files matching the glob under the root, without entering directories
+     * the workspace exclude globs cover; an unreadable file is reported once and skipped.
+     */
+    public static List<Variable> variables(Profile.Infrastructure infrastructure, Path root, List<String> excludes) {
         List<Variable> variables = new ArrayList<>();
         if (infrastructure == null || infrastructure.variables().isBlank()) {
             return variables;
         }
         Path top = root.toAbsolutePath().normalize();
-        try (Stream<Path> stream = Files.walk(top)) {
-            List<Path> files = stream.filter(Files::isRegularFile)
-                    .filter(path -> Profile.matches(infrastructure.variables(), top.relativize(path)))
-                    .filter(path -> !path.toString().contains("/.terraform/"))
-                    .sorted().toList();
-            for (Path file : files) {
+        List<Path> files = FileWalker.files(top, top, excludes, SKIPPED_DIRECTORIES,
+                (path, attributes) -> Profile.matches(infrastructure.variables(), top.relativize(path)));
+        for (Path file : files) {
+            try {
                 variables.addAll(parseVariables(file));
+            } catch (IOException | UncheckedIOException e) {
+                FileWalker.reportOnce("read:" + file, "skipping unreadable " + file + ": " + e.getMessage());
             }
-        } catch (IOException e) {
-            return variables;
         }
         return variables;
     }
