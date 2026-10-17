@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.7.1...v0.8.0) (2026-10-17)
+
+
+### Features
+
+* hardening, workspace trust, corretto, kiro agent formats, debug logging and mcp parity ([#38](https://github.com/SCGIS-Wales/groovyscope/issues/38)) ([13ba463](https://github.com/SCGIS-Wales/groovyscope/commit/13ba463b736fa6e34e69a49c3cfd6a93099e9456))
+
 ## [0.7.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.7.0...v0.7.1) (2026-10-17)
 
 
