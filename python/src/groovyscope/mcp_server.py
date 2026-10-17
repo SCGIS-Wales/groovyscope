@@ -9,7 +9,6 @@ import functools
 import json
 import logging
 import threading
-import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -17,8 +16,9 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import daemon, diagnostics, practices, rpc
+from groovyscope import daemon, diagnostics, mcp_search, practices, rpc
 from groovyscope.edits import changed_line_count, file_edits, uri_path, write_document
+from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
 
 SERVER_NAME = "groovyscope"
@@ -35,7 +35,6 @@ INSTRUCTIONS = (
     "profile_status before editing one, keep its descriptor parameters, test seams and protected methods intact, and "
     "use only constructs the profile marks as proven."
 )
-Call = Callable[[str, dict[str, Any]], Any]
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "hint": 3}
 KIND_FILTERS = {
@@ -72,23 +71,6 @@ LSP_SYMBOL_KINDS = {
     25: "operator",
     26: "typeParameter",
 }
-
-
-def relative_path(uri: str, root: Path) -> str:
-    path = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def to_uri(root: Path, path: str) -> str:
-    """The file URI of a workspace-relative path. Paths that leave the workspace are refused."""
-    target = (root / path).resolve()
-    if not target.is_relative_to(root.resolve()):
-        msg = f"{path} is outside the workspace"
-        raise ValueError(msg)
-    return target.as_uri()
 
 
 def compact_location(location: Mapping[str, Any] | None, root: Path) -> dict[str, Any] | None:
@@ -134,16 +116,12 @@ def compact_site(site: Mapping[str, Any], root: Path) -> dict[str, Any]:
 MESSAGE_CHARS = 400  # default for output.maxMessageChars
 
 
-def clip(text: Any, limit: int) -> Any:
-    """Long text cut to ``limit`` characters with an ellipsis; anything else unchanged."""
-    if not isinstance(text, str) or limit <= 0 or len(text) <= limit:
-        return text
-    return text[: max(1, limit - 1)] + "…"
-
-
 def compact_diagnostic(uri: str, item: Mapping[str, Any], root: Path, limit: int = MESSAGE_CHARS) -> dict[str, Any]:
     start = item.get("range", {}).get("start", {})
+    data = item.get("data")
+    fixable = {"fixable": True} if isinstance(data, Mapping) and data.get("fixable") else {}
     return {
+        **fixable,
         "path": relative_path(uri, root),
         "line": int(start.get("line", 0)) + 1,
         "col": int(start.get("character", 0)) + 1,
@@ -152,6 +130,39 @@ def compact_diagnostic(uri: str, item: Mapping[str, Any], root: Path, limit: int
         "code": item.get("code"),
         "message": clip(item.get("message"), limit),
     }
+
+
+PRIORITY_SEVERITIES = {1: {"error"}, 2: {"error", "warning"}, 3: {"error", "warning", "info"}}
+
+
+def filter_findings(
+    findings: list[dict[str, Any]], codes: Sequence[str] | None, max_priority: int | None
+) -> list[dict[str, Any]]:
+    """Only CODES (when given) and only findings at or above MAX_PRIORITY (1 errors, 2 + warnings, 3 + info)."""
+    allowed = PRIORITY_SEVERITIES.get(max_priority or 0)
+    wanted = set(codes or [])
+    return [
+        f
+        for f in findings
+        if (not wanted or f.get("code") in wanted) and (allowed is None or f.get("severity") in allowed)
+    ]
+
+
+def summarise(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Findings without the per-file missing-dependency notes, plus counts per code and a one-line summary of
+    the files that miss dependencies (fix: `groovyscope classpath`)."""
+    missing = [f for f in findings if f.get("code") == "GS100"]
+    rest = [f for f in findings if f.get("code") != "GS100"]
+    counts: dict[str, int] = {}
+    for finding in rest:
+        counts[str(finding.get("code"))] = counts.get(str(finding.get("code")), 0) + 1
+    extra: dict[str, Any] = {"byCode": dict(sorted(counts.items(), key=lambda kv: -kv[1]))}
+    if missing:
+        extra["missingDependencies"] = {
+            "files": len(missing),
+            "fix": "run `groovyscope classpath` (trusted workspace) so third-party classes resolve",
+        }
+    return (rest, extra)
 
 
 def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str, Any]:
@@ -168,9 +179,6 @@ def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str,
         "dynamicUnknowns": [compact_site(s, root) for s in report.get("dynamicUnknowns", [])][:cap],
         "suggestedChecks": report.get("suggestedChecks", []),
     }
-
-
-Paged = Callable[[Sequence[Any], int | None, int], dict[str, Any]]
 
 
 def pager(output: Mapping[str, Any]) -> tuple[Paged, int]:
@@ -257,7 +265,7 @@ def navigation_tools(root: Path, call: Call, paged: Paged, cap: int) -> dict[str
     }
 
 
-def insight_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+def insight_tools(root: Path, call: Call, paged: Paged, cap: int) -> dict[str, Callable[..., Any]]:
     """hover, type_definition and document_symbols: the remaining LSP views, for agents."""
 
     def hover(path: str, line: int, col: int) -> dict[str, Any]:
@@ -275,24 +283,49 @@ def insight_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., A
             return {"found": False}
         return {"found": True, "symbol": compact_symbol(raw["symbol"], root), "confidence": raw.get("confidence")}
 
-    def document_symbols(path: str, depth: int = 2) -> dict[str, Any]:
-        """The outline of PATH: classes and their members (to DEPTH levels), each with its line."""
+    def document_symbols(
+        path: str,
+        *,
+        depth: int = 2,
+        kinds: list[str] | None = None,
+        name: str | None = None,
+        limit: int | None = None,
+        cursor: int = 0,
+    ) -> dict[str, Any]:
+        """The outline of PATH: classes and their members to DEPTH levels, each with its first and last line, plus
+        the file's line count. KINDS (class, method, field...) and NAME (substring) filter members; page with
+        LIMIT and CURSOR. Use with read_symbol instead of reading the file."""
         raw = call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, path)})
-        budget = [cap * 4]
+        wanted = {kind.lower() for kind in kinds or []}
+        needle = (name or "").lower()
+
+        def keep(item: Mapping[str, Any]) -> bool:
+            kind = str(item.get("kind") or "").lower()
+            return (not wanted or kind in wanted) and needle in str(item.get("name") or "").lower()
 
         def outline(item: Mapping[str, Any], level: int) -> dict[str, Any]:
-            budget[0] -= 1
             entry = compact_symbol(item, root)
             entry.pop("path", None)
+            location = entry.pop("location", None) or {}
+            entry["lines"] = [location.get("line"), int(item.get("endLine", location.get("line", 1) - 1)) + 1]
             children = item.get("children") or []
             if children and level < depth:
-                entry["children"] = [outline(child, level + 1) for child in children if budget[0] > 0]
+                entry["children"] = [outline(child, level + 1) for child in children if keep(child)]
             elif children:
                 entry["members"] = len(children)
             return entry
 
-        symbols = [outline(item, 1) for item in raw.get("symbols", []) if budget[0] > 0]
-        return {"path": path, "symbols": symbols, "truncated": budget[0] <= 0}
+        flat: list[dict[str, Any]] = []
+        for item in raw.get("symbols", []):
+            top = outline(item, 1)
+            members = top.pop("children", None)
+            flat.append(top)
+            for member in members or []:
+                flat.append({**member, "in": top.get("name")})
+        result = paged(flat, limit, cursor)
+        result["path"] = path
+        result["fileLines"] = raw.get("lines")
+        return result
 
     return {"hover": hover, "type_definition": type_definition, "document_symbols": document_symbols}
 
@@ -307,13 +340,18 @@ def quality_tools(
     """check, format, find_dynamic_code and workspace_status."""
 
     def check(
+        *,
         paths: list[str] | None = None,
         profile: str | None = None,
         include: list[str] | None = None,
+        codes: list[str] | None = None,
+        max_priority: int | None = None,
         limit: int | None = None,
         cursor: int = 0,
     ) -> dict[str, Any]:
-        """Lint, compile, type-check and practice (GS) findings for PATHS (whole workspace when empty), worst first."""
+        """Lint, compile, type-check and practice (GS) findings for PATHS (whole workspace when empty), worst first,
+        with counts per code. CODES keeps only those codes; MAX_PRIORITY 1 = errors, 2 = and warnings, 3 = and
+        info. Findings marked fixable can be repaired by fix."""
         params: dict[str, Any] = {
             "root": str(root),
             "uris": [to_uri(root, p) for p in paths or []],
@@ -327,9 +365,11 @@ def quality_tools(
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
+        findings, extra = summarise(filter_findings(findings, codes, max_priority))
         findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
         result = paged(findings, limit, cursor)
         result["summary"] = raw.get("summary", {})
+        result.update(extra)
         return result
 
     def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
@@ -394,8 +434,9 @@ def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHAR
         answer = call("groovyscope/explain", {"root": str(root), "code": code})
         return {"found": True, **answer} if answer else {"found": False, "code": code}
 
-    def review(paths: list[str] | None = None, top: int = 5) -> dict[str, Any]:
-        """Compile, lint, type-check and practice findings for PATHS in one call, grouped by the review checklist."""
+    def review(paths: list[str] | None = None, top: int = 5, max_priority: int | None = None) -> dict[str, Any]:
+        """Compile, lint, type-check and practice findings for PATHS in one call, grouped by the review checklist,
+        with counts per code; MAX_PRIORITY as in check. Missing dependencies are summarised, not listed."""
         raw = call(
             "groovyscope/check",
             {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "include": []},
@@ -405,8 +446,9 @@ def practice_tools(root: Path, call: Call, cap: int, clip_at: int = MESSAGE_CHAR
             for uri, items in raw.get("diagnostics", {}).items()
             for item in items
         ]
+        findings, extra = summarise(filter_findings(findings, None, max_priority))
         groups = practices.review(findings, max(1, min(top, cap)))
-        result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap]}
+        result: dict[str, Any] = {"summary": raw.get("summary", {}), "groups": groups[:cap], **extra}
         governed = governed_files(paths or [])
         if governed:
             result["profiles"] = governed
@@ -492,7 +534,10 @@ def build_tools(
     clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
     return {
         **navigation_tools(root, call, paged, cap),
-        **insight_tools(root, call, cap),
+        **insight_tools(root, call, paged, cap),
+        **mcp_search.search_tools(
+            root, call, paged, cap, settings=output, max_chars=int(output.get("maxBytes", 16000))
+        ),
         **quality_tools(root, call, paged, cap, environ, clip_at=clip_at),
         **practice_tools(root, call, cap, clip_at),
     }
@@ -517,6 +562,10 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "format": ("Format files", False),
     "fix": ("Apply safe fixes", False),
     "rename": ("Rename a symbol", False),
+    "read_symbol": ("Read one declaration", True),
+    "find_code": ("Structural code search", True),
+    "find_duplicates": ("Find duplicated code", True),
+    "workspace_overview": ("Workspace overview", True),
 }
 
 

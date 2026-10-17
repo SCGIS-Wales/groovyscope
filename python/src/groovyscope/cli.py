@@ -901,7 +901,8 @@ def mcp(obj: dict[str, Any]) -> None:
             msg = "the engine daemon could not be restarted; run `groovyscope doctor`"
             raise ConnectionError(msg) from exc
 
-    sys.exit(_MCP_SERVE(obj["root"], socket_file, effective["output"], dict(os.environ), reconnect))
+    settings = {**effective["output"], "duplicates": effective.get("duplicates", {})}
+    sys.exit(_MCP_SERVE(obj["root"], socket_file, settings, dict(os.environ), reconnect))
 
 
 @main.command()
