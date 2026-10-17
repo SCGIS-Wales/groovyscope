@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.8.0...v0.8.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **engine:** stop publishing diagnostics without interrupting the writer ([#40](https://github.com/SCGIS-Wales/groovyscope/issues/40)) ([1c4a943](https://github.com/SCGIS-Wales/groovyscope/commit/1c4a9431b3f7cc7644c9c5ff37da91f281e09d8f))
+
 ## [0.8.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.7.1...v0.8.0) (2026-10-17)
 
 
