@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.8.1...v0.8.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **engine:** cached document outlines have the same tree shape as compiled ones ([#42](https://github.com/SCGIS-Wales/groovyscope/issues/42)) ([a332715](https://github.com/SCGIS-Wales/groovyscope/commit/a33271524c9d1681e3eb6762fe34a4cade23c97c))
+
 ## [0.8.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.8.0...v0.8.1) (2026-10-17)
 
 
