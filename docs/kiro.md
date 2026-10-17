@@ -41,7 +41,7 @@ prompt (read, grep, glob, `code` and the groovyscope tools); other servers' tool
 
 ## What happens when the agent starts
 
-The agent's `hooks.agentSpawn` runs `groovyscope checkup --agent` (20 s budget, 4 KB of output) and Kiro
+The agent's `hooks.agentSpawn` runs `groovyscope checkup --agent` (within Kiro's hook time and output budgets) and Kiro
 injects its output into the session's context. The command applies the safe repairs itself: Kiro files written
 by an older groovyscope are re-merged (the steering file carries a `written by groovyscope <version>` stamp so
 staleness is detectable), a missing project LSP entry is written, the benchmark corpus is unpacked. What it

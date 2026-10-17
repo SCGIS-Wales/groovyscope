@@ -29,9 +29,7 @@
   "hooks": {
     "agentSpawn": [
       {
-        "command": "groovyscope checkup --agent",
-        "timeout_ms": 20000,
-        "max_output_size": 4000
+        "command": "groovyscope checkup --agent"
       }
     ]
   },
