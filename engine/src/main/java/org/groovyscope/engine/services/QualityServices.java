@@ -108,10 +108,10 @@ public final class QualityServices {
         EngineConfig.Lint lint = workspace.config().lint();
         if (PROFILE_JENKINS.equals(profile)) {
             return codeNarc.ruleSet(lint.jenkinsRuleset() == null ? CodeNarcAnalyzer.BUNDLED_JENKINS : lint.jenkinsRuleset(),
-                    workspace.root(), CodeNarcAnalyzer.BUNDLED_JENKINS);
+                    workspace.root(), CodeNarcAnalyzer.BUNDLED_JENKINS, lint.rules());
         }
         return codeNarc.ruleSet(lint.ruleset() == null ? CodeNarcAnalyzer.BUNDLED_DEFAULT : lint.ruleset(),
-                workspace.root(), CodeNarcAnalyzer.BUNDLED_DEFAULT);
+                workspace.root(), CodeNarcAnalyzer.BUNDLED_DEFAULT, lint.rules());
     }
 
     /** Lint one document; {@code profile} may be {@code null} to pick one from the path. */
@@ -402,17 +402,26 @@ public final class QualityServices {
         return diagnostics;
     }
 
-    /** Compile diagnostics plus, when {@code lint.publish} is on, lint findings for every document. */
+    /**
+     * Compile diagnostics plus, when {@code lint.publish} is on, the lint findings with priority
+     * {@code lint.publishMaxPriority} or more severe, for every document. Compile, practice and profile findings are
+     * never filtered.
+     */
     public Map<String, List<Diagnostic>> publishedDiagnostics() {
         Map<String, List<Diagnostic>> merged = new TreeMap<>();
         Map<String, String> sources = workspace.sources();
         for (Map.Entry<String, List<Diagnostic>> entry : navigation.diagnostics().entrySet()) {
             merged.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
         }
-        if (workspace.config().lint().publish()) {
+        EngineConfig.Lint settings = workspace.config().lint();
+        if (settings.publish()) {
             for (Map.Entry<String, String> source : sources.entrySet()) {
-                merged.computeIfAbsent(source.getKey(), k -> new ArrayList<>())
-                        .addAll(lint(source.getKey(), source.getValue(), null));
+                List<Diagnostic> kept = merged.computeIfAbsent(source.getKey(), k -> new ArrayList<>());
+                for (Diagnostic diagnostic : lint(source.getKey(), source.getValue(), null)) {
+                    if (CodeNarcAnalyzer.priorityOf(diagnostic) <= settings.publishMaxPriority()) {
+                        kept.add(diagnostic);
+                    }
+                }
             }
         }
         for (String uri : sources.keySet()) {
@@ -499,6 +508,25 @@ public final class QualityServices {
                     + "' is not bundled in this release; use format.engine: basic");
         }
         return BasicFormatter.edits(text, settings, lint(uri, text, null));
+    }
+
+    /**
+     * The formatter's edits for the lines a range covers (a range ending at column 0 stops at the line before), one
+     * edit per changed line.
+     */
+    public List<TextEdit> formatRange(String uri, Range range) {
+        String text = workspace.text(uri);
+        if (text == null || WorkspaceModel.isJavaUri(uri)) {
+            return List.of();
+        }
+        EngineConfig.Format settings = workspace.config().format();
+        if (!"basic".equalsIgnoreCase(settings.engine())) {
+            throw new IllegalStateException("formatter engine '" + settings.engine()
+                    + "' is not bundled in this release; use format.engine: basic");
+        }
+        int last = range.end().column() == 0 && range.end().line() > range.start().line()
+                ? range.end().line() - 1 : range.end().line();
+        return BasicFormatter.rangeEdits(text, settings, lint(uri, text, null), range.start().line(), last);
     }
 
     /** Quick fixes for the lint findings that overlap {@code range} in {@code uri}. */
@@ -646,6 +674,73 @@ public final class QualityServices {
             }
         }
         return kept;
+    }
+
+    /** CodeNarc rules {@link #quickFix} or {@link PracticeFixes#lintFixes} can fix mechanically. */
+    static final Set<String> FIXABLE_LINT_CODES = Set.of(BasicFormatter.UNNECESSARY_SEMICOLON, "TrailingWhitespace",
+            "ConsecutiveBlankLines", "CompileStatic", "UnnecessaryDefInVariableDeclaration",
+            "UnnecessaryDefInMethodDeclaration", "UnnecessaryDefInFieldDeclaration", "UnnecessaryGString",
+            "GStringAsMapKey", "NoDef", "VariableTypeRequired");
+    /** CodeNarc rules whose findings {@link #organizeImports} removes. */
+    static final Set<String> IMPORT_CODES = Set.of("UnusedImport", "UnnecessaryGroovyImport", "DuplicateImport");
+
+    /**
+     * Whether a published finding has a quick fix: a lint rule with a mechanical fix, or a practice finding that
+     * carries one. Cheap: lint codes come from a fixed set and practice findings from the per-snapshot cache.
+     */
+    public boolean fixable(Diagnostic diagnostic) {
+        if (CodeNarcAnalyzer.SOURCE.equals(diagnostic.source())) {
+            return FIXABLE_LINT_CODES.contains(diagnostic.code());
+        }
+        if (diagnostic.uri() == null || org.groovyscope.engine.compile.GroovyCompiler.SOURCE.equals(diagnostic.source())) {
+            return false;
+        }
+        for (PracticeFinder.Practice practice : practices(diagnostic.uri())) {
+            if (practice.fixable() && practice.diagnostic().equals(diagnostic)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Every safe fix for one document ({@link #fix} for that document alone); empty when none applies. */
+    public List<TextEdit> fixAll(String uri) {
+        return fix(List.of(uri), Set.of()).edits().getOrDefault(uri, List.of());
+    }
+
+    /**
+     * Edits that delete the imports CodeNarc reports as unused, unnecessary (auto-imported) or duplicated. A line is
+     * removed only when it holds that single import, and never inside a region the governing profile protects.
+     */
+    public List<TextEdit> organizeImports(String uri) {
+        String text = workspace.text(uri);
+        if (text == null || WorkspaceModel.isJavaUri(uri)) {
+            return List.of();
+        }
+        TextLines lines = new TextLines(text);
+        java.util.SortedMap<Integer, Diagnostic> remove = new java.util.TreeMap<>();
+        for (Diagnostic diagnostic : lint(uri, text, null)) {
+            int line = diagnostic.range().start().line();
+            if (IMPORT_CODES.contains(diagnostic.code()) && line < lines.lineCount()) {
+                String content = lines.line(line).strip();
+                if (content.startsWith("import ") && content.indexOf("import ", 1) < 0) {
+                    remove.putIfAbsent(line, diagnostic);
+                }
+            }
+        }
+        List<CodeAction> actions = new ArrayList<>();
+        for (Map.Entry<Integer, Diagnostic> entry : remove.entrySet()) {
+            int line = entry.getKey();
+            Position end = line + 1 < lines.lineCount() ? new Position(line + 1, 0)
+                    : new Position(line, lines.line(line).length());
+            actions.add(new CodeAction("Remove import", entry.getValue(),
+                    List.of(new TextEdit(new Range(new Position(line, 0), end), ""))));
+        }
+        List<TextEdit> edits = new ArrayList<>();
+        for (CodeAction action : unprotected(uri, text, actions)) {
+            edits.addAll(action.edits());
+        }
+        return edits;
     }
 
     /** Lint findings are line-granular, so a request anywhere on a flagged line matches it. */

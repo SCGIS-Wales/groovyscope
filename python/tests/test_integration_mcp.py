@@ -54,7 +54,7 @@ def call_tool(process: subprocess.Popen[bytes], request_id: int, name: str, argu
 
 
 @pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
-def test_mcp_tools_end_to_end(tmp_path: Path, short_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mcp_tools_end_to_end(tmp_path: Path, short_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: PLR0915 - one session, every tool
     workspace = tmp_path / "ws"
     source = workspace / "src" / "main" / "groovy" / "app"
     source.mkdir(parents=True)
@@ -102,7 +102,18 @@ def test_mcp_tools_end_to_end(tmp_path: Path, short_dir: Path, monkeypatch: pyte
         hover = call_tool(process, 20, "hover", {"path": "src/main/groovy/app/Greeter.groovy", "line": 4, "col": 12})
         assert hover["found"] and "greet" in hover["markdown"]
         outline = call_tool(process, 21, "document_symbols", {"path": "src/main/groovy/app/Greeter.groovy"})
-        assert outline["symbols"][0]["name"] == "Greeter" and outline["symbols"][0]["children"][0]["name"] == "greet"
+        assert [i["name"] for i in outline["items"]] == ["Greeter", "greet"] and outline["fileLines"] == 5
+        assert outline["items"][1]["lines"] == [4, 4] and outline["items"][1]["in"] == "Greeter"
+        source = call_tool(
+            process, 23, "read_symbol", {"path": "src/main/groovy/app/Greeter.groovy", "symbol": "greet"}
+        )
+        assert source["found"] and source["source"].startswith("4:     String greet(String name)")
+        prints = call_tool(process, 24, "find_code", {"kind": "call", "name": "println"})
+        assert prints["count"] == 1 and prints["items"][0]["path"] == "src/main/groovy/app/Main.groovy"
+        duplicates = call_tool(process, 25, "find_duplicates", {})
+        assert duplicates["count"] == 0
+        overview = call_tool(process, 26, "workspace_overview", {})
+        assert overview["files"] == 2 and overview["packages"][0]["name"] == "app"
         renamed = call_tool(
             process,
             22,

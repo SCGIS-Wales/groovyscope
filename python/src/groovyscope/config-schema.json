@@ -9,78 +9,223 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "version": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)*$" },
-        "compat": { "type": "array", "items": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)*$" } }
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)*$"
+        },
+        "compat": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)*$"
+          }
+        }
       }
     },
     "jdk": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "home": { "type": ["string", "null"] },
-        "minimum": { "type": "integer", "minimum": 17 },
-        "autoProvision": { "type": "boolean" },
-        "vendor": { "enum": ["temurin", "corretto"] }
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minimum": {
+          "type": "integer",
+          "minimum": 17
+        },
+        "autoProvision": {
+          "type": "boolean"
+        },
+        "vendor": {
+          "enum": [
+            "temurin",
+            "corretto"
+          ]
+        }
       }
     },
     "workspace": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sourceRoots": { "type": "array", "items": { "type": "string" } },
-        "classpath": { "type": "array", "items": { "type": "string" } },
+        "sourceRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "classpathFrom": {
           "type": "object",
           "additionalProperties": false,
-          "properties": { "gradleTask": { "type": ["string", "null"] } }
+          "properties": {
+            "gradleTask": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "description": "Deprecated and ignored; run `groovyscope classpath` instead."
         },
-        "exclude": { "type": "array", "items": { "type": "string" } },
-        "trust": { "type": "boolean" },
-        "javaSources": { "type": "boolean" },
-        "maxFileBytes": { "type": "integer", "minimum": 0 }
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "trust": {
+          "type": "boolean"
+        },
+        "javaSources": {
+          "type": "boolean"
+        },
+        "maxFileBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "classpathFile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "File listing classpath entries, one per line (written by `groovyscope classpath`)."
+        }
       }
     },
     "daemon": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "idleTimeoutMinutes": { "type": "integer", "minimum": 1 },
-        "heap": { "type": "string", "pattern": "^[0-9]+[kKmMgG]$" },
-        "cds": { "type": "boolean" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "idleTimeoutMinutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "heap": {
+          "type": "string",
+          "pattern": "^[0-9]+[kKmMgG]$"
+        },
+        "cds": {
+          "type": "boolean"
+        }
       }
     },
     "lint": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "ruleset": { "type": ["string", "null"] },
-        "jenkinsRuleset": { "type": ["string", "null"] },
-        "failOnPriority": { "type": "integer", "minimum": 1, "maximum": 3 },
-        "publish": { "type": "boolean" }
+        "ruleset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "jenkinsRuleset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failOnPriority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "publish": {
+          "type": "boolean"
+        },
+        "publishMaxPriority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "rules": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "const": "off"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "priority"
+                ],
+                "properties": {
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3
+                  }
+                }
+              }
+            ]
+          }
+        }
       }
     },
     "typecheck": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "nullChecker": { "type": "string", "enum": ["off", "lenient", "strict"] },
-        "sqlInjection": { "type": "boolean" },
-        "purity": { "type": "boolean" },
-        "regex": { "type": "boolean" },
-        "formatString": { "type": "boolean" },
-        "combiner": { "type": "boolean" }
+        "nullChecker": {
+          "type": "string",
+          "enum": [
+            "off",
+            "lenient",
+            "strict"
+          ]
+        },
+        "sqlInjection": {
+          "type": "boolean"
+        },
+        "purity": {
+          "type": "boolean"
+        },
+        "regex": {
+          "type": "boolean"
+        },
+        "formatString": {
+          "type": "boolean"
+        },
+        "combiner": {
+          "type": "boolean"
+        }
       }
     },
     "practices": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "severity": {
           "type": "object",
-          "propertyNames": { "pattern": "^(GS|RP)[0-9]{3}$" },
-          "additionalProperties": { "type": "string", "enum": ["error", "warning", "info", "off"] }
+          "propertyNames": {
+            "pattern": "^(GS|RP)[0-9]{3}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning",
+              "info",
+              "off"
+            ]
+          }
         }
       }
     },
@@ -88,37 +233,104 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "paths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "discover": { "type": "boolean" }
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "discover": {
+          "type": "boolean"
+        }
       }
     },
     "format": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "engine": { "type": "string", "enum": ["basic", "greclipse"] },
-        "indentSize": { "type": "integer", "minimum": 1, "maximum": 8 },
-        "maxBlankLines": { "type": "integer", "minimum": 0, "maximum": 10 },
-        "removeSemicolons": { "type": "boolean" },
-        "properties": { "type": ["string", "null"] }
+        "engine": {
+          "type": "string",
+          "enum": [
+            "basic",
+            "greclipse"
+          ]
+        },
+        "indentSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "maxBlankLines": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "removeSemicolons": {
+          "type": "boolean"
+        },
+        "properties": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "output": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "maxResults": { "type": "integer", "minimum": 1 },
-        "maxBytes": { "type": "integer", "minimum": 256 },
-        "maxMessageChars": { "type": "integer", "minimum": 0 },
-        "structured": { "type": "boolean" }
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 256
+        },
+        "maxMessageChars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "structured": {
+          "type": "boolean"
+        }
       }
     },
     "logging": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "level": { "type": "string", "enum": ["debug", "info", "warning", "error"] },
-        "file": { "type": ["string", "null"] }
+        "level": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "duplicates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minLines": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "minStatements": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     }
   }

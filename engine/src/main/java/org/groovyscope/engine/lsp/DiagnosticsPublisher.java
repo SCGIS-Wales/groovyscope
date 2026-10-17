@@ -108,7 +108,7 @@ final class DiagnosticsPublisher {
                 }
                 List<Diagnostic> converted = new ArrayList<>();
                 for (org.groovyscope.engine.model.Diagnostic diagnostic : entry.getValue()) {
-                    converted.add(Converters.toLsp(diagnostic));
+                    converted.add(Converters.toLsp(diagnostic, current.quality().fixable(diagnostic)));
                 }
                 target.publishDiagnostics(new PublishDiagnosticsParams(entry.getKey(), converted));
             }

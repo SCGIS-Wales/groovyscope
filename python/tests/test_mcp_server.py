@@ -217,6 +217,10 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "type_definition",
         "document_symbols",
         "rename",
+        "read_symbol",
+        "find_code",
+        "find_duplicates",
+        "workspace_overview",
     }
     result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
     structured = result[1] if isinstance(result, tuple) else result
@@ -422,10 +426,15 @@ def test_insight_tools_and_rename(
     member = symbol("greet")
     klass = {**symbol("A", "class"), "children": [{**member, "children": [symbol("local", "variable")]}]}
     engine["responses"]["groovyscope/documentSymbols"] = {"symbols": [klass]}
+    engine["responses"]["groovyscope/documentSymbols"] = {"symbols": [{**klass, "endLine": 40}], "lines": 41}
     outline = tools["document_symbols"]("src/A.groovy", depth=1)
-    assert outline["symbols"][0]["name"] == "A" and outline["symbols"][0]["members"] == 1 and not outline["truncated"]
+    assert outline["items"][0]["name"] == "A" and outline["items"][0]["members"] == 1
+    assert outline["items"][0]["lines"] == [5, 41] and outline["fileLines"] == 41
     deep = tools["document_symbols"]("src/A.groovy", depth=3)
-    assert deep["symbols"][0]["children"][0]["children"][0]["name"] == "local"
+    assert deep["items"][1]["name"] == "greet" and deep["items"][1]["in"] == "A"
+    assert deep["items"][1]["children"][0]["name"] == "local"
+    methods = tools["document_symbols"]("src/A.groovy", depth=2, kinds=["method"], name="gre")
+    assert [i["name"] for i in methods["items"]] == ["A", "greet"]
 
     engine["responses"]["groovyscope/rename"] = {"refused": "matched by name only"}
     assert local_tools["rename"]("A.groovy", 1, 1, "b") == {"renamed": False, "refused": "matched by name only"}
@@ -461,3 +470,125 @@ def test_results_are_compact_and_annotated(engine: dict[str, Any]) -> None:
     again = asyncio.run(structured.call_tool("find_symbol", {"query": "gree"}))
     assert again.structured_content["items"][0]["name"] == "Greeter"
     assert mcp_server.clip("x" * 10, 4) == "xxx…" and mcp_server.clip(5, 1) == 5
+
+
+def test_search_tools(tools: dict[str, Any], engine: dict[str, Any]) -> None:
+    engine["responses"]["groovyscope/readSymbol"] = {
+        "found": True,
+        "name": "greet",
+        "kind": "method",
+        "container": "app.A",
+        "startLine": 9,
+        "endLine": 11,
+        "text": "void greet() {\n    println 'hi'\n}",
+        "truncated": False,
+    }
+    read = tools["read_symbol"]("src/A.groovy", "A.greet", line=10)
+    assert read["source"] == "10: void greet() {\n11:     println 'hi'\n12: }" and read["lines"] == [10, 12]
+    assert engine["calls"][-1][1]["line"] == 9 and engine["calls"][-1][1]["maxChars"] == 16000
+    engine["responses"]["groovyscope/readSymbol"] = {
+        "found": False,
+        "candidates": [{"name": "greet", "kind": "method", "container": "A", "line": 3}],
+    }
+    assert tools["read_symbol"]("src/A.groovy", "gree") == {
+        "found": False,
+        "candidates": [{"name": "greet", "kind": "method", "in": "A", "line": 4}],
+    }
+
+    engine["responses"]["groovyscope/findCode"] = {
+        "matches": [
+            {
+                "uri": "file:///ws/src/A.groovy",
+                "line": 4,
+                "endLine": 6,
+                "detail": "catch (Exception e)",
+                "snippet": "} catch (Exception e) {",
+                "enclosing": "A.run",
+            }
+        ],
+        "count": 1,
+    }
+    found = tools["find_code"]("catch", type="Exception", rethrows=False)
+    assert found["items"][0] == {
+        "path": "src/A.groovy",
+        "line": 5,
+        "endLine": 7,
+        "detail": "catch (Exception e)",
+        "snippet": "} catch (Exception e) {",
+        "in": "A.run",
+    }
+    assert engine["calls"][-1][1] == {
+        "root": "/ws",
+        "uris": [],
+        "kind": "catch",
+        "type": "Exception",
+        "rethrows": False,
+    }
+    assert tools["find_code"]("nonsense")["kinds"][0] == "catch"
+
+    engine["responses"]["groovyscope/duplicates"] = {
+        "groups": [
+            {
+                "lines": 8,
+                "similarity": "exact",
+                "occurrences": [
+                    {"uri": "file:///ws/src/A.groovy", "line": 1, "endLine": 8, "enclosing": "A.a"},
+                    {"uri": "file:///ws/src/B.groovy", "line": 10, "endLine": 17},
+                ],
+            }
+        ],
+        "count": 1,
+    }
+    duplicates = tools["find_duplicates"](min_lines=8)
+    assert duplicates["items"][0]["at"] == [
+        {"path": "src/A.groovy", "lines": [2, 9], "in": "A.a"},
+        {"path": "src/B.groovy", "lines": [11, 18]},
+    ]
+    assert engine["calls"][-1][1]["minLines"] == 8 and engine["calls"][-1][1]["minStatements"] == 3
+
+    engine["responses"]["groovyscope/overview"] = {
+        "files": 2,
+        "lines": 50,
+        "packages": [{"name": "app", "files": 2, "classes": 2, "lines": 50}],
+        "largestFiles": [{"uri": "file:///ws/src/A.groovy", "lines": 40, "classes": 1, "members": 3}],
+        "largestClasses": [],
+        "testFiles": 0,
+        "untested": ["app.A"],
+    }
+    overview = tools["workspace_overview"]()
+    assert overview["largestFiles"] == [{"lines": 40, "classes": 1, "members": 3, "path": "src/A.groovy"}]
+    assert overview["untested"] == ["app.A"]
+
+
+def test_check_filters_counts_and_missing_dependencies(tools: dict[str, Any], engine: dict[str, Any]) -> None:
+    def item(line: int, severity: int, code: str, *, fixable: bool = False) -> dict[str, Any]:
+        found = {
+            "range": {"start": {"line": line, "character": 0}},
+            "severity": severity,
+            "source": "x",
+            "code": code,
+            "message": "m",
+        }
+        return {**found, "data": {"fixable": True}} if fixable else found
+
+    engine["responses"]["groovyscope/check"] = {
+        "diagnostics": {
+            "file:///ws/src/A.groovy": [
+                item(0, 2, "GS100"),
+                item(1, 1, "GS006"),
+                item(2, 2, "UnnecessaryGString", fixable=True),
+                item(3, 3, "LineLength"),
+                item(4, 3, "LineLength"),
+            ]
+        },
+        "summary": {},
+    }
+    everything = tools["check"]()
+    assert [f["code"] for f in everything["items"]] == ["GS006", "UnnecessaryGString", "LineLength"]  # page of 3
+    assert everything["byCode"] == {"LineLength": 2, "GS006": 1, "UnnecessaryGString": 1}
+    assert everything["missingDependencies"]["files"] == 1
+    assert everything["items"][1]["fixable"] is True and "fixable" not in everything["items"][0]
+    assert [f["code"] for f in tools["check"](max_priority=2)["items"]] == ["GS006", "UnnecessaryGString"]
+    assert [f["code"] for f in tools["check"](codes=["LineLength"])["items"]] == ["LineLength", "LineLength"]
+    reviewed = tools["review"](paths=["src/A.groovy"], max_priority=1)
+    assert reviewed["byCode"] == {"GS006": 1} and reviewed["missingDependencies"]["files"] == 1

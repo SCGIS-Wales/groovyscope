@@ -220,7 +220,7 @@ def test_existing_formats_are_kept(tmp_path: Path) -> None:
     change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro([]))}[".kiro/agents/groovy.json"]
     agent = json.loads(change["after"])
     assert "kiroUpgrade" not in agent
-    assert agent["tools"][:2] == ["read", "my_tool"] and "@groovyscope" in agent["tools"]
+    assert agent["tools"] == ["read", "my_tool", "*"]  # the user's entries kept, every tool and MCP server exposed
     assert agent["resources"][0] == "file://NOTES.md" and "file://AGENTS.md" in agent["resources"]
 
     # universal and in sync: left byte for byte
@@ -295,3 +295,15 @@ def test_writes_are_atomic_and_backups_never_overwritten(tmp_path: Path) -> None
     assert not list(target.parent.glob(".*groovyscope-tmp"))
     target.with_name("file.json.bak").write_text("old")
     assert backup_path(target).name == "file.json.bak.1"
+
+
+def test_hidden_servers_and_server_listing(tmp_path: Path) -> None:
+    global_mcp = tmp_path / "g.json"
+    global_mcp.write_text(json.dumps({"mcpServers": {"gitlab": {}, "groovyscope": {}, "old": {"disabled": True}}}))
+    project_mcp = tmp_path / "p.json"
+    project_mcp.write_text(json.dumps({"mcpServers": {"jira": {}, "gitlab": {}}}))
+    servers = kiro_agent.mcp_servers([global_mcp, project_mcp, tmp_path / "missing.json"])
+    assert servers == ["gitlab", "groovyscope", "jira"]
+    assert kiro_agent.hidden_servers({"tools": ["read", "@groovyscope", "@jira/search"]}, servers) == ["gitlab"]
+    assert kiro_agent.hidden_servers({"tools": ["*"]}, servers) == []
+    assert kiro_agent.hidden_servers({"permissions": {}}, servers) == []

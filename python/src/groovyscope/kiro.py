@@ -203,11 +203,25 @@ def plan_changes(
     return changes
 
 
+NO_NEWLINE = "\\ No newline at end of file\n"
+
+
+def text_diff(before: str | None, after: str, label: str) -> str:
+    """A unified diff that marks a missing final newline the way `diff` does, instead of gluing the last line of
+    one side to the next line of the output."""
+    lines: list[str] = []
+    for line in difflib.unified_diff(
+        (before or "").splitlines(keepends=True),
+        after.splitlines(keepends=True),
+        fromfile=f"a/{label}",
+        tofile=f"b/{label}",
+    ):
+        lines.append(line if line.endswith("\n") else line + "\n" + NO_NEWLINE)
+    return "".join(lines)
+
+
 def unified_diff(change: KiroChange) -> str:
-    before = (change["before"] or "").splitlines(keepends=True)
-    after = change["after"].splitlines(keepends=True)
-    label = change["path"]
-    return "".join(difflib.unified_diff(before, after, fromfile=f"a/{label}", tofile=f"b/{label}"))
+    return text_diff(change["before"], change["after"], change["path"])
 
 
 def write_atomically(destination: Path, text: str) -> None:

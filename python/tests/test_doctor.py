@@ -76,6 +76,9 @@ def test_kiro_check_states(tmp_path: Path) -> None:
     home = tmp_path / "kh"
     project = tmp_path / "project"
     apply_changes(home, plan_changes(home, global_scope=True))
+    project.mkdir()
+    assert kiro_check(project, home)[0] == "info"  # not a Groovy project: nothing to do here
+    (project / "build.gradle").write_text("", encoding="utf-8")
     level, _, message = kiro_check(project, home)
     assert level == "warn" and "run `groovyscope kiro init` in this project" in message
     apply_changes(project, plan_changes(project, lsp_only=True))
@@ -129,4 +132,36 @@ def test_kiro_agent_check_names_version_and_format(tmp_path: Path) -> None:
     level, _, message = kiro_agent_check(tmp_path, home, run)
     assert level == "ok" and "kiro-cli 2.32.0" in message and "universal (loaded by the V2 and V3 engines)" in message
     agent.write_text('{"kiroUpgrade": {"revision": 7}}')
+    assert kiro_agent_check(tmp_path, home, None)[0] == "warn"
+
+
+def test_kiro_agent_check_reports_hidden_servers_and_the_universal_option(tmp_path: Path) -> None:
+    import json  # noqa: PLC0415
+
+    from groovyscope.doctor import kiro_agent_check  # noqa: PLC0415
+
+    home = tmp_path / "kh"
+    (home / "agents").mkdir(parents=True)
+    (home / "settings").mkdir()
+    (home / "settings" / "mcp.json").write_text(
+        json.dumps(
+            {"mcpServers": {"gitlab": {"command": "x"}, "groovyscope": {"command": "g"}, "off": {"disabled": True}}}
+        )
+    )
+    agent = home / "agents" / "groovy.json"
+    agent.write_text(json.dumps({"tools": ["read", "@groovyscope"]}))
+
+    def run(arguments: list[str]) -> tuple[int, str]:
+        if arguments == ["--version"]:
+            return (0, "kiro-cli 2.32.0")
+        if "--help" in arguments:
+            return (0, "Upgrade agent configs to the universal format")
+        return (0, "  ✓ would upgrade  groovy.json")
+
+    level, _, message = kiro_agent_check(tmp_path, home, run)
+    assert level == "warn" and "hides these MCP servers: gitlab" in message and "--agent-format universal" in message
+    agent.write_text(json.dumps({"tools": ["*"]}))
+    level, _, message = kiro_agent_check(tmp_path, home, run)
+    assert level == "ok" and "hides" not in message
+    agent.write_text("not json")
     assert kiro_agent_check(tmp_path, home, None)[0] == "warn"

@@ -13,8 +13,7 @@ workspace:
   sourceRoots: ["src/main/groovy", "src/test/groovy", "src/main/java", "src/test/java", "vars"]
   javaSources: true       # compile .java files under the roots too, so Groovy code resolves the project's Java classes
   classpath: []           # jars/dirs added to the analysis classpath; never inferred silently
-  classpathFrom:
-    gradleTask: null      # optional Gradle task that prints the classpath (Stage 1)
+  classpathFile: ".groovyscope/classpath.txt"  # written by `groovyscope classpath`; its entries join `classpath`
   exclude: ["**/build/**", "**/.gradle/**", "**/target/**", "**/node_modules/**"]
   trust: false            # only honoured after `groovyscope trust` (or GROOVYSCOPE_WORKSPACE__TRUST=true): allows
                           # global AST transforms from the workspace classpath, jdk.home and rule sets from this file
@@ -29,6 +28,8 @@ lint:
   jenkinsRuleset: null    # path to a Jenkins pipeline ruleset; null = bundled profile
   failOnPriority: 2       # check exits non-zero on violations with this priority or higher
   publish: true           # push lint findings to the editor/agent as diagnostics
+  publishMaxPriority: 2   # only priority 1-2 findings are pushed; priority 3 stays available through check/review
+  rules: {}               # per-rule overrides on top of the profile, e.g. {CompileStatic: off, LineLength: {priority: 3}}
 typecheck:
   nullChecker: "strict"   # off | lenient | strict (Groovy 6 NullChecker, on @CompileStatic/@TypeChecked code)
   sqlInjection: true      # Groovy 6 SqlInjectionChecker
@@ -42,6 +43,9 @@ practices:
 profiles:
   paths: []              # runtime profile files or directories (YAML/JSON), see docs/profiles.md
   discover: true         # also load <root>/.groovyscope/profiles/ and ~/.groovyscope/profiles/
+duplicates:
+  minLines: 6             # find_duplicates: smallest repeated block, in lines
+  minStatements: 3        # ... and in statements
 format:
   engine: "basic"         # basic (bundled: whitespace hygiene + safe CodeNarc-driven fixes) | greclipse (not bundled yet)
   indentSize: 4

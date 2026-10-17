@@ -110,7 +110,9 @@ class LspQualitySpec extends Specification {
         then:
         edits.size() == 1
         edits[0].newText.contains('String name = "plain"\n')
-        report.getRelatedFullDocumentDiagnosticReport().items*.code*.getLeft().contains('UnnecessarySemicolon')
+        // UnnecessarySemicolon is priority 3: pulled like pushed diagnostics stop at lint.publishMaxPriority (2)
+        report.getRelatedFullDocumentDiagnosticReport().items*.code*.getLeft().containsAll(['NoDef', 'CompileStatic'])
+        !report.getRelatedFullDocumentDiagnosticReport().items*.code*.getLeft().contains('UnnecessarySemicolon')
         actions*.getRight()*.title.contains('Remove unnecessary semicolon')
         actions.find { it.getRight().title == 'Remove unnecessary semicolon' }.getRight().edit.changes[messy].size() == 1
     }

@@ -39,6 +39,14 @@ import org.eclipse.lsp4j.DefinitionParams;
 import org.eclipse.lsp4j.DocumentDiagnosticParams;
 import org.eclipse.lsp4j.DocumentDiagnosticReport;
 import org.eclipse.lsp4j.DocumentFormattingParams;
+import org.eclipse.lsp4j.DocumentHighlight;
+import org.eclipse.lsp4j.DocumentHighlightParams;
+import org.eclipse.lsp4j.DocumentRangeFormattingParams;
+import org.eclipse.lsp4j.FoldingRange;
+import org.eclipse.lsp4j.FoldingRangeRequestParams;
+import org.eclipse.lsp4j.ImplementationParams;
+import org.eclipse.lsp4j.InlayHint;
+import org.eclipse.lsp4j.InlayHintParams;
 import org.eclipse.lsp4j.RelatedFullDocumentDiagnosticReport;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
@@ -374,39 +382,147 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
         });
     }
 
+    /** Code action kind of the "apply every safe fix" source action. */
+    static final String FIX_ALL_KIND = CodeActionKind.SourceFixAll + ".groovyscope";
+
     @Override
     public CompletableFuture<List<Either<Command, CodeAction>>> codeAction(CodeActionParams params) {
         return CompletableFutures.computeAsync(cancel -> {
             String uri = params.getTextDocument().getUri();
+            LanguageServices current = ready();
+            List<String> only = params.getContext() == null ? null : params.getContext().getOnly();
             List<Either<Command, CodeAction>> actions = new ArrayList<>();
-            for (org.groovyscope.engine.model.CodeAction fix : ready().quality().codeActions(uri,
-                    new org.groovyscope.engine.model.Range(Converters.fromLsp(params.getRange().getStart()),
-                            Converters.fromLsp(params.getRange().getEnd())))) {
-                CodeAction action = new CodeAction(fix.title());
-                action.setKind(CodeActionKind.QuickFix);
-                action.setDiagnostics(List.of(Converters.toLsp(fix.diagnostic())));
-                List<TextEdit> edits = new ArrayList<>();
-                for (org.groovyscope.engine.model.TextEdit edit : fix.edits()) {
-                    edits.add(Converters.toLsp(edit));
+            if (wanted(only, CodeActionKind.QuickFix, false)) {
+                for (org.groovyscope.engine.model.CodeAction fix : current.quality().codeActions(uri,
+                        Converters.fromLsp(params.getRange()))) {
+                    CodeAction action = action(fix.title(), CodeActionKind.QuickFix, uri, fix.edits());
+                    action.setDiagnostics(List.of(Converters.toLsp(fix.diagnostic())));
+                    actions.add(Either.forRight(action));
                 }
-                Map<String, List<TextEdit>> changes = new HashMap<>();
-                changes.put(uri, edits);
-                action.setEdit(new WorkspaceEdit(changes));
-                actions.add(Either.forRight(action));
+            }
+            // Source actions are computed only when asked for: fixing a whole document can run the type checker.
+            if (wanted(only, FIX_ALL_KIND, true)) {
+                List<org.groovyscope.engine.model.TextEdit> edits = current.quality().fixAll(uri);
+                if (!edits.isEmpty()) {
+                    actions.add(Either.forRight(action("Fix all safe groovyscope findings", FIX_ALL_KIND, uri, edits)));
+                }
+            }
+            if (wanted(only, CodeActionKind.SourceOrganizeImports, true)) {
+                List<org.groovyscope.engine.model.TextEdit> edits = current.quality().organizeImports(uri);
+                if (!edits.isEmpty()) {
+                    actions.add(Either.forRight(action("Remove unused imports", CodeActionKind.SourceOrganizeImports,
+                            uri, edits)));
+                }
             }
             return actions;
         });
+    }
+
+    /**
+     * Whether a client's {@code only} filter asks for actions of {@code kind}: a requested kind matches itself and
+     * every kind below it ({@code source} matches {@code source.organizeImports}). With no filter, quick fixes are
+     * offered and source actions are not.
+     */
+    static boolean wanted(List<String> only, String kind, boolean sourceAction) {
+        if (only == null || only.isEmpty()) {
+            return !sourceAction;
+        }
+        for (String requested : only) {
+            if (kind.equals(requested) || kind.startsWith(requested + ".")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static CodeAction action(String title, String kind, String uri,
+            List<org.groovyscope.engine.model.TextEdit> edits) {
+        CodeAction action = new CodeAction(title);
+        action.setKind(kind);
+        List<TextEdit> converted = new ArrayList<>();
+        for (org.groovyscope.engine.model.TextEdit edit : edits) {
+            converted.add(Converters.toLsp(edit));
+        }
+        Map<String, List<TextEdit>> changes = new HashMap<>();
+        changes.put(uri, converted);
+        action.setEdit(new WorkspaceEdit(changes));
+        return action;
     }
 
     @Override
     public CompletableFuture<DocumentDiagnosticReport> diagnostic(DocumentDiagnosticParams params) {
         return CompletableFutures.computeAsync(cancel -> {
             String uri = params.getTextDocument().getUri();
+            LanguageServices current = ready();
             List<org.eclipse.lsp4j.Diagnostic> items = new ArrayList<>();
-            for (Diagnostic diagnostic : ready().quality().publishedDiagnostics().getOrDefault(uri, List.of())) {
-                items.add(Converters.toLsp(diagnostic));
+            for (Diagnostic diagnostic : current.quality().publishedDiagnostics().getOrDefault(uri, List.of())) {
+                items.add(Converters.toLsp(diagnostic, current.quality().fixable(diagnostic)));
             }
             return new DocumentDiagnosticReport(new RelatedFullDocumentDiagnosticReport(items));
+        });
+    }
+
+    @Override
+    public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> implementation(
+            ImplementationParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            List<Location> locations = new ArrayList<>();
+            for (org.groovyscope.engine.model.Location location : ready().implementations(
+                    params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))) {
+                locations.add(Converters.toLsp(location));
+            }
+            return Either.forLeft(locations);
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<? extends DocumentHighlight>> documentHighlight(DocumentHighlightParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            List<DocumentHighlight> highlights = new ArrayList<>();
+            for (org.groovyscope.engine.model.Highlight highlight : ready().highlights(
+                    params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))) {
+                highlights.add(Converters.highlight(highlight));
+            }
+            return highlights;
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<FoldingRange>> foldingRange(FoldingRangeRequestParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            List<FoldingRange> ranges = new ArrayList<>();
+            for (org.groovyscope.engine.model.FoldingRange range : ready().foldingRanges(params.getTextDocument().getUri())) {
+                ranges.add(Converters.foldingRange(range));
+            }
+            return ranges;
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<InlayHint>> inlayHint(InlayHintParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            List<InlayHint> hints = new ArrayList<>();
+            for (org.groovyscope.engine.model.InlayHint hint : ready().inlayHints(params.getTextDocument().getUri(),
+                    Converters.fromLsp(params.getRange()))) {
+                hints.add(Converters.inlayHint(hint));
+            }
+            return hints;
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<? extends TextEdit>> rangeFormatting(DocumentRangeFormattingParams params) {
+        return CompletableFutures.computeAsync(cancel -> {
+            List<TextEdit> edits = new ArrayList<>();
+            try {
+                for (org.groovyscope.engine.model.TextEdit edit : ready().quality().formatRange(
+                        params.getTextDocument().getUri(), Converters.fromLsp(params.getRange()))) {
+                    edits.add(Converters.toLsp(edit));
+                }
+            } catch (IllegalStateException e) {
+                throw new ResponseErrorException(new ResponseError(ResponseErrorCode.InvalidRequest, e.getMessage(), null));
+            }
+            return edits;
         });
     }
 
