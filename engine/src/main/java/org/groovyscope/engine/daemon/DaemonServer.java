@@ -150,7 +150,7 @@ public final class DaemonServer implements Closeable {
         });
         long periodMillis = Math.max(250, Math.min(15_000, idleTimeout.toMillis() / 4));
         watchdog.scheduleAtFixedRate(this::checkIdle, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
-        System.err.println("groovyscope-engine: daemon listening on " + socketPath);
+        org.groovyscope.engine.log.EngineLog.info("%s", "daemon listening on " + socketPath);
     }
 
     /**
@@ -249,7 +249,7 @@ public final class DaemonServer implements Closeable {
                 if (!running.getAsBoolean()) {
                     return;
                 }
-                System.err.println("groovyscope-engine: accept failed, retrying in " + backoff + " ms: " + e);
+                org.groovyscope.engine.log.EngineLog.warn("%s", "accept failed, retrying in " + backoff + " ms: " + e);
                 try {
                     Thread.sleep(backoff);
                 } catch (InterruptedException interrupted) {
@@ -283,7 +283,9 @@ public final class DaemonServer implements Closeable {
             front = new GroovyscopeLanguageServer(
                     code -> closeQuietly(channel), socketPath.toAbsolutePath().getParent(), config, registry,
                     this::requestExit);
-            Launcher<LanguageClient> launcher = LSPLauncher.createServerLauncher(front, in, out);
+            Launcher<LanguageClient> launcher = new LSPLauncher.Builder<LanguageClient>().setLocalService(front)
+                    .setRemoteInterface(LanguageClient.class).setInput(in).setOutput(out)
+                    .wrapMessages(org.groovyscope.engine.lsp.GroovyscopeLanguageServer.messageLogging()).create();
             front.connect(launcher.getRemoteProxy());
             launcher.startListening().get();
         } catch (IOException | ExecutionException e) {
@@ -296,7 +298,7 @@ public final class DaemonServer implements Closeable {
                     // The client is gone however it left: release its open documents and diagnostics thread.
                     front.connectionClosed();
                 } catch (RuntimeException e) {
-                    System.err.println("groovyscope-engine: connection cleanup failed: " + e);
+                    org.groovyscope.engine.log.EngineLog.warn("%s", "connection cleanup failed: " + e);
                 }
             }
             closeQuietly(channel);
@@ -311,7 +313,7 @@ public final class DaemonServer implements Closeable {
         }
         Duration idle = Duration.between(lastActivity.get(), Instant.now());
         if (idle.compareTo(idleTimeout) >= 0) {
-            System.err.println("groovyscope-engine: idle for " + idle.toSeconds() + "s, exiting");
+            org.groovyscope.engine.log.EngineLog.info("%s", "idle for " + idle.toSeconds() + "s, exiting");
             requestExit();
         }
     }

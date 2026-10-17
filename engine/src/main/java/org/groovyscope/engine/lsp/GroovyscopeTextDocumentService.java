@@ -265,23 +265,27 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     @Override
     public CompletableFuture<Hover> hover(HoverParams params) {
         return CompletableFutures.computeAsync(cancel -> {
-            LanguageServices current = ready();
-            String uri = params.getTextDocument().getUri();
-            org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
-            java.util.Optional<org.groovyscope.engine.model.Hover> hover = current.hover(uri, position);
-            java.util.Optional<String> parameter = current.quality().parameterHover(uri, position);
-            if (parameter.isPresent()) {
-                hover = java.util.Optional.of(new org.groovyscope.engine.model.Hover(parameter.get(),
-                        hover.map(org.groovyscope.engine.model.Hover::range).orElse(null)));
-            }
-            String notes = findingNotes(current, uri, position.line());
-            if (notes.isEmpty()) {
-                return hover.map(Converters::hover).orElse(null);
-            }
-            String markdown = hover.map(h -> h.markdown() + "\n\n---\n\n").orElse("") + notes;
-            org.groovyscope.engine.model.Range range = hover.map(org.groovyscope.engine.model.Hover::range).orElse(null);
-            return Converters.hover(new org.groovyscope.engine.model.Hover(markdown, range));
+            return fullHover(ready(), params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))
+                    .map(Converters::hover).orElse(null);
         });
+    }
+
+    /** Hover text plus runtime-profile parameter details and the notes for findings on the line. */
+    static java.util.Optional<org.groovyscope.engine.model.Hover> fullHover(LanguageServices current, String uri,
+            org.groovyscope.engine.model.Position position) {
+        java.util.Optional<org.groovyscope.engine.model.Hover> hover = current.hover(uri, position);
+        java.util.Optional<String> parameter = current.quality().parameterHover(uri, position);
+        if (parameter.isPresent()) {
+            hover = java.util.Optional.of(new org.groovyscope.engine.model.Hover(parameter.get(),
+                    hover.map(org.groovyscope.engine.model.Hover::range).orElse(null)));
+        }
+        String notes = findingNotes(current, uri, position.line());
+        if (notes.isEmpty()) {
+            return hover;
+        }
+        String markdown = hover.map(h -> h.markdown() + "\n\n---\n\n").orElse("") + notes;
+        org.groovyscope.engine.model.Range range = hover.map(org.groovyscope.engine.model.Hover::range).orElse(null);
+        return java.util.Optional.of(new org.groovyscope.engine.model.Hover(markdown, range));
     }
 
     /** Why and how to fix, for each practice or lint finding on a line (deduplicated by code). */

@@ -112,7 +112,7 @@ final class DiagnosticsPublisher {
                 target.publishDiagnostics(new PublishDiagnosticsParams(uri, List.of()));
             }
         } catch (RuntimeException e) {
-            System.err.println("groovyscope-engine: diagnostics failed: " + e);
+            org.groovyscope.engine.log.EngineLog.warn("%s", "diagnostics failed: " + e);
         }
     }
 

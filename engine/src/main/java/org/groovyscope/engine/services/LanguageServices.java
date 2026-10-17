@@ -292,9 +292,13 @@ public final class LanguageServices {
             Map<String, String> sources = Map.of();
             try {
                 // Taken before the sources are read, so an edit racing this compile shows up as a later change.
+                long started = System.nanoTime();
                 fingerprint = workspace.diskFingerprint();
                 sources = workspace.compileSources();
                 CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
+                org.groovyscope.engine.log.EngineLog.debug("compiled %d file(s) of %s in %d ms (%d with diagnostics)",
+                        sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,
+                        result.diagnostics().values().stream().filter(list -> !list.isEmpty()).count());
                 Map<String, ModuleNode> modules = new HashMap<>(result.modules());
                 // A file that no longer parses keeps its last good AST so navigation degrades instead of vanishing.
                 for (Map.Entry<String, ModuleNode> previous : snapshot.result().modules().entrySet()) {
@@ -308,9 +312,10 @@ public final class LanguageServices {
                 snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
                 persistSymbols(snapshot, sources);
             } catch (RuntimeException | LinkageError | StackOverflowError e) {
+                org.groovyscope.engine.log.EngineLog.error(e, "compile of %s failed", workspace.root());
                 // Recorded as a snapshot with the failure as a diagnostic, so later requests answer from it until
                 // something changes, instead of repeating the same failure on every request.
-                System.err.println("groovyscope-engine: analysis failed: " + e);
+                org.groovyscope.engine.log.EngineLog.warn("%s", "analysis failed: " + e);
                 version++;
                 snapshot = failedSnapshot(snapshot, sources, e, version);
             }
@@ -350,7 +355,7 @@ public final class LanguageServices {
             try {
                 store.save(sources, symbols);
             } catch (IOException e) {
-                System.err.println("groovyscope-engine: symbol cache not saved: " + e.getMessage());
+                org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache not saved: " + e.getMessage());
             }
         });
     }
@@ -362,7 +367,7 @@ public final class LanguageServices {
             try {
                 cached = store == null ? List.of() : store.load(workspace.compileSources());
             } catch (IOException e) {
-                System.err.println("groovyscope-engine: symbol cache not read: " + e.getMessage());
+                org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache not read: " + e.getMessage());
                 cached = List.of();
             }
             cachedSymbols = cached;

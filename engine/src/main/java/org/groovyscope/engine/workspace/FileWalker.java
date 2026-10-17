@@ -137,7 +137,7 @@ public final class FileWalker {
             return false;
         }
         if (REPORTED.add(key)) {
-            System.err.println("groovyscope-engine: " + message);
+            org.groovyscope.engine.log.EngineLog.warn("%s", "" + message);
             return true;
         }
         return false;

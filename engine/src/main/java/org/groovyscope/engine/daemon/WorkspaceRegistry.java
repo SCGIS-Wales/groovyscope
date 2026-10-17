@@ -63,7 +63,7 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
         try {
             return SymbolStore.open(cacheDir.resolve(workspaceKey(root)).resolve("symbols.db"));
         } catch (IOException e) {
-            System.err.println("groovyscope-engine: symbol cache disabled: " + e.getMessage());
+            org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache disabled: " + e.getMessage());
             return null;
         }
     }

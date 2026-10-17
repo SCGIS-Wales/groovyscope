@@ -100,8 +100,8 @@ public final class CodeNarcAnalyzer {
         String lower = path.strip().toLowerCase(java.util.Locale.ROOT);
         if (lower.startsWith("http:") || lower.startsWith("https:")) {
             if (REFUSED.add(path)) {
-                System.err.println("groovyscope-engine: refusing remote CodeNarc rule set " + path
-                        + "; using the bundled " + fallback);
+                org.groovyscope.engine.log.EngineLog.warn("refusing remote CodeNarc rule set %s; using the bundled %s",
+                        path, fallback);
             }
             return fallback;
         }

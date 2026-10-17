@@ -48,7 +48,7 @@ public final class Globs {
         } catch (IllegalArgumentException | UnsupportedOperationException e) {
             // PatternSyntaxException is an IllegalArgumentException.
             if (REPORTED.add(glob)) {
-                System.err.println("groovyscope-engine: ignoring invalid glob '" + glob + "': " + e.getMessage());
+                org.groovyscope.engine.log.EngineLog.warn("%s", "ignoring invalid glob '" + glob + "': " + e.getMessage());
             }
             compiled = Optional.empty();
         }

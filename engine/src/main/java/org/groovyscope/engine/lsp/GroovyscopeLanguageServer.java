@@ -417,6 +417,120 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         });
     }
 
+    /** Hover text for a position (types, documentation, runtime-profile parameters, finding notes), or null. */
+    @JsonRequest("groovyscope/hover")
+    public CompletableFuture<Map<String, Object>> hover(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null) {
+                throw invalid("hover needs a uri with line and character");
+            }
+            if (outside(current, params.get("uri"))) {
+                return null;
+            }
+            return GroovyscopeTextDocumentService.fullHover(current, params.get("uri").toString(), positionOf(params))
+                    .map(found -> {
+                        Map<String, Object> response = new LinkedHashMap<>();
+                        response.put("markdown", found.markdown());
+                        return response;
+                    })
+                    .orElse(null);
+        });
+    }
+
+    /** The declaration of the type of the expression under a position, or null. */
+    @JsonRequest("groovyscope/typeDefinition")
+    public CompletableFuture<Map<String, Object>> typeDefinition(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null) {
+                throw invalid("typeDefinition needs a uri with line and character");
+            }
+            if (outside(current, params.get("uri"))) {
+                return null;
+            }
+            return current.typeDefinition(params.get("uri").toString(), positionOf(params))
+                    .map(definition -> {
+                        Map<String, Object> response = new LinkedHashMap<>();
+                        response.put("symbol", ReportJson.symbol(definition.symbol()));
+                        response.put("confidence", definition.confidence().name());
+                        response.put("inWorkspace", definition.isInWorkspace());
+                        return response;
+                    })
+                    .orElse(null);
+        });
+    }
+
+    /** The outline of one document: declarations with their children. Params: {@code uri}, {@code root}. */
+    @JsonRequest("groovyscope/documentSymbols")
+    public CompletableFuture<Map<String, Object>> documentSymbols(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null) {
+                throw invalid("documentSymbols needs a uri");
+            }
+            List<Map<String, Object>> symbols = new java.util.ArrayList<>();
+            if (!outside(current, params.get("uri"))) {
+                for (org.groovyscope.engine.model.Symbol symbol : current.documentSymbols(params.get("uri").toString())) {
+                    symbols.add(outline(symbol));
+                }
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("symbols", symbols);
+            return response;
+        });
+    }
+
+    private static Map<String, Object> outline(org.groovyscope.engine.model.Symbol symbol) {
+        Map<String, Object> json = ReportJson.symbol(symbol);
+        List<Map<String, Object>> children = new java.util.ArrayList<>();
+        for (org.groovyscope.engine.model.Symbol child : symbol.children()) {
+            if (child.location() != null) {
+                children.add(outline(child));
+            }
+        }
+        if (!children.isEmpty()) {
+            json.put("children", children);
+        }
+        return json;
+    }
+
+    /**
+     * Rename with the same safety as the LSP rename: refused when a reference is matched by name only. Returns
+     * the edits per document without applying them. Params: {@code uri}, {@code line}, {@code character},
+     * {@code newName}, {@code root}.
+     */
+    @JsonRequest("groovyscope/rename")
+    public CompletableFuture<Map<String, Object>> rename(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null || params.get("newName") == null) {
+                throw invalid("rename needs a uri with line and character, and newName");
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            if (outside(current, params.get("uri"))) {
+                response.put("refused", "the document is outside the workspace");
+                return response;
+            }
+            org.groovyscope.engine.model.RenameResult result = current.rename(params.get("uri").toString(),
+                    positionOf(params), params.get("newName").toString());
+            if (result.refusalReason() != null) {
+                response.put("refused", result.refusalReason());
+                return response;
+            }
+            Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
+            for (Map.Entry<String, List<org.groovyscope.engine.model.TextEdit>> entry
+                    : new java.util.TreeMap<>(result.edits()).entrySet()) {
+                if (outside(current, entry.getKey())) {
+                    continue;
+                }
+                edits.put(entry.getKey(), entry.getValue().stream().map(Converters::toLsp).toList());
+            }
+            response.put("edits", edits);
+            return response;
+        });
+    }
+
     /** References to the symbol under a position, each with its confidence. */
     @JsonRequest("groovyscope/references")
     public CompletableFuture<Map<String, Object>> references(Map<String, Object> params) {
@@ -515,7 +629,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             if (current.workspace().contains(uri)) {
                 inside.add(uri);
             } else {
-                System.err.println("groovyscope-engine: ignoring " + uri + ": outside the workspace root");
+                org.groovyscope.engine.log.EngineLog.warn("%s", "ignoring " + uri + ": outside the workspace root");
             }
         }
         return expandDirectories(inside, current.workspace().sources().keySet());
@@ -549,6 +663,12 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             expanded.addAll(inside.isEmpty() ? List.of(uri) : inside);
         }
         return expanded;
+    }
+
+    /** JSON-RPC traffic logging for launchers outside this package (the daemon). */
+    public static java.util.function.Function<org.eclipse.lsp4j.jsonrpc.MessageConsumer,
+            org.eclipse.lsp4j.jsonrpc.MessageConsumer> messageLogging() {
+        return MessageLogging.wrapper();
     }
 
     static List<String> stringList(Object value) {
