@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -66,11 +67,24 @@ def jar_check(environ: Mapping[str, str]) -> Check:
     return ("warn", "engine jar", f"{info['path']} from GROOVYSCOPE_JAR (not checksum verified)")
 
 
+PROJECT_MARKERS = (
+    ".groovyscope.yaml",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "build.gradle",
+    "build.gradle.kts",
+    "pom.xml",
+    "Jenkinsfile",
+)
+
+
 def kiro_check(root: Path, global_home: Path | None = None) -> Check:
     presence = present_files(root)
     if global_home is not None and has_global_setup(global_home):
         if presence[".kiro/settings/lsp.json"]:
             return ("ok", "kiro files", f"global setup in {global_home}; project LSP entry present")
+        if not any((root / marker).exists() for marker in PROJECT_MARKERS):
+            return ("info", "kiro files", f"global setup in {global_home}; not in a Groovy project here")
         return ("warn", "kiro files", f"global setup in {global_home}; run `groovyscope kiro init` in this project")
     missing = [name for name, present in presence.items() if not present]
     if not missing:
@@ -92,8 +106,27 @@ def kiro_agent_check(root: Path, global_home: Path, run: kiro_agent.KiroRunner |
                 return ("warn", "kiro agent", f"{label}; cannot read {agent}: {exc}")
             meaning = AGENT_FORMAT_MEANING.get(found, found)
             level = "ok" if found in {"v2", "universal", "v3"} else "warn"
-            return (level, "kiro agent", f"{label}; {agent} is {found} ({meaning})")
+            message = f"{label}; {agent} is {found} ({meaning})"
+            if found == "v2" and kiro_agent.supports_upgrade(run):
+                message += (
+                    "; this kiro-cli can load it in both engines: `groovyscope kiro repair --agent-format universal`"
+                )
+            hidden = agent_hidden_servers(agent, root, global_home)
+            if hidden:
+                level = "warn"
+                message += f"; its tools list hides these MCP servers: {', '.join(hidden)} (`groovyscope kiro repair`)"
+            return (level, "kiro agent", message)
     return ("info", "kiro agent", f"{label}; no groovy agent yet (run `groovyscope kiro init --global`)")
+
+
+def agent_hidden_servers(agent: Path, root: Path, global_home: Path) -> list[str]:
+    """Configured MCP servers whose tools the agent cannot use."""
+    try:
+        document = json.loads(agent.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    servers = kiro_agent.mcp_servers([global_home / "settings" / "mcp.json", root / ".kiro" / "settings" / "mcp.json"])
+    return kiro_agent.hidden_servers(document, servers) if isinstance(document, dict) else []
 
 
 AGENT_FORMAT_MEANING = {

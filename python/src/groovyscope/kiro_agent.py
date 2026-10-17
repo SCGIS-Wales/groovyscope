@@ -253,3 +253,29 @@ def merge_agent(existing: str | None, template: str, *, requested: str, run: Kir
             "note": "kiro-cli cannot write the universal format here; wrote v2 (loaded by the default V2 engine)",
         }
     return {"text": upgraded, "format": "universal", "note": ""}
+
+
+def mcp_servers(files: Sequence[Path]) -> list[str]:
+    """Names of the enabled MCP servers in Kiro ``mcp.json`` files (later files add to earlier ones)."""
+    names: list[str] = []
+    for path in files:
+        try:
+            servers = json.loads(path.read_text(encoding="utf-8")).get("mcpServers", {})
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(servers, dict):
+            for name, server in servers.items():
+                enabled = not (isinstance(server, dict) and server.get("disabled") is True)
+                if enabled and name not in names:
+                    names.append(name)
+    return names
+
+
+def hidden_servers(agent: Mapping[str, Any], servers: Sequence[str]) -> list[str]:
+    """MCP servers whose tools the agent's V2 ``tools`` list does not expose (``*`` or ``@name`` exposes them).
+    A V3-only agent selects tools differently, so nothing is reported for it."""
+    tools = agent.get("tools")
+    if not isinstance(tools, list) or "*" in tools:
+        return []
+    listed = {str(tool) for tool in tools}
+    return [name for name in servers if f"@{name}" not in listed and not any(t.startswith(f"@{name}/") for t in listed)]

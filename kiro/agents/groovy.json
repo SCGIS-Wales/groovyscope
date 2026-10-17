@@ -1,11 +1,24 @@
 {
   "name": "groovy",
   "description": "Groovy 5/6 engineer that navigates code through LSP and groovyscope tools instead of text search",
-  "tools": ["read", "write", "shell", "grep", "glob", "code", "@groovyscope"],
-  "allowedTools": ["read", "grep", "glob", "code", "@groovyscope"],
+  "tools": [
+    "*"
+  ],
+  "allowedTools": [
+    "read",
+    "grep",
+    "glob",
+    "code",
+    "@groovyscope"
+  ],
   "toolsSettings": {
     "shell": {
-      "allowedCommands": ["\\./gradlew .*", "groovyscope .*", "git status", "git diff.*"]
+      "allowedCommands": [
+        "\\./gradlew .*",
+        "groovyscope .*",
+        "git status",
+        "git diff.*"
+      ]
     }
   },
   "includeMcpJson": true,
