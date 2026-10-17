@@ -212,14 +212,18 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
     covered by tests.
   Done when: CI green on each PR, the owner's Kiro 2.29.1 checks recorded (hook output on start, one
   `review_changes`, one `explain_code`, one draw.io export opened, one naming pass), releases published.
-  Progress 2026-10-17: 0.10.0 merged (#47) and its release PR opened; 0.11.0 implemented on
-  `feat/understanding-naming`: `groovyscope/explainCode` and `groovyscope/graph` in the engine (CodeFacts,
-  RelationshipGraph), `explain_code`, `relationship_graph` (draw.io A4 layout checked for overlaps, Mermaid)
-  and `check_naming` (GS020 to GS027, NamingFinder) in the MCP server with `explain-code`, `graph` and
-  `naming` commands; `rename` recompiles the changed files and rolls back on new errors. Verified on the
-  CodeNarc corpus: `AbstractRule` explained, a 40-class graph on one landscape A4 page with no overlapping
-  boxes, 29 naming findings in `rule/basic` after calibrating GS022 so that role nouns (`...Rule`,
-  `...Visitor`) are not verb-first names. Remaining: the owner's Kiro checks and the 0.11.0 release.
+  Progress 2026-10-17: both branches merged (#47, #49). The second delivered `groovyscope/explainCode` and
+  `groovyscope/graph` in the engine (CodeFacts, RelationshipGraph), `explain_code`, `relationship_graph`
+  (draw.io A4 layout checked for overlaps, Mermaid) and `check_naming` (GS020 to GS027, NamingFinder) in the
+  MCP server with the `explain-code`, `graph` and `naming` commands; `rename` recompiles the changed files
+  and rolls back on new errors. Verified on the CodeNarc corpus: `AbstractRule` explained, a 40-class graph
+  on one landscape A4 page with no overlapping boxes, 29 naming findings in `rule/basic` after calibrating
+  GS022 so that role nouns (`...Rule`, `...Visitor`) are not verb-first names. Because 0.10.0 was not tagged
+  before #49 merged, release-please folds both into one release, **0.10.0** (PR #48); there is no 0.11.0.
+  Continuation (for a new session, from `main`): the only open items are the release PR #48, whose
+  workflow runs the owner approves in the Actions tab before merging it, the 0.10.0 publish to PyPI and the
+  tap to verify afterwards, and the owner's Kiro 2.29.1 checks to record in the log below. Prompt:
+  "continue Stage 11 from docs/roadmap.md: verify the 0.10.0 release and record my Kiro checks".
 
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
@@ -293,3 +297,8 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   servers, `/tools` listed every groovyscope tool as trusted, `classpath` wrote 213 entries in 19 s, and the
   catch prompt called `find_code` with the right arguments on the first try. Stage 11 approved from that
   feedback; started on `feat/proactive-agent`.
+- 2026-10-17: Stage 11 code merged: PR #47 (checkup with auto-repair at agent start, bundled CodeNarc corpus,
+  catch findings that explain themselves, `review_changes`, SARIF and JaCoCo imports, prompts cookbook) and
+  PR #49 (`explain_code`, `relationship_graph` with draw.io and Mermaid output, `check_naming` GS020 to
+  GS027, verified `rename`). 26 MCP tools. Release-please PR #48 carries both as 0.10.0 and waits for the
+  owner to approve its workflow runs.

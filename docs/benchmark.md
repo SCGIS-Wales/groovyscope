@@ -22,7 +22,7 @@ codebase of a few hundred files works too, at the same commit for every task and
 | Condition | Setup |
 |---|---|
 | **without** | No `.kiro/settings/lsp.json` entry for Groovy, no `groovyscope` MCP server, the default Kiro agent, no steering file. Kiro has only its file tools and the shell. |
-| **with** | `groovyscope kiro init` run in the worktree, `kiro-cli --agent groovy`, `/code status` showing `groovyscope (groovy) initialized` and `/mcp` showing the groovyscope tools (23 in 0.10.0) before the first prompt. |
+| **with** | `groovyscope kiro init` run in the worktree, `kiro-cli --agent groovy`, `/code status` showing `groovyscope (groovy) initialized` and `/mcp` showing the groovyscope tools (26 in 0.10.0) before the first prompt. |
 
 Both conditions use the same Kiro CLI version, the same model setting, the same prompts, and a new chat
 session per task (so context from one task never helps the next).
