@@ -476,19 +476,24 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                 throw invalid("documentSymbols needs a uri");
             }
             List<Map<String, Object>> symbols = new java.util.ArrayList<>();
+            int lines = 0;
             if (!outside(current, params.get("uri"))) {
-                for (org.groovyscope.engine.model.Symbol symbol : current.documentSymbols(params.get("uri").toString())) {
+                String uri = params.get("uri").toString();
+                for (org.groovyscope.engine.model.Symbol symbol : current.documentSymbols(uri)) {
                     symbols.add(outline(symbol));
                 }
+                lines = org.groovyscope.engine.search.WorkspaceOverview.lineCount(current.workspace().text(uri));
             }
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("symbols", symbols);
+            response.put("lines", lines);
             return response;
         });
     }
 
     private static Map<String, Object> outline(org.groovyscope.engine.model.Symbol symbol) {
         Map<String, Object> json = ReportJson.symbol(symbol);
+        json.put("endLine", symbol.location() == null ? null : symbol.location().range().end().line());
         List<Map<String, Object>> children = new java.util.ArrayList<>();
         for (org.groovyscope.engine.model.Symbol child : symbol.children()) {
             if (child.location() != null) {
@@ -587,6 +592,103 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             response.put("counts", counts);
             return response;
         });
+    }
+
+    /**
+     * The source of one declaration, found by name. Params: {@code uri}, {@code symbol} (simple name,
+     * {@code Class.member}, {@code Class#member} or a class), {@code line} (zero-based, picks among overloads),
+     * {@code maxChars} (default 12000), {@code root}.
+     */
+    @JsonRequest("groovyscope/readSymbol")
+    public CompletableFuture<Map<String, Object>> readSymbol(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            if (params.get("uri") == null || params.get("symbol") == null || params.get("symbol").toString().isBlank()) {
+                throw invalid("readSymbol needs a uri and a symbol");
+            }
+            String uri = params.get("uri").toString();
+            if (outside(current, uri) || WorkspaceModel.isJavaUri(uri)) {
+                return SearchJson.readSymbol(org.groovyscope.engine.search.SymbolReader.Result.notFound(List.of()));
+            }
+            Integer line = params.get("line") instanceof Number number ? number.intValue() : null;
+            int maxChars = params.get("maxChars") instanceof Number number ? number.intValue()
+                    : org.groovyscope.engine.search.SymbolReader.DEFAULT_MAX_CHARS;
+            return SearchJson.readSymbol(org.groovyscope.engine.search.SymbolReader.read(current.snapshot().index(), uri,
+                    params.get("symbol").toString(), line, maxChars));
+        });
+    }
+
+    /**
+     * Structural code search. Params: {@code kind} (one of {@link org.groovyscope.engine.search.CodeSearch#KINDS}),
+     * filters {@code name}, {@code type}, {@code pattern}, {@code modifiers}, {@code emptyBody}, {@code rethrows},
+     * {@code minLines}, {@code minParameters}, plus {@code uris}, {@code limit} (default 500), {@code root}.
+     */
+    @JsonRequest("groovyscope/findCode")
+    public CompletableFuture<Map<String, Object>> findCode(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            org.groovyscope.engine.search.CodeSearch.Query query = new org.groovyscope.engine.search.CodeSearch.Query(
+                    text(params, "kind"), text(params, "name"), text(params, "type"), text(params, "pattern"),
+                    stringList(params.get("modifiers")), flag(params, "emptyBody"), flag(params, "rethrows"),
+                    number(params, "minLines"), number(params, "minParameters"));
+            int limit = params.get("limit") instanceof Number number ? Math.max(1, number.intValue()) : DEFAULT_FIND_LIMIT;
+            List<String> uris = targets(current, params);
+            org.groovyscope.engine.services.Snapshot snapshot = current.snapshot();
+            List<org.groovyscope.engine.search.CodeSearch.Match> matches;
+            try {
+                matches = org.groovyscope.engine.search.CodeSearch.find(
+                        noneInside(params, uris) ? Map.of() : snapshot.result().modules(), snapshot.index()::lines, uris, query);
+            } catch (IllegalArgumentException e) {
+                throw invalid(e.getMessage());
+            }
+            return SearchJson.matches(matches, limit);
+        });
+    }
+
+    /**
+     * Duplicated statement runs. Params: {@code uris}, {@code minLines} (default 6), {@code minStatements}
+     * (default 3), {@code root}.
+     */
+    @JsonRequest("groovyscope/duplicates")
+    public CompletableFuture<Map<String, Object>> duplicates(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            List<String> uris = targets(current, params);
+            Integer minLines = number(params, "minLines");
+            Integer minStatements = number(params, "minStatements");
+            org.groovyscope.engine.services.Snapshot snapshot = current.snapshot();
+            return SearchJson.duplicates(org.groovyscope.engine.search.CloneFinder.find(
+                    noneInside(params, uris) ? Map.of() : snapshot.result().modules(), snapshot.index()::lines, uris,
+                    minLines == null ? 6 : minLines, minStatements == null ? 3 : minStatements));
+        });
+    }
+
+    /** Sizes of the workspace by package, file and class, test files and untested classes. Params: {@code root}. */
+    @JsonRequest("groovyscope/overview")
+    public CompletableFuture<Map<String, Object>> overview(Map<String, Object> params) {
+        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+            LanguageServices current = requireServices(params);
+            Map<String, String> sources = new LinkedHashMap<>(current.workspace().sources());
+            sources.keySet().removeIf(uri -> !current.workspace().contains(uri));
+            return SearchJson.overview(org.groovyscope.engine.search.WorkspaceOverview.of(current.workspace().root(),
+                    sources, current.snapshot().result().modules()));
+        });
+    }
+
+    static final int DEFAULT_FIND_LIMIT = 500;
+
+    private static String text(Map<String, Object> params, String key) {
+        Object value = params.get(key);
+        return value == null || value.toString().isBlank() ? null : value.toString();
+    }
+
+    private static Boolean flag(Map<String, Object> params, String key) {
+        Object value = params.get(key);
+        return value instanceof Boolean bool ? bool : value == null ? null : Boolean.valueOf(value.toString());
+    }
+
+    private static Integer number(Map<String, Object> params, String key) {
+        return params.get(key) instanceof Number number ? number.intValue() : null;
     }
 
     private static org.groovyscope.engine.model.Position positionOf(Map<String, Object> params) {
