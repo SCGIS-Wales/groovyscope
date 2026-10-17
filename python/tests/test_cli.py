@@ -152,9 +152,10 @@ def test_lsp_fails_cleanly_without_jdk_or_jar(
 ) -> None:
     monkeypatch.setattr(cli, "_EXEC", lambda _path, _argv: pytest.fail("must not exec"))
     with pytest.MonkeyPatch.context() as inner:
-        inner.setattr(cli, "discover_jdk", lambda *_a, **_k: None)
+        inner.setattr(cli, "discover", lambda *_a, **_k: {"jdk": None, "notes": ["JAVA_HOME (/x) is not a JDK home"]})
         no_jdk = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert no_jdk.exit_code == 1 and "no suitable JDK" in no_jdk.output
+    assert "JAVA_HOME (/x) is not a JDK home" in no_jdk.output
     monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
     monkeypatch.setattr(cli, "locate_jar", lambda env: locate_jar(env, tmp_path / "no-bundle"))
     no_jar = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])

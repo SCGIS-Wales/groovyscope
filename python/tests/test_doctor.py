@@ -42,9 +42,17 @@ def test_jdk_check_uses_config_home(fake_jdk: Path, clean_env: dict[str, str]) -
 
 
 def test_jdk_check_without_config_or_jdk(clean_env: dict[str, str], monkeypatch) -> None:
-    monkeypatch.setattr("groovyscope.doctor.discover_jdk", lambda *_a, **_k: None)
+    monkeypatch.setattr("groovyscope.doctor.discover", lambda *_a, **_k: {"jdk": None, "notes": []})
     check, info = jdk_check(None, clean_env)
     assert check[0] == "fail" and info is None
+
+
+def test_jdk_check_reports_an_ignored_java_home(clean_env: dict[str, str], monkeypatch) -> None:
+    chosen = {"home": "/jdk25", "version": 25, "source": "PATH"}
+    note = "JAVA_HOME (/old) is JDK 11, below the minimum 17; ignored"
+    monkeypatch.setattr("groovyscope.doctor.discover", lambda *_a, **_k: {"jdk": chosen, "notes": [note]})
+    check, info = jdk_check(None, clean_env)
+    assert check[0] == "warn" and note in check[2] and info == chosen
 
 
 def test_jar_check_variants(fake_jar_dir: Path, tmp_path: Path, monkeypatch) -> None:

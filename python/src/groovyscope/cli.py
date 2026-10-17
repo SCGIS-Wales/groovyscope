@@ -21,7 +21,7 @@ from groovyscope.config import dump_yaml, load_config
 from groovyscope.doctor import build_report, has_failures
 from groovyscope.edits import apply_edits, changed_line_count
 from groovyscope.jar import locate_jar, read_manifest
-from groovyscope.java import JdkInfo, discover_jdk
+from groovyscope.java import JdkInfo, discover
 from groovyscope.kiro import (
     BACKUP_SUFFIX,
     KIRO_INIT_WARNING,
@@ -210,7 +210,10 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
     """A JDK meeting ``jdk.minimum``; with ``jdk.autoProvision`` on, Temurin is downloaded when none is found."""
     minimum = int(effective["jdk"]["minimum"])
     provisioned = provision.provisioned_homes(provision.jdk_dir(environ))
-    jdk = discover_jdk(effective["jdk"].get("home"), environ, minimum=minimum, provisioned=provisioned)
+    found = discover(effective["jdk"].get("home"), environ, minimum=minimum, provisioned=provisioned)
+    for note in found["notes"]:
+        click.echo(f"groovyscope: {note}", err=True)
+    jdk = found["jdk"]
     if jdk is not None and jdk["version"] >= minimum:
         return jdk
     if not effective["jdk"].get("autoProvision"):

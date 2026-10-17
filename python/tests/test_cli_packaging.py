@@ -70,9 +70,10 @@ def test_resolve_jdk_provisions_only_when_asked(
 
     def discover(_configured: str | None, _environ: Any, *, minimum: int, provisioned: list[Path]) -> Any:
         assert minimum == 17
-        return {"home": str(provisioned[0]), "version": 21, "source": "provisioned"} if provisioned else None
+        jdk = {"home": str(provisioned[0]), "version": 21, "source": "provisioned"} if provisioned else None
+        return {"jdk": jdk, "notes": []}
 
-    monkeypatch.setattr(cli, "discover_jdk", discover)
+    monkeypatch.setattr(cli, "discover", discover)
     effective: dict[str, Any] = {"jdk": {"home": None, "minimum": 17, "autoProvision": False}}
     assert cli.resolve_jdk(effective, dict(clean_env)) is None
 
