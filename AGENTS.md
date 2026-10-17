@@ -23,6 +23,9 @@ Read `docs/roadmap.md` first: it says which stage is in progress and what "done"
   `config-schema.json`). Safety flags (`groovy.grape.enable=false`, `groovy.asttest.enable=false`) are the
   exception: they are deliberately not configurable.
 - stdout of the engine is the LSP channel. Log to stderr only.
+- Runtime profiles (`docs/profiles.md`) are generic. Never name a real private platform, its packages or services in
+  code, comments, fixtures, docs or commit messages; tests use the neutral `demo-runtime` profile and
+  `profile-sample` fixture, and real profiles live outside the repository (`~/.groovyscope/profiles/`).
 
 ## Process
 

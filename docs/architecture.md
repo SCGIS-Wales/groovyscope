@@ -130,6 +130,31 @@ analysis (Stage 4) will report those sites for manual review.
   `groovyscope/check` and `groovyscope/format` requests (passing the workspace root, since those connections
   skip `initialize`) and return compact JSON on request.
 
+## Practices and runtime profiles (Stage 8)
+
+`practices/` holds the catalogue (`practices.json`, mirrored from `config/practices/`), `PracticeFinder`
+(GS001-GS012, a visitor over the snapshot's trees that uses the resolver for static types),
+`PracticeFixes` (AST-aware edits, applied with earlier edits winning on overlap) and `Explanations` (the
+`groovyscope/explain` request, hover notes and `codeDescription` links). Findings are cached per snapshot
+version. `QualityServices.fix` applies every safe fix, re-parses the result and rejects a document that no
+longer parses; for a class without a typing choice it adds `@CompileStatic` only when the class then passes
+the static type checker, otherwise `@CompileDynamic`.
+
+`profiles/` implements [runtime profiles](profiles.md). `Profiles.governing` picks the profile for a
+document (activation plus marker). `ProfileFinder` reports RP codes from the tree; `ProfileArtefacts` checks
+descriptors and Terraform files; `Contracts` extracts the contract surface and compares it with
+`.groovyscope/contract-baseline.json`; `ProfileNavigation` resolves accessor arguments to descriptor and
+Terraform declarations for definition, references and hover; `RemoteCompiler` runs the emulation compile
+reflectively against the profile's jars in a class loader parented to the platform loader, so the engine's
+own Groovy never leaks in. A profile's target version re-runs GS010 as RP002, its checker policy caps or
+drops Groovy 6 checker findings, and its protected regions filter every fix and code action. Python
+discovers and validates profiles (`profiles.py`, `profile-schema.json`) and hands them to the engine in
+`GROOVYSCOPE_CONFIG_JSON`.
+
+The daemon is shared by editors and by CLI and MCP calls. Editors report edits; CLI and MCP calls do not,
+so every `groovyscope/*` request first compares a fingerprint of the compile files (path, size,
+modification time) with the one taken at the last compile and recompiles when it differs.
+
 ## Call graph and impact (Stage 4)
 
 The call graph is derived from the index: every method-name, static-call and constructor-call entry is
@@ -201,11 +226,14 @@ installs that bundle no JAR or have no JDK, both checksum-verified and never imp
 ## MCP server
 
 `groovyscope mcp` runs the official `mcp` SDK's `MCPServer` on stdio. At start it opens one persistent
-JSON-RPC session to the workspace daemon (starting it when needed), sends `initialize`/`initialized`, and
-binds every tool to that session; the session closes when the MCP client disconnects. Tools are plain
+JSON-RPC session to the workspace daemon (starting it when needed) and binds every tool to that session; the
+session closes when the MCP client disconnects. It sends no LSP `initialize`: every request names its root,
+and an initialized session would make the engine push diagnostics for every file to a client that ignores
+them. Tools are plain
 functions built by `build_tools(root, call, output, environ)`, which keeps them testable against a fake
 engine. Each tool maps to one engine request: `groovyscope/symbols`, `/definition`, `/references`,
-`/callGraph`, `/impact`, `/check`, `/format`, `/dynamicCode` and `/status`. Every request carries `root`, so
+`/callGraph`, `/impact`, `/check` (also behind `review`), `/fix`, `/explain`, `/profile`, `/format`,
+`/dynamicCode` and `/status`. Every request carries `root`, so
 the daemon serves several Kiro sessions on the same workspace from one compiled snapshot.
 
 `find_dynamic_code` is the one tool with no LSP counterpart: `DynamicCodeFinder` walks the index for the

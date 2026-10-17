@@ -80,6 +80,16 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   which is the owner's call on a free account, so the results table is empty and `v1.0.0` waits for a
   recorded run. Upstream watch recorded below.
 
+- [ ] **Stage 8: practices knowledge base and runtime profiles** — branch `feat/groovy-practices`.
+  Practice catalogue and `docs/practices.md`; GS001-GS012 with AST fixes; CodeNarc profile aligned with the
+  knowledge base; strict NullChecker plus Regex, FormatString and Combiner checkers gated on Groovy 6;
+  `fix`, `explain`, `review` (CLI and MCP); `check --format short|sarif`; type checking that survives broken
+  files; diagnostics published only when they change; joint Groovy/Java compiles. Runtime profiles
+  (`docs/profiles.md`): RP codes, descriptor and Terraform checks, contract baseline, parameter navigation,
+  isolated emulation compile, `profile` and `baseline` commands, `profile_status` MCP tool. `kiro init
+  --global` merges into `~/.kiro`. The daemon re-reads files changed on disk before every CLI or MCP request.
+  Done when: CI green on the PR, local Kiro CLI checks recorded, release published.
+
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
 Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.

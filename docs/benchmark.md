@@ -22,7 +22,7 @@ and condition; use a fresh `git worktree` per run and discard it afterwards. Rec
 | Condition | Setup |
 |---|---|
 | **without** | No `.kiro/settings/lsp.json` entry for Groovy, no `groovyscope` MCP server, the default Kiro agent, no steering file. Kiro has only its file tools and the shell. |
-| **with** | `groovyscope kiro init` run in the worktree, `kiro-cli --agent groovy`, `/code status` showing `groovyscope (groovy) initialized` and `/mcp` showing the nine tools before the first prompt. |
+| **with** | `groovyscope kiro init` run in the worktree, `kiro-cli --agent groovy`, `/code status` showing `groovyscope (groovy) initialized` and `/mcp` showing the groovyscope tools (nine in 0.6.x) before the first prompt. |
 
 Both conditions use the same Kiro CLI version, the same model setting, the same prompts, and a new chat
 session per task (so context from one task never helps the next).

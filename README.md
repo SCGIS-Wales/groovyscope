@@ -16,95 +16,101 @@ formatter) answers semantic questions about Groovy, Gradle and Jenkinsfile code.
 
 Python owns the installer, CLI, configuration and MCP bridge. Every semantic answer comes from the JVM.
 
-## Status
+## Quick start
 
-All seven stages of the [roadmap](docs/roadmap.md) are implemented. The engine compiles the workspace with
-the Groovy compiler and serves go to definition, type definition, find references, hover, document and
-workspace symbols, completion, signature help, rename with a dry-run prepare step, call hierarchy, semantic
-tokens and diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename
-refuses rather than guesses when a call site can only be matched by name. One JVM per workspace stays warm
-across sessions, with a symbol cache for cold starts. CodeNarc 4 runs in process with a defensive profile,
-Groovy 6's checkers run on statically typed classes, lint findings arrive as diagnostics with quick fixes, a
-conservative formatter is bundled, and `impact` answers "what breaks if I change this?" with direct and
-transitive callers, overrides, tests and the dynamic call sites to review. `groovyscope mcp` exposes all of
-that to agents as nine compact MCP tools over the same warm daemon. Installs come from PyPI or the Homebrew
-tap; a checksum-verified JAR fetch and an opt-in Temurin download cover machines without either.
-
-What is still open: the [credit benchmark](docs/benchmark.md) has a protocol but no recorded run, and
-Apache Groovy's own language server (merged upstream in October 2026, not yet in a release) is tracked in the
-roadmap for a possible front-end swap.
-
-## Install
-
-Prerequisite: a JDK 17 or newer (21 recommended). Then:
+You need a JDK 17 or newer (21 recommended) and Kiro CLI.
 
 ```bash
-uv tool install groovyscope     # or: pipx install groovyscope
-groovyscope doctor
+uv tool install groovyscope       # or: pipx install groovyscope, or: brew install SCGIS-Wales/tap/groovyscope
+groovyscope kiro init --global    # adds groovyscope to ~/.kiro without removing anything already there
+groovyscope doctor                # every line should say ok (info lines are optional extras)
 ```
 
-On macOS (and Linuxbrew) the tap brings the JDK along:
+Then, in any Groovy project:
 
 ```bash
-brew install SCGIS-Wales/tap/groovyscope
-```
-
-No JDK and no package manager? `groovyscope jdk install` downloads a checksum-verified Temurin JDK into
-groovyscope's cache, and `jdk.autoProvision: true` in `.groovyscope.yaml` does the same on first use. Both are
-opt-in; nothing is downloaded otherwise. Platform notes are in [docs/install.md](docs/install.md).
-
-## Use with Kiro CLI
-
-```bash
-cd ~/src/your-groovy-project
-groovyscope kiro init           # writes .kiro/settings/lsp.json, mcp.json, agents/groovy.json, steering
 kiro-cli --agent groovy
-> /code status                  # expect: groovyscope (groovy) - initialized
+> /code status                    # expect: groovyscope (groovy) - initialized
 ```
 
-`kiro init` merges into existing files, backs up anything it changes to `*.bak` and prints a diff. Details in
-[docs/kiro.md](docs/kiro.md).
+`kiro init --global` merges into `~/.kiro/settings/mcp.json`, `~/.kiro/settings/lsp.json`,
+`~/.kiro/agents/groovy.json` and `~/.kiro/steering/groovyscope.md`: other MCP servers, languages and agent
+settings stay as they are, any file it changes is backed up to `<file>.bak`, and it prints a diff first. Add
+`--dry-run` to see the diff without writing. Use `groovyscope kiro init` (without `--global`) inside a
+project instead to keep the setup in that project's `.kiro/`. Details in [docs/kiro.md](docs/kiro.md).
+
+No JDK? The Homebrew formula brings one. Otherwise `groovyscope jdk install` downloads a checksum-verified
+Temurin JDK into groovyscope's cache; nothing is downloaded unless you ask. See [docs/install.md](docs/install.md).
+
+## What it does
+
+One warm JVM per workspace compiles the code with the Groovy 6 compiler and serves go to definition, find
+references, hover, symbols, completion, signature help, rename with a dry run, call hierarchy, semantic tokens
+and diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAMIC_UNKNOWN`); rename refuses
+rather than guesses when a call site can only be matched by name. Findings come from four sources:
+
+- the compiler and Groovy 6's type checkers (NullChecker, SqlInjection, Regex, FormatString, Combiner, Purity);
+- CodeNarc 4 with a profile aligned with the [practices knowledge base](docs/practices.md);
+- groovyscope's own practice checks, GS001 to GS012 (integer division, Elvis on 0, GString logging, `Eval`,
+  `@Grab`, string `execute()`, XXE, Groovy 6-only syntax under a Groovy 5 target and more);
+- optional [runtime profiles](docs/profiles.md) (RP codes) for plugin code that runs on a different Groovy and
+  classpath than the local build: constructs not proven on the runtime, descriptor parameter mistakes, secret
+  flows, contract drift against a recorded baseline, and an emulation compile with the runtime's own Groovy.
+
+`groovyscope fix` and the `fix` MCP tool apply the safe fixes (adding `@CompileStatic` only when the class
+then type-checks, `intdiv`, typed parameter reads and more) and reject any edit that would stop the file
+parsing. `explain` says why a finding matters and how to fix it.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `groovyscope doctor` | Checks Python, configuration, JDK, the bundled engine JAR (SHA-256) and Kiro files |
-| `groovyscope fetch [--from URL\|PATH] [--sha256 HEX]` | Installs a release engine JAR into the cache for packages that bundle none; refuses anything whose checksum cannot be verified |
-| `groovyscope jdk install [--feature 21]` | Downloads and verifies a Temurin JDK into the cache (opt-in; `jdk.autoProvision` automates it) |
-| `groovyscope version` | Package and engine versions |
+| `groovyscope doctor` | Checks Python, configuration, JDK, the engine JAR (SHA-256), Kiro files and runtime profiles |
+| `groovyscope kiro init \| repair [--global] [--dry-run]` | Installs or re-merges the Kiro files in the project, or in `~/.kiro` with `--global` |
+| `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif]` | All findings; `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
+| `groovyscope fix [PATHS] [--code X] [--apply]` | Safe fixes; reports them unless `--apply` |
+| `groovyscope explain CODE` | Why a code (GS001, RP010, NullChecker, a CodeNarc rule) matters and how to fix it |
+| `groovyscope format [PATHS] [--apply]` | Bundled formatter (whitespace hygiene, safe CodeNarc-driven fixes) |
+| `groovyscope impact TARGET [--change signature\|rename\|delete\|behaviour]` | Direct and transitive callers, overrides, tests, name-only sites, risk and suggested checks |
+| `groovyscope callgraph TARGET [--direction in\|out] [--depth N]` | Callers of, or calls made by, a declaration with per-edge confidence |
+| `groovyscope profile list \| validate FILE \| status PATH` | Runtime profiles found for the workspace, schema validation, and what governs a file |
+| `groovyscope baseline save \| check` | Records the contract surface of profile-governed files; `check` exits 1 when something recorded changed |
 | `groovyscope config validate [--show]` | Validates `.groovyscope.yaml` + `GROOVYSCOPE_*` overrides against the schema |
-| `groovyscope kiro init \| repair` | Installs or re-merges the Kiro integration files |
-| `groovyscope check [PATHS] [--profile default\|jenkins] [--include lint,compile,typecheck] [--json]` | CodeNarc lint, compile and Groovy type-check findings; exits 1 at or above `lint.failOnPriority` |
-| `groovyscope format [PATHS] [--apply] [--json]` | Bundled formatter (whitespace hygiene, safe CodeNarc-driven fixes); exits 1 when files would change unless `--apply` |
-| `groovyscope impact TARGET [--change signature\|rename\|delete\|behaviour] [--json]` | Direct and transitive callers, overrides, tests, name-only sites, risk and suggested checks for a declaration (`pkg.Class.method`, `Class#method`, or `path:line:col`) |
-| `groovyscope callgraph TARGET [--direction in\|out] [--depth N] [--json]` | Callers of, or calls made by, a declaration with per-edge confidence |
-| `groovyscope lsp --stdio` | Serves LSP on stdio through the warm daemon (what Kiro spawns); falls back to a direct JVM |
-| `groovyscope daemon start \| stop \| status` | Manages the per-workspace daemon (idle exit after `daemon.idleTimeoutMinutes`) |
-| `groovyscope mcp` | Serves the MCP tools below on stdio through the warm daemon (what `.kiro/settings/mcp.json` runs) |
+| `groovyscope lsp --stdio` / `groovyscope mcp` | What Kiro runs: LSP and MCP over the warm per-workspace daemon |
+| `groovyscope daemon start \| stop \| status` | Manages the daemon (idle exit after `daemon.idleTimeoutMinutes`) |
+| `groovyscope fetch` / `groovyscope jdk install` / `groovyscope version` | Engine JAR fetch for packages without one, opt-in JDK download, versions |
+
+Most commands take `--json`.
 
 ## MCP tools
 
 `groovyscope mcp` registers one server, `groovyscope`, with these tools. Every answer is compact JSON: paths
-relative to the workspace root, 1-based `line`/`col`, a symbol kind, a confidence where one applies, at most
+relative to the workspace root, 1-based `line`/`col`, a confidence where one applies, at most
 `output.maxResults` items within `output.maxBytes`, and a `next_cursor` to page on. No tool returns file bodies.
 
 | Tool | Answers |
 |---|---|
-| `find_symbol(query, kind?, limit?, cursor?)` | Declarations whose name contains the query; `kind` narrows to class, method, field or variable |
-| `goto_definition(path, line, col)` | The declaration under a position, with `STATIC`, `INFERRED` or `DYNAMIC_UNKNOWN` confidence |
+| `find_symbol(query, kind?, limit?, cursor?)` | Declarations whose name contains the query |
+| `goto_definition(path, line, col)` | The declaration under a position, with its confidence |
 | `find_references(path, line, col, include_declaration?, limit?, cursor?)` | Every reference with a confidence, plus counts per confidence |
 | `call_graph(symbol, direction?, depth?)` | Callers of (`in`) or calls made by (`out`) a declaration |
 | `impact_of(symbol, change?)` | Direct and transitive callers, overrides, tests, dynamic sites, risk and suggested checks |
-| `check(paths?, profile?, include?, limit?, cursor?)` | Lint, compile and type-check findings, worst first |
-| `format(paths?, apply?)` | Files the formatter would change and how many lines; `apply` writes them |
-| `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing` and friends, `metaClass` writes, `@Grab`, `Eval`, `execute()` |
-| `workspace_status()` | Daemon socket and state, engine version, root, file count and trust flag |
+| `check(paths?, profile?, include?, limit?, cursor?)` | Compile, lint, type-check and practice findings, worst first |
+| `review(paths?, top?)` | The same findings grouped by the review checklist, with the profiles governing the paths |
+| `fix(paths?, codes?, apply?)` | Safe fixes; a dry run unless `apply` |
+| `explain(code)` | What a code means, why it matters and the fix |
+| `profile_status(path)` | Target Groovy, compiling service, descriptor parameters, test seams and protected code of a governed file |
+| `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |
+| `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing`, `metaClass` writes, `@Grab`, `Eval`, `execute()` |
+| `workspace_status()` | Daemon state, engine version, root, file count and trust flag |
 
 ## Configuration
 
-Copy [config/defaults.yaml](config/defaults.yaml) to `.groovyscope.yaml` in your workspace and change what you
-need. Any key can be overridden with an environment variable, for example `GROOVYSCOPE_DAEMON__HEAP=2g`.
+Nothing is required. To change a default, copy [config/defaults.yaml](config/defaults.yaml) to
+`.groovyscope.yaml` in your workspace and keep only what you change. Any key can be overridden with an
+environment variable, for example `GROOVYSCOPE_DAEMON__HEAP=2g`. Runtime profiles live in
+`~/.groovyscope/profiles/` or `<workspace>/.groovyscope/profiles/` and stay out of the repository if you want
+them private; see [docs/profiles.md](docs/profiles.md).
 
 ## Security posture
 
@@ -117,9 +123,10 @@ configuration, never from silent inference. See [docs/security.md](docs/security
 ```
 engine/   JVM engine (Java 21 sources, Gradle, Spock tests)       -> groovyscope-engine-<ver>-all.jar
 python/   groovyscope package (CLI, config, Kiro writers, tests)   -> PyPI wheel bundling the JAR
-config/   CodeNarc rulesets, formatter and groovyc configuration (mirrored inside the package)
+config/   CodeNarc rulesets, practice catalogue, example runtime profile, formatter and groovyc configuration
+          (mirrored inside the package)
 kiro/     Templates written by `groovyscope kiro init` (mirrored inside the package)
-docs/     Install, Kiro, rules, architecture, security, troubleshooting, benchmark, roadmap, research
+docs/     Install, Kiro, practices, profiles, rules, architecture, security, troubleshooting, benchmark, roadmap
 ```
 
 ## Contributing
