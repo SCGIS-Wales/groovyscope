@@ -11,16 +11,18 @@ day; that repetition has not been run yet.
 
 ## Subject repository
 
-Any Groovy codebase of a few hundred files with tests, for example a Gradle multi-project with Spock specs
-or a Jenkins shared library (`vars/` plus `src/`). The repository must be at the same commit for every task
-and condition; use a fresh `git worktree` per run and discard it afterwards. Record the commit hash.
+The bundled corpus: CodeNarc 4.0.0 `src/main`, unpacked by groovyscope into `~/.groovyscope/benchmark/codenarc/`
+(`groovyscope benchmark path` prints where). Every machine gets the same bytes without reaching GitHub, so
+runs are comparable across machines and releases; `--refresh` restores it between runs. Any other Groovy
+codebase of a few hundred files works too, at the same commit for every task and condition (a fresh
+`git worktree` per run; record the commit hash).
 
 ## Conditions
 
 | Condition | Setup |
 |---|---|
 | **without** | No `.kiro/settings/lsp.json` entry for Groovy, no `groovyscope` MCP server, the default Kiro agent, no steering file. Kiro has only its file tools and the shell. |
-| **with** | `groovyscope kiro init` run in the worktree, `kiro-cli --agent groovy`, `/code status` showing `groovyscope (groovy) initialized` and `/mcp` showing the groovyscope tools (nine in 0.6.x) before the first prompt. |
+| **with** | `groovyscope kiro init` run in the worktree, `kiro-cli --agent groovy`, `/code status` showing `groovyscope (groovy) initialized` and `/mcp` showing the groovyscope tools (23 in 0.10.0) before the first prompt. |
 
 Both conditions use the same Kiro CLI version, the same model setting, the same prompts, and a new chat
 session per task (so context from one task never helps the next).

@@ -218,11 +218,15 @@ deliberately loose so shared runners do not fail the build.
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
 | `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing); one-shot requests and persistent sessions |
-| `mcp_server.py` | the MCP server: twenty-one tool functions over one engine session, compact output through `render.py` |
+| `mcp_server.py` | the MCP server: twenty-three tool functions over one engine session, compact output through `render.py` |
 | `mcp_search.py`, `mcp_server_support.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview`; the shared helpers (paging, paths, clipping) |
 | `relay.py` | asyncio byte relay between this process's stdio and the socket |
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
 | `kiro_agent.py` | agent format detection (V2, universal, out of sync, V3) and format-preserving merges; the servers an agent's `tools` hides |
+| `checkup.py` | `groovyscope checkup`: the post-install report with the fix per item and the safe repairs the agent start hook applies |
+| `benchmark.py` | the bundled CodeNarc corpus (`_benchmark/`), unpacked into the user's home with a version stamp |
+| `changes.py` | changed files and line ranges from git, and the pure review rules (split, bucket, touched declarations, verdict) |
+| `reports.py` | SARIF logs as findings and JaCoCo XML as coverage gaps, read as data |
 | `doctor.py` | pure report building for `doctor` |
 | `render.py` | relative paths, pagination with continuation cursors, byte caps for agent output |
 
@@ -271,6 +275,15 @@ the source of one declaration with line numbers, `find_code` for a structural se
 `find_duplicates` for repeated blocks with identifiers and literals ignored. `check` and `review` return
 counts per code, `check` filters by `codes` and `max_priority`, and both summarise GS100 under
 `missingDependencies` rather than listing it per file.
+
+`review_changes` is composed in Python from the other tools: `changes.changed_files` runs git (`merge-base`,
+`diff --unified=0`) for the changed files and their new-side line ranges; `check` on those files (with the
+build's SARIF findings merged in by `reports.merge_sarif`) is split into findings on changed lines and
+pre-existing ones, bucketed blocking (errors, security and runtime groups), should fix (warnings) and nits;
+`documentSymbols` finds the declarations overlapping the changed ranges and `impact_of` scores them;
+`find_code` for catch, `def` and `return null` is filtered to the changed lines; `coverage_gaps` names the
+uncovered methods inside the change; `changes.verdict` writes the sentence. The CLI's `review --changed`
+builds the same tools over the daemon socket and prints them.
 
 `find_dynamic_code` has no LSP counterpart either: `DynamicCodeFinder` walks the index for the
 constructs that defeat static analysis (classes with neither `@CompileStatic` nor `@CompileDynamic`, `def`

@@ -168,7 +168,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   owner's test of 0.9.0 on Kiro CLI 2.29.1: the setup after every install is tedious, findings such as
   `catch (Exception ignored)` do not say whether they are defects, and the agent should act as the merge
   request reviewer and quality improver.
-  0.10.0, in order:
+  0.10.0 (branch `feat/proactive-agent`, 2026-10-17; Python 284 tests at 96%, engine specs green):
   - A. Benchmark corpus: CodeNarc 4.0.0 `src/main` bundled in the wheel (Apache 2.0, NOTICE kept) and unpacked
     to `~/.groovyscope/benchmark/codenarc/` by `kiro init|repair --global` and by the agent start hook; no
     command to run (`groovyscope benchmark path [DIR]` only prints or moves it).
@@ -187,6 +187,14 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
     `docs/ci.md` with the GitLab jobs (SARIF as `sast`, `review --changed` as the MR gate).
   - F. `docs/prompts.md` cookbook (twelve prompts: tools called, how to read the answer, defect or not, the
     fix, cost) and glossary; `/context show` to confirm steering; README, kiro.md and steering updates.
+  Delivered as planned, with these decisions: the corpus is a 740 KB deterministic zip of `src/main` only
+  (`scripts/bundle_benchmark.py`), unpacked to `~/.groovyscope/benchmark/codenarc/`; the steering file is
+  stamped `written by groovyscope <version>` so `checkup` detects files from an older release; the start hook
+  is `hooks.agentSpawn` with a 20 s budget and never fails the session; `checkup --agent` runs no `kiro-cli`
+  subprocess; SARIF files are read only from `reports.sarif`, `--import-sarif` and the build's default
+  SpotBugs output; the 23rd tool is `coverage_gaps`. Left for the owner's machine: the hook output on a
+  Kiro 2.29.1 start, one `review_changes` prompt on a real branch, one `coverage_gaps` prompt after
+  `./gradlew test jacocoTestReport`.
   0.11.0:
   - G. `explain_code`: what a class, method or file does from its AST and call graph (responsibilities,
     inputs and outputs, calls and callers, mutated state, exceptions, external calls); nothing guessed from

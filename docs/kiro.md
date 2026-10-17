@@ -22,7 +22,7 @@ project writes only `lsp.json`; `--full` writes everything into the project inst
 |---|---|---|
 | `.kiro/settings/lsp.json` | project | `languages.groovy` entry: command `groovyscope lsp --stdio`, extensions, Jenkinsfile patterns, timeouts |
 | `settings/mcp.json` | global, or project with `--full` | `mcpServers.groovyscope` entry: command `groovyscope mcp`, a two-minute tool timeout |
-| `agents/groovy.json` | global, or project with `--full` | A `groovy` agent with `tools: ["*"]` (the `code` tool, groovyscope and every other MCP server you have configured, GitLab or Jira included), pre-approvals for the read-only tools, and the shell commands that run without asking |
+| `agents/groovy.json` | global, or project with `--full` | A `groovy` agent with `tools: ["*"]` (the `code` tool, groovyscope and every other MCP server you have configured, GitLab or Jira included), pre-approvals for the read-only tools, the shell commands that run without asking, and the start hook that runs `groovyscope checkup --agent` |
 | `steering/groovyscope.md` | global, or project with `--full` | Always-on policy: navigate through LSP/MCP, review and fix before finishing, the review checklist |
 | `steering/groovyscope-profiles.md` | same, only when a runtime profile has `guidance` (in a project: only a profile whose markers or files occur in it) | That guidance, per profile |
 
@@ -38,6 +38,26 @@ The agent's `tools` is `["*"]` on purpose. Kiro only exposes an MCP server to an
 `@groovyscope`, which hid the other servers in `mcp.json`. `groovyscope doctor` names any server the agent's
 list still hides and `groovyscope kiro repair --global` fixes it. `allowedTools` is what runs without a
 prompt (read, grep, glob, `code` and the groovyscope tools); other servers' tools are available but ask.
+
+## What happens when the agent starts
+
+The agent's `hooks.agentSpawn` runs `groovyscope checkup --agent` (20 s budget, 4 KB of output) and Kiro
+injects its output into the session's context. The command applies the safe repairs itself: Kiro files written
+by an older groovyscope are re-merged (the steering file carries a `written by groovyscope <version>` stamp so
+staleness is detectable), a missing project LSP entry is written, the benchmark corpus is unpacked. What it
+cannot decide for you it lists as `todo` with the command: trusting the repository and exporting the
+classpath, both of which run the build. The steering tells the agent to open with one status line, offer each
+todo as a question, and show the quality menu ([docs/prompts.md](prompts.md)). The command never fails: a
+check that crashes becomes a line in the report, and when the hook cannot run at all the agent carries on and
+says so once. `groovyscope checkup` in a terminal prints the same report with the fix per line; `--fix` applies
+the safe repairs; `--json` is for scripts.
+
+## Is the steering loaded?
+
+Inside Kiro, `/context show` lists the files in the agent's context; `steering/groovyscope.md` must appear,
+from `~/.kiro` or the project's `.kiro`. The surest sign in a conversation is the first answer: an agent with
+the steering calls `workspace_overview` or `find_code` and never `grep`, and it opens with the checkup line.
+If it does not, run `groovyscope checkup` and `groovyscope kiro repair --global`, then restart Kiro CLI.
 
 ## Agent file formats (V2, universal, V3)
 
@@ -65,7 +85,8 @@ and reported. `groovyscope doctor` shows the Kiro CLI version and the agent's fo
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
 > /code logs -l ERROR   # empty is good
-> /mcp                  # expect: groovyscope running 21 tools, next to your other servers
+> /mcp                  # expect: groovyscope running 23 tools, next to your other servers
+> /context show         # expect: steering/groovyscope.md among the context files
 > /tools                # the other servers' tools are listed too (available, prompting)
 ```
 
@@ -86,8 +107,13 @@ the `GROOVYSCOPE_CONFIG_JSON` variable that `groovyscope lsp` sets, so `workspac
 ## What the MCP tools add
 
 The `code` tool stops at what LSP can express. The `groovyscope` MCP server (one process per Kiro session,
-sharing the workspace daemon with the LSP side) adds twenty-one tools; the README lists their arguments.
-Typical turns in the `groovy` agent:
+sharing the workspace daemon with the LSP side) adds twenty-three tools; the README lists their arguments and
+[docs/prompts.md](prompts.md) the prompts. Typical turns in the `groovy` agent:
+
+- "Review this branch as a merge request reviewer" → `review_changes(base="main")`: verdict, blocking and
+  should-fix findings on the changed lines, impact of the changed declarations, risky constructs added,
+  uncovered methods, with the build's SpotBugs findings merged in
+- "Which methods have no test coverage?" → `coverage_gaps()` on the JaCoCo report
 
 - "What is in this repository?" → `workspace_overview()`, then `document_symbols(path)` for a file's outline
   and `read_symbol(path, "Class.method")` for the one declaration that matters, instead of reading files

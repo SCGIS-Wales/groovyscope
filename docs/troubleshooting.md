@@ -23,6 +23,15 @@ hard failures.
 | `doctor` warns `kiro agent ... its tools list hides these MCP servers: ...` | The agent was written before 0.9.0 with `tools: ["code", "@groovyscope"]`, so Kiro hides your other servers from it; `groovyscope kiro repair --global` sets `tools: ["*"]` |
 | `doctor` says `kiro agent ... this kiro-cli can load it in both engines` | Informational: `groovyscope kiro repair --agent-format universal` converts the V2 agent so `kiro-cli --v3` loads it too |
 | `doctor` prints `info kiro files ... not in a Groovy project here` | Expected outside a project: the global setup is present and this folder has no Groovy sources or build file |
+| The agent does not open with a checkup line | The start hook did not run: the agent file predates 0.10.0 (`groovyscope kiro repair --global` adds `hooks.agentSpawn`), or this Kiro CLI does not support agent hooks; `groovyscope checkup` shows the same report in a terminal |
+| The agent's first message says `groovyscope checkup could not run` | The hook ran but the command failed before reporting; run `groovyscope --debug checkup` in the project and read the cause |
+| `checkup` says `written by groovyscope 0.9.0, package is 0.10.0` | Normal after an upgrade; the start hook repairs it, or run `groovyscope kiro repair --global` |
+| `review --changed` says `unknown base 'main'` | The branch has no `main` locally; pass `--base origin/main` (fetch it first) or the branch the request targets |
+| `review --changed` says `git is not installed` or `not inside a git repository` | Review needs git for the changed lines; pass paths to `groovyscope review` instead |
+| `coverage` says `no JaCoCo report at build/reports/jacoco/test/jacocoTestReport.xml` | Run the build's tests with the JaCoCo report (`./gradlew test jacocoTestReport`), or set `reports.jacoco` to where your build writes it |
+| `check` prints `... is not a SARIF log` on stderr | A file in `reports.sarif` or passed to `--import-sarif` is not SARIF 2.1; the other findings are still reported |
+| SARIF findings show an odd `path` | The tool reported a path relative to its own root; groovyscope matches it to a unique file under the source roots and otherwise keeps it as reported |
+| `benchmark path` fails with `could not unpack` | The home folder is not writable or full; pass `--to DIR` or set `GROOVYSCOPE_BENCHMARK_DIR` |
 | Kiro's `/tools` lists only `code` and groovyscope under `--agent groovy` | Same cause as the hidden-servers warning; repair the agent |
 | An MCP `find_code` answer is `unknown kind` | The kinds are listed in the answer: `catch`, `throw`, `call`, `new`, `return-null`, `string-literal`, `annotation`, `def`, `empty-block`, `field`, `method` |
 | `read_symbol` answers `found: false` with `candidates` | The name matched nothing exactly; pick one of the candidates (`Class.name`, or `line` for an overload) |

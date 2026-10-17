@@ -74,7 +74,10 @@ macOS and Linux on x64 and arm64.
 
 ## Per project: `init`, `trust`, `classpath`
 
-All three are optional; the engine answers from the project's own sources without them.
+All three are optional; the engine answers from the project's own sources without them. The groovy agent's
+start hook (`groovyscope checkup --agent`) writes the project's LSP entry itself and offers `trust` and
+`classpath` in the first message, so in a Kiro session you only answer yes. The commands below are the same
+thing from a terminal.
 
 ```bash
 cd your-groovy-project
@@ -141,6 +144,16 @@ bundled one. `GROOVYSCOPE_JAR` still overrides both (not verified; `doctor` says
 Nothing is downloaded at runtime unless you ask: the wheel contains the engine JAR and its SHA-256, `fetch`
 and `jdk install` are explicit commands, and `jdk.autoProvision` is off by default. Mirror the release JAR and
 its `SHA256SUMS.txt` on an internal server and point `fetch --from` at it; set `jdk.home` to a managed JDK.
+
+## The benchmark corpus
+
+The wheel bundles CodeNarc 4.0.0's `src/main` (Apache 2.0) as the fixed workspace of
+[docs/benchmark.md](benchmark.md) and of the reference prompts. `groovyscope kiro init --global` and the agent
+start hook unpack it into `~/.groovyscope/benchmark/codenarc/` with a ready `.groovyscope.yaml`;
+`groovyscope benchmark path` prints the location (and unpacks when needed), `--to DIR` puts it elsewhere,
+`--refresh` restores the bundled files, and `GROOVYSCOPE_BENCHMARK_DIR` moves the parent folder. A machine
+that cannot reach GitHub therefore still has the corpus. No build is included: its library imports show as
+GS100 warnings, by design.
 
 ## Runtime profiles on a second machine
 
