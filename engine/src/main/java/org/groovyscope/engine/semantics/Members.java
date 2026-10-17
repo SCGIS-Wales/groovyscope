@@ -54,10 +54,14 @@ public final class Members {
         ClassNode current = node == null ? null : node.redirect();
         while (current != null && isKnown(current) && seen.add(current.getName())) {
             ordered.add(current);
-            for (ClassNode iface : current.getInterfaces()) {
-                collect(iface, ordered, seen);
+            try {
+                for (ClassNode iface : current.getInterfaces()) {
+                    collect(iface, ordered, seen);
+                }
+                current = current.getSuperClass() == null ? null : current.getSuperClass().redirect();
+            } catch (LinkageError e) {
+                current = null; // supertypes of a classpath class that needs classes missing from the classpath
             }
-            current = current.getSuperClass() == null ? null : current.getSuperClass().redirect();
         }
     }
 
@@ -71,7 +75,7 @@ public final class Members {
         List<MethodNode> methods = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (ClassNode classNode : hierarchy(type)) {
-            for (MethodNode method : classNode.getDeclaredMethods(name)) {
+            for (MethodNode method : readable(() -> classNode.getDeclaredMethods(name))) {
                 if (!method.isSynthetic() && seen.add(method.getTypeDescriptor())) {
                     methods.add(method);
                 }
@@ -80,11 +84,33 @@ public final class Members {
         return methods;
     }
 
+    /**
+     * Members of a classpath type are decompiled lazily; when they mention a class missing from the configured
+     * classpath, reading them fails with a {@link LinkageError}. Such a type is treated as having no readable
+     * members, so the lookup moves on instead of failing.
+     */
+    public static <T> List<T> readable(java.util.function.Supplier<List<T>> members) {
+        try {
+            List<T> list = members.get();
+            return list == null ? List.of() : list;
+        } catch (LinkageError e) {
+            return List.of();
+        }
+    }
+
+    private static <T> T readableOne(java.util.function.Supplier<T> member) {
+        try {
+            return member.get();
+        } catch (LinkageError e) {
+            return null;
+        }
+    }
+
     public static List<MethodNode> allMethods(ClassNode type) {
         List<MethodNode> methods = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (ClassNode classNode : hierarchy(type)) {
-            for (MethodNode method : classNode.getMethods()) {
+            for (MethodNode method : readable(classNode::getMethods)) {
                 if (!method.isSynthetic() && seen.add(method.getTypeDescriptor())) {
                     methods.add(method);
                 }
@@ -97,19 +123,19 @@ public final class Members {
     public static List<ASTNode> membersNamed(ClassNode type, String name) {
         List<ASTNode> members = new ArrayList<>();
         for (ClassNode classNode : hierarchy(type)) {
-            PropertyNode property = classNode.getProperty(name);
+            PropertyNode property = readableOne(() -> classNode.getProperty(name));
             if (property != null) {
                 members.add(property);
                 continue;
             }
-            FieldNode field = classNode.getDeclaredField(name);
+            FieldNode field = readableOne(() -> classNode.getDeclaredField(name));
             if (field != null) {
                 members.add(field);
                 continue;
             }
             String capitalised = name.isEmpty() ? name : Character.toUpperCase(name.charAt(0)) + name.substring(1);
             for (String getter : List.of("get" + capitalised, "is" + capitalised)) {
-                for (MethodNode method : classNode.getDeclaredMethods(getter)) {
+                for (MethodNode method : readable(() -> classNode.getDeclaredMethods(getter))) {
                     if (method.getParameters().length == 0) {
                         members.add(method);
                     }
@@ -124,12 +150,12 @@ public final class Members {
         List<ASTNode> members = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (ClassNode classNode : hierarchy(type)) {
-            for (PropertyNode property : classNode.getProperties()) {
+            for (PropertyNode property : readable(classNode::getProperties)) {
                 if (seen.add(property.getName())) {
                     members.add(property);
                 }
             }
-            for (FieldNode field : classNode.getFields()) {
+            for (FieldNode field : readable(classNode::getFields)) {
                 if (!field.isSynthetic() && seen.add(field.getName())) {
                     members.add(field);
                 }

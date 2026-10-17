@@ -109,6 +109,15 @@ public final class WorkspaceModel {
      * whole workspace is walked, so unusual layouts (Gradle multi-projects, plain script folders) still work.
      */
     public List<Path> discoverSourceFiles() {
+        return discover(false);
+    }
+
+    /** {@link #discoverSourceFiles()} plus, with {@code workspace.javaSources}, the Java files under the same roots. */
+    public List<Path> discoverCompileFiles() {
+        return discover(config.javaSources());
+    }
+
+    private List<Path> discover(boolean withJava) {
         List<Path> roots = new ArrayList<>();
         for (String relative : config.sourceRoots()) {
             Path candidate = root.resolve(relative).normalize();
@@ -123,7 +132,8 @@ public final class WorkspaceModel {
         for (Path start : roots) {
             try (Stream<Path> stream = Files.walk(start)) {
                 stream.filter(Files::isRegularFile)
-                        .filter(path -> EngineConfig.isGroovyFileName(path.getFileName().toString()))
+                        .filter(path -> EngineConfig.isGroovyFileName(path.getFileName().toString())
+                                || withJava && EngineConfig.isJavaFileName(path.getFileName().toString()))
                         .filter(path -> !isExcluded(path))
                         .forEach(files::add);
             } catch (IOException e) {
@@ -134,10 +144,22 @@ public final class WorkspaceModel {
         return files;
     }
 
-    /** Sources to compile, keyed by file URI: disk contents overlaid with open documents. */
+    /** Groovy documents keyed by file URI: disk contents overlaid with open documents. Lint and format use these. */
     public Map<String, String> sources() {
+        return read(discoverSourceFiles());
+    }
+
+    /**
+     * Everything the compiler sees: {@link #sources()} plus Java files of a joint Groovy/Java project when
+     * {@code workspace.javaSources} is on. Groovy's parser reads Java syntax, so Java classes become resolvable.
+     */
+    public Map<String, String> compileSources() {
+        return read(discoverCompileFiles());
+    }
+
+    private Map<String, String> read(List<Path> files) {
         Map<String, String> sources = new TreeMap<>();
-        for (Path file : discoverSourceFiles()) {
+        for (Path file : files) {
             String uri = toUri(file);
             if (!openDocuments.containsKey(uri)) {
                 try {
@@ -178,6 +200,12 @@ public final class WorkspaceModel {
             }
         }
         return false;
+    }
+
+    /** True for a {@code .java} document. */
+    public static boolean isJavaUri(String uri) {
+        int slash = uri.lastIndexOf('/');
+        return EngineConfig.isJavaFileName(slash >= 0 ? uri.substring(slash + 1) : uri);
     }
 
     static boolean isGroovyUri(String uri) {

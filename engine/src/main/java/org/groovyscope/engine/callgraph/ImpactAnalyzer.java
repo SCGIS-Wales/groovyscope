@@ -168,7 +168,7 @@ public final class ImpactAnalyzer {
             if (superType == owner) {
                 continue;
             }
-            for (MethodNode candidate : superType.getDeclaredMethods(method.getName())) {
+            for (MethodNode candidate : Members.readable(() -> superType.getDeclaredMethods(method.getName()))) {
                 if (candidate.getParameters().length == arity && !candidate.isSynthetic()) {
                     found.add(symbols.of(candidate));
                 }
@@ -178,7 +178,7 @@ public final class ImpactAnalyzer {
             if (classNode == owner || !Members.hierarchy(classNode).contains(owner)) {
                 continue;
             }
-            for (MethodNode candidate : classNode.getDeclaredMethods(method.getName())) {
+            for (MethodNode candidate : Members.readable(() -> classNode.getDeclaredMethods(method.getName()))) {
                 if (candidate.getParameters().length == arity && !candidate.isSynthetic()) {
                     found.add(symbols.of(candidate));
                 }
