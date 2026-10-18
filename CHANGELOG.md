@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.20.0...v0.21.0) (2026-10-18)
+
+
+### Features
+
+* **graph:** colour diagram calls by read or write effect ([#87](https://github.com/SCGIS-Wales/groovyscope/issues/87)) ([72ec42e](https://github.com/SCGIS-Wales/groovyscope/commit/72ec42e5d26efbbe4b8f0ae6124212fa180e2e94))
+
 ## [0.20.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.19.1...v0.20.0) (2026-10-18)
 
 
