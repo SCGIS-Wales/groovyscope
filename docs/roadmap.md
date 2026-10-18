@@ -254,6 +254,21 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
     merge, and to show a table when no such server is present.
   Done when: CI green, merged, released; the owner's Kiro check of one `stale` classpath round trip and one
   review posted on a merge request recorded here.
+  Progress 2026-10-18: PR #51 merged with CI green; release-please PR #52 merged by the owner and the
+  dispatched `workflow.yml` run 16 passed every job (build artefacts, attest provenance, PyPI trusted
+  publishing, release assets). **0.11.0** verified from a cloud session: the GitHub Release carries the wheel,
+  the sdist, the engine JAR, both SBOMs and `SHA256SUMS.txt`, whose digests match the files PyPI serves; the
+  wheel installed from PyPI into a fresh venv reports `groovyscope 0.11.0` and `engine 0.11.0`, and `doctor`
+  finds the bundled JAR with its checksum verified. The `stale` round trip was exercised from that wheel on a
+  copy of the `gradle-multi` fixture (trusted, Gradle 8.14.3, JDK 21): `checkup` warned `no classpath yet`,
+  `groovyscope classpath` wrote 2 entries with the build fingerprint and `checkup` reported `fresh`; a new
+  dependency in `build.gradle` turned `checkup` and the MCP `check` answer to `stale` with the fix named;
+  `groovyscope classpath` (and, in a second pass, the `refresh_classpath` tool, 1.3 s) reported that the
+  running daemon reloaded the new classpath, `workspace_status` reported `fresh` with 8 entries, and the
+  engine process kept its pid while `configHash` changed twice (the re-exported classpath, then an edited
+  `.groovyscope.yaml`; an invalid key was refused before reaching the daemon). The MCP session listed 27
+  tools. Still open: the owner's Kiro checks (the `stale` round trip inside Kiro CLI and one review posted on
+  a merge request), to be recorded in the log below when supplied.
 
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
@@ -335,3 +350,10 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
 - 2026-10-17: Stage 12 implemented on `feat/live-config` (engine specs green, Python 311 tests at 96%): live
   configuration reload, classpath state and fingerprint, `refresh_classpath`, the reliability fixes from the
   two reviews, merge request comment drafts for GitLab.
+- 2026-10-18: 0.10.0 (PR #48, `workflow.yml` run 15 on 2026-10-17) and 0.11.0 (PR #52, run 16) published
+  through the dispatched `workflow.yml`, every job green, both on PyPI. 0.11.0 verified from PyPI: install,
+  `version`, `doctor`, checksums against the release assets, the `stale` classpath round trip and the live
+  reload through the CLI and the MCP tools (details in the Stage 12 entry). The Homebrew formula in
+  SCGIS-Wales/homebrew-tap still rendered 0.7.0 at 05:30 UTC, so the daily `groovyscope formula` workflow had
+  not yet picked up 0.8.0 to 0.11.0; check it after its next run or dispatch it by hand. The Kiro checks for
+  Stage 11 and Stage 12 still need the owner's machine.
