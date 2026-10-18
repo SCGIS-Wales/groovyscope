@@ -85,6 +85,70 @@ or receiver type, `return null`, string literals matching a pattern, annotations
 blocks, long methods) and duplicated code with identifiers and literals ignored (`find_duplicates`). None of
 them returns a whole file.
 
+## Architecture
+
+One warm JVM per workspace holds the compiled code; two thin front ends talk to it. Kiro CLI reaches the engine
+through its built-in `code` tool over LSP and through the MCP tools; the `groovyscope` command line is the third
+client, for people and CI. Python owns the installer, configuration and output shaping. Every semantic answer
+comes from the JVM, because the Groovy AST, the static type checker and CodeNarc exist only there. The engine
+reads the workspace and never runs its code; the daemon is reached over a Unix socket and exits when idle.
+
+```mermaid
+flowchart LR
+    subgraph agent["Kiro CLI, the agent"]
+        direction TB
+        code["<b>code tool</b><br/>definition, references,<br/>rename, diagnostics"]
+        mcpc["<b>MCP client</b><br/>27 groovyscope tools"]
+    end
+
+    subgraph py["Python front end"]
+        direction TB
+        lsp["<b>groovyscope lsp</b><br/>LSP relay"]
+        mcp["<b>groovyscope mcp</b><br/>compact JSON answers"]
+        cli["<b>groovyscope CLI</b><br/>doctor, checkup, kiro init,<br/>classpath, check, review"]
+    end
+
+    subgraph jvm["Engine daemon, JVM"]
+        direction TB
+        compile["<b>Groovy 6 compiler</b><br/>AST, static type checker,<br/>Groovy 6 checkers"]
+        index["<b>Index and call graph</b><br/>SQLite symbol store,<br/>impact analysis"]
+        lint["<b>Lint and format</b><br/>CodeNarc 4, GS practice<br/>checks, formatter"]
+        insight["<b>Understanding</b><br/>explain, relationship graph,<br/>naming, search, MR review"]
+        compile --> index
+        index --> lint
+        index --> insight
+    end
+
+    ws["<b>Your workspace</b><br/>Groovy, Gradle, Jenkinsfile<br/>.groovyscope.yaml, profiles<br/>classpath export"]
+
+    out["<b>What comes back</b><br/>diagnostics with fixes,<br/>impact and risk, draw.io and<br/>Mermaid graphs, SARIF,<br/>merge request comments"]
+
+    code -- "LSP, stdio" --> lsp
+    mcpc -- "MCP, stdio" --> mcp
+    lsp -- "JSON-RPC,<br/>Unix socket" --> compile
+    mcp --> compile
+    cli --> compile
+    ws -. "read, never executed" .-> compile
+    lint ==> out
+    insight ==> out
+
+    classDef agentN fill:#EEF2FF,stroke:#4F46E5,color:#1E1B4B
+    classDef pyN fill:#E0F2FE,stroke:#0369A1,color:#0C4A6E
+    classDef jvmN fill:#FFF7ED,stroke:#C2410C,color:#7C2D12
+    classDef wsN fill:#F0FDF4,stroke:#15803D,color:#14532D
+    classDef outN fill:#F8FAFC,stroke:#475569,color:#0F172A
+    class code,mcpc agentN
+    class lsp,mcp,cli pyN
+    class compile,index,lint,insight jvmN
+    class ws wsN
+    class out outN
+    style agent fill:#F5F7FF,stroke:#4F46E5,color:#1E1B4B
+    style py fill:#F0F9FF,stroke:#0369A1,color:#0C4A6E
+    style jvm fill:#FFFBF5,stroke:#C2410C,color:#7C2D12
+```
+
+The full picture, package by package, is in [docs/architecture.md](docs/architecture.md).
+
 ## Commands
 
 | Command | What it does |
