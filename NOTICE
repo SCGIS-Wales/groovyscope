@@ -9,3 +9,8 @@ licensed GroovyLanguageServer/groovy-language-server project
 (https://github.com/GroovyLanguageServer/groovy-language-server) and the
 trustytrojan/groovyls fork. Their licence headers are preserved where code
 is reused.
+
+The engine JAR bundles the Eclipse Layout Kernel (https://eclipse.dev/elk/), the
+Eclipse Modeling Framework and Xtext's runtime library, under the Eclipse Public
+License 2.0, as it bundles Eclipse LSP4J; and Google Guava under the Apache
+License 2.0. They lay out the draw.io diagrams.

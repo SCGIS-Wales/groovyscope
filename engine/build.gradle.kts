@@ -19,6 +19,9 @@ dependencies {
     implementation(libs.groovy.typecheckers)
     implementation(libs.lsp4j)
     implementation(libs.sqlite.jdbc)
+    implementation(libs.elk.layered)
+    implementation(libs.guava)
+    runtimeOnly(libs.xbase.lib)
     implementation(libs.codenarc) {
         // CodeNarc ships against Groovy 5; the engine runs one Groovy, the one it analyses with.
         exclude(group = "org.apache.groovy")

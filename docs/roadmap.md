@@ -593,3 +593,9 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   share one port and lane per caller, and the layout check is indexed by row (10 s to under 1 s for a thousand
   edges). Still open from that retest, for the owner to approve: hook findings reaching the agent through
   `PreToolUse`, an `unresolved-class` code with an add-import fix, and the test kit's default folder.
+- 2026-10-18: the owner found the lines still a mess after the paper change. The hand-rolled router is replaced by
+  the Eclipse Layout Kernel's layered layout in the engine (`groovyscope/layout`, EPL-2.0 like LSP4J; the engine
+  JAR grows by about 8 MB): crossings minimised layer by layer, network simplex placement, orthogonal routing with
+  one track per edge. Shared helpers used by five or more (`diagram.sharedHelperCallers`) are drawn once and
+  named inside their users' boxes. On the CodeNarc corpus: report writers 0 crossings and 0 overlaps on A4; the
+  54-class report package with 313 relations went from 37 crossings to 6, 0 overlaps; every diagram about 1.4 s.

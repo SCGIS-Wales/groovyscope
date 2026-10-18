@@ -82,6 +82,8 @@ profiles:
 duplicates:
   minLines: 6             # find_duplicates: smallest repeated block, in lines
   minStatements: 3        # ... and in statements
+diagram:
+  sharedHelperCallers: 5  # relationship_graph: a node called from this many others is drawn once ("called from N") and named inside its callers' boxes instead of a line each; 0 draws every line
 reports:
   sarif: []               # SARIF logs merged into check and review (SpotBugs, other SAST); empty = build/reports/spotbugs/*.sarif* when present
   jacoco: "build/reports/jacoco/test/jacocoTestReport.xml"  # read by coverage_gaps and `groovyscope coverage`

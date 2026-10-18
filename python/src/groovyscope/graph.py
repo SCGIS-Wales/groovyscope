@@ -57,6 +57,7 @@ class Placed(TypedDict):
     fill: str
     dashed: bool
     row: int
+    references: str  # the shared helpers this node calls, named instead of drawn (see groovyscope.diagram)
 
 
 class Route(TypedDict):
@@ -382,6 +383,7 @@ def layout(graph: Mapping[str, Any]) -> Layout:
                     "fill": EXTERNAL_FILL if external else packages[str(node.get("package") or "(default)")],
                     "dashed": bool(node.get("test")) or external,
                     "row": index,
+                    "references": "",
                 }
             )
     return {
@@ -640,6 +642,9 @@ def to_drawio(graph: Mapping[str, Any], drawn: Layout | None = None, *, title: s
             f"<b>{html.escape(box['label'])}</b><br/>"
             f'<font style="font-size: {small}px">{html.escape(box["sublabel"])}</font>'
         )
+        if box.get("references"):
+            value += f'<br/><font style="font-size: {small}px"><i>{html.escape(box["references"])}</i></font>'
+
         style = (
             f"rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor={box['fill']};strokeColor={STROKE};"
             f"fontColor={TEXT};fontSize={font};fontFamily=Helvetica;align=center;verticalAlign=middle;"
@@ -695,7 +700,10 @@ def legend_cells(drawn: Layout, font: int) -> list[str]:
     top = height - MARGIN - LEGEND_HEIGHT + 8
     small = max(MIN_FONT, font - 2)
     lines = ["extends: hollow arrow · implements: dashed hollow arrow · has: diamond · uses: dashed · calls: solid"]
-    lines.append("grey dotted edges: matched by name only (DYNAMIC_UNKNOWN) · dashed boxes: tests and external classes")
+    lines.append(
+        "grey dotted edges: matched by name only (DYNAMIC_UNKNOWN) · dashed boxes: tests, external classes and shared "
+        "helpers (used from many places; each user names them after \u2192 instead of a line)"
+    )
     text = "<br/>".join(html.escape(line) for line in lines)
     cells = [
         f'<mxCell id="legend-text" value="{html.escape(text, quote=True)}" '

@@ -188,6 +188,18 @@ def test_relationship_graph_returns_compact_graph_and_writes_drawio(
     )
     assert written["written"] == "docs/classes.drawio" and written["page"]["orientation"] in {"portrait", "landscape"}
     assert "layoutProblems" not in written
+    assert written["lines"]["layout"] == "basic"  # the fake engine has no layout: the basic layout stands in
+    engine["responses"]["groovyscope/layout"] = {
+        "boxes": {"app.Base": {"x": 0.0, "y": 0.0}, "app.OrderService": {"x": 0.0, "y": 110.0}},
+        "routes": {"0": [[60.0, 110.0], [60.0, 46.0]]},
+        "width": 160.0,
+        "height": 156.0,
+    }
+    layered = local_tools["relationship_graph"](
+        paths=["src/app/OrderService.groovy"], drawio_path="docs/classes.drawio"
+    )
+    assert layered["lines"] == {"layout": "layered", "crossings": 0, "overlaps": 0}
+    assert engine["calls"][-1][0] == "groovyscope/layout" and engine["calls"][-1][1]["links"][0]["hierarchy"] is True
     root = ET.parse(tmp_path / "docs" / "classes.drawio").getroot()  # noqa: S314 - our own output
     assert root.find("diagram").get("name") == "classes"  # type: ignore[union-attr]
     assert local_tools["relationship_graph"](drawio_path="../outside.drawio")["error"].endswith("outside the workspace")
