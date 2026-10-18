@@ -650,13 +650,23 @@ def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, 
 
 
 def run_through_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, Any]) -> int | None:
-    """Start the daemon if needed and relay stdio to it. None when that is impossible (caller falls back)."""
-    try:
-        socket_file, _ = ensure_daemon(obj, command, effective)
-        return _RELAY(socket_file)
-    except (OSError, RuntimeError) as exc:
-        click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
-        return None
+    """Start the daemon if needed and relay stdio to it. None when that is impossible (caller falls back). A daemon
+    that answered the probe but is gone by the time the relay connects (it exited idle, `daemon stop` elsewhere)
+    is started once more; nothing from stdin is read before the connection stands, so nothing is lost."""
+    for attempt in range(2):
+        try:
+            socket_file, _ = ensure_daemon(obj, command, effective)
+            return _RELAY(socket_file)
+        except OSError as exc:
+            if attempt == 0:
+                click.echo(f"groovyscope: daemon went away before the session started ({exc})", err=True)
+                click.echo("groovyscope: starting it again", err=True)
+                continue
+            click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
+        except RuntimeError as exc:
+            click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
+            return None
+    return None
 
 
 def exec_process(path: str, argv: Sequence[str]) -> None:
@@ -668,6 +678,7 @@ _EXEC: ExecFn = exec_process
 _KIRO: Callable[[], kiro_agent.KiroRunner | None] = kiro_agent.kiro_runner
 _RELAY: Callable[[Path], int] = relay.main
 _RPC: Callable[..., Any] = rpc.request
+_PROBE: Callable[[Path], dict[str, Any] | None] = daemon_lifecycle.probe
 _MCP_SERVE: Callable[..., int] = mcp_server.serve
 RPC_TIMEOUT_SECONDS = 600.0
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
@@ -862,37 +873,44 @@ def hook_command(obj: dict[str, Any], event: str | None) -> None:
     name = hooks.event_name(payload, event)
     if name not in {"postToolUse", "stop"}:
         return
-    try:
-        socket_file, effective = daemon_socket_for(obj)
-    except SystemExit:
-        click.echo("groovyscope: hook skipped, the engine is unavailable (see `groovyscope doctor`)")
+    # Everything that needs no engine comes first: most hook events end here, in milliseconds.
+    settings = hooks.settings(load_config(obj["root"], obj["config_path"], dict(os.environ)))
+    paths = hook_targets(obj["root"], name, payload, settings)
+    if not paths:
         return
-    settings = hooks.settings(effective)
+    # A hook never starts the engine: a cold JVM would hold the agent for its start-up and compile. The LSP
+    # session Kiro opens starts the daemon; until then the hook says so and steps aside.
+    socket_file = daemon_paths(obj["root"])[0]
+    if _PROBE(socket_file) is None:
+        click.echo("groovyscope: hook skipped, the engine daemon is not running (it starts with the Kiro session)")
+        return
     text = (
-        hook_after_write(socket_file, obj["root"], payload, settings)
+        hook_after_write(socket_file, obj["root"], paths, settings)
         if name == "postToolUse"
-        else hook_stop_gate(socket_file, obj["root"], settings)
+        else hook_stop_gate(socket_file, obj["root"], paths, settings)
     )
     if text:
         click.echo(text)
 
 
-def hook_after_write(socket_file: Path, root: Path, payload: Mapping[str, Any], settings: hooks.HookSettings) -> str:
+def hook_targets(root: Path, name: str, payload: Mapping[str, Any], settings: hooks.HookSettings) -> list[Path]:
+    """The files the event is about, or nothing when the event needs no engine: the setting is off, the write
+    touched no Groovy file, or no Groovy file changed in the working tree."""
+    if name == "postToolUse":
+        return hooks.written_paths(payload, root) if settings["afterWrite"] else []
+    if not settings["stopGate"]:
+        return []
+    return hooks.changed_groovy_files(root, changes.default_runner)
+
+
+def hook_after_write(socket_file: Path, root: Path, paths: Sequence[Path], settings: hooks.HookSettings) -> str:
     """The after-write block for the Groovy files a write touched; empty when there is nothing to say."""
-    paths = hooks.written_paths(payload, root)
-    if not settings["afterWrite"] or not paths:
-        return ""
     rows = hook_check_rows(socket_file, root, paths, settings["afterWriteInclude"], settings["timeoutSeconds"])
     return "" if rows is None else hooks.render_after_write(rows, paths, root, settings["afterWriteMaxFindings"])
 
 
-def hook_stop_gate(socket_file: Path, root: Path, settings: hooks.HookSettings) -> str:
+def hook_stop_gate(socket_file: Path, root: Path, changed: Sequence[Path], settings: hooks.HookSettings) -> str:
     """The Stop answer: a block decision as JSON while changed Groovy files have compile errors, else empty."""
-    if not settings["stopGate"]:
-        return ""
-    changed = hooks.changed_groovy_files(root, changes.default_runner)
-    if not changed:
-        return ""
     rows = hook_check_rows(socket_file, root, changed, ["compile"], settings["timeoutSeconds"])
     decision = hooks.stop_decision(rows or [], settings["afterWriteMaxFindings"])
     return json.dumps(decision) if decision else ""
@@ -954,6 +972,7 @@ def tool_settings(effective: Mapping[str, Any], classpath: Mapping[str, Any] | N
         "duplicates": effective.get("duplicates", {}),
         "reports": reports.reports_settings(effective),
         "classpath": dict(classpath or {}),
+        "mcp": dict(effective.get("mcp") or {}),
     }
 
 

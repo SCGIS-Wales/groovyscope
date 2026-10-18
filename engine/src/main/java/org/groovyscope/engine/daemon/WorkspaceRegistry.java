@@ -100,6 +100,23 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
         return services.size();
     }
 
+    /**
+     * Releases every workspace that answered no request for {@code idle} or longer: its loader, trees and index
+     * are dropped and its background thread stopped. Returns how many were released. Callers make sure no
+     * connection still uses the registry (the daemon calls this only when none is open).
+     */
+    public int evictIdle(java.time.Duration idle) {
+        int evicted = 0;
+        long threshold = System.nanoTime() - idle.toNanos();
+        for (Map.Entry<Path, LanguageServices> entry : services.entrySet()) {
+            if (entry.getValue().lastUsedNanos() - threshold < 0 && services.remove(entry.getKey(), entry.getValue())) {
+                entry.getValue().close();
+                evicted++;
+            }
+        }
+        return evicted;
+    }
+
     public Iterable<Path> roots() {
         return services.keySet();
     }

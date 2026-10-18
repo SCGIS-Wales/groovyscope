@@ -21,8 +21,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import org.groovyscope.engine.concurrent.Cancellation;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -89,6 +98,12 @@ public final class LanguageServices {
     private volatile long compiled;
     private volatile List<Symbol> cachedSymbols;
     private long version;
+    /** The compile under way, if any, that requests needing a fresh snapshot join instead of starting their own. */
+    private final Object jobLock = new Object();
+    private CompileJob inFlight;
+    private volatile long lastUsedNanos = System.nanoTime();
+    /** The symbol save not yet written; a newer snapshot replaces it, so saves never queue up. */
+    private final AtomicReference<Runnable> pendingSave = new AtomicReference<>();
 
     public LanguageServices(WorkspaceModel workspace, GroovyCompiler compiler) {
         this(workspace, compiler, null);
@@ -349,6 +364,10 @@ public final class LanguageServices {
                 }
                 openLoader = result.loader();
                 persistSymbols(snapshot, sources);
+            } catch (CancellationException e) {
+                // Every request that wanted this compile is gone: nothing is recorded, the next request compiles.
+                org.groovyscope.engine.log.EngineLog.debug("compile of %s abandoned: %s", workspace.root(), e.getMessage());
+                throw e;
             } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
                 org.groovyscope.engine.log.EngineLog.error(e, "compile of %s failed", workspace.root());
                 // Recorded as a snapshot with the failure as a diagnostic, so later requests answer from it until
@@ -389,13 +408,26 @@ public final class LanguageServices {
             return;
         }
         List<Symbol> symbols = fresh.symbols().workspaceSymbols("", Integer.MAX_VALUE);
-        background.submit(() -> {
+        Runnable save = () -> {
             try {
                 store.save(sources, symbols);
             } catch (IOException e) {
                 org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache not saved: " + e.getMessage());
             }
-        });
+        };
+        // Only the newest snapshot is worth writing: a save still waiting is replaced, not queued behind.
+        if (pendingSave.getAndSet(save) == null) {
+            try {
+                background.submit(() -> {
+                    Runnable latest = pendingSave.getAndSet(null);
+                    if (latest != null) {
+                        latest.run();
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                pendingSave.set(null); // closed: nothing more to persist
+            }
+        }
     }
 
     /** Symbols from the cache for documents whose text has not changed since they were stored. */
@@ -430,15 +462,127 @@ public final class LanguageServices {
         return true;
     }
 
-    /** The current snapshot, rebuilt first when stale. */
+    /**
+     * One compile that several requests wait for. The first requester runs it on its own thread; the others join
+     * its future and poll their own cancel flag while they wait, so a cancelled request leaves without touching
+     * the compile the rest still need. The compile itself is abandoned (at its next checkpoint) only when every
+     * request interested in it has been cancelled.
+     */
+    private static final class CompileJob {
+        final CompletableFuture<Snapshot> result = new CompletableFuture<>();
+        final AtomicInteger interested = new AtomicInteger(1);
+        final BooleanSupplier ownerCancelled;
+
+        CompileJob(BooleanSupplier ownerCancelled) {
+            this.ownerCancelled = ownerCancelled;
+        }
+
+        boolean abandoned() {
+            return interested.get() == 0 || (interested.get() == 1 && ownerCancelled.getAsBoolean());
+        }
+    }
+
+    /** The current snapshot, rebuilt first when stale; one compile per change however many requests need it. */
     public Snapshot snapshot() {
-        if (isDirty()) {
-            synchronized (lock) {
-                // Waiting for a compile already under way may be enough; rebuild only when it missed an edit.
-                return isDirty() ? refresh() : snapshot;
+        lastUsedNanos = System.nanoTime();
+        while (isDirty()) {
+            CompileJob job;
+            boolean owner;
+            synchronized (jobLock) {
+                owner = inFlight == null;
+                if (owner) {
+                    inFlight = new CompileJob(Cancellation.current());
+                }
+                job = inFlight;
             }
+            if (owner) {
+                return runJob(job);
+            }
+            Snapshot joined = joinJob(job);
+            if (joined != null && !isDirty()) {
+                return joined;
+            }
+            // The compile was abandoned by everyone else or missed an edit: this request starts the next one.
         }
         return snapshot;
+    }
+
+    private Snapshot runJob(CompileJob job) {
+        try {
+            Snapshot fresh = Cancellation.run(job::abandoned, this::refresh);
+            job.result.complete(fresh);
+            return fresh;
+        } catch (RuntimeException | Error e) {
+            job.result.completeExceptionally(e);
+            throw e;
+        } finally {
+            synchronized (jobLock) {
+                if (inFlight == job) {
+                    inFlight = null;
+                }
+            }
+        }
+    }
+
+    /** Waits for another request's compile; null when that compile was abandoned. */
+    private Snapshot joinJob(CompileJob job) {
+        job.interested.incrementAndGet();
+        try {
+            while (true) {
+                try {
+                    return job.result.get(100, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    Cancellation.checkpoint();
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause();
+                    if (cause instanceof CancellationException) {
+                        return null;
+                    }
+                    if (cause instanceof RuntimeException runtime) {
+                        throw runtime;
+                    }
+                    if (cause instanceof Error error) {
+                        throw error;
+                    }
+                    throw new IllegalStateException(cause);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new CancellationException("interrupted while waiting for the compile");
+                }
+            }
+        } finally {
+            job.interested.decrementAndGet();
+        }
+    }
+
+    /** Files in the current snapshot, without touching the disk (0 before the first compile). */
+    public int fileCount() {
+        return snapshot.result().sources().size();
+    }
+
+    /** When a request last asked for the snapshot, on the {@link System#nanoTime()} clock. */
+    public long lastUsedNanos() {
+        return lastUsedNanos;
+    }
+
+    /** Releases what this workspace holds: the kept compile's loader, pending saves and the background thread. */
+    public void close() {
+        synchronized (lock) {
+            if (openLoader != null) {
+                openLoader.close();
+                openLoader = null;
+            }
+            graph = null;
+            quality = null;
+        }
+        background.shutdownNow();
+        if (store != null) {
+            try {
+                store.close();
+            } catch (java.io.IOException e) {
+                // nothing useful to do
+            }
+        }
     }
 
     private record FoldedDiagnostics(long version, Map<String, List<Diagnostic>> diagnostics) {

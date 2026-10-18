@@ -104,7 +104,7 @@ def test_session_caller_reloads_the_configuration_when_its_hash_changes(monkeypa
         sent.append((method, params))
         return {"configHash": "h", "reloaded": True} if method == mcp_server.RELOAD_METHOD else {"ok": True}
 
-    monkeypatch.setattr(mcp_server.rpc, "call", fake_call)
+    monkeypatch.setattr(mcp_server.rpc, "channel_call", fake_call)
     current: list[tuple[str, str] | None] = [("h1", '{"a": 1}')]
     caller, _ = mcp_server.session_caller(
         Path("/a.sock"), None, open_session=lambda _p: {}, configuration=lambda: current[0]
@@ -128,7 +128,7 @@ def test_session_caller_keeps_serving_when_the_engine_refuses_a_configuration(mo
             raise RuntimeError(msg)
         return {"ok": method}
 
-    monkeypatch.setattr(mcp_server.rpc, "call", fake_call)
+    monkeypatch.setattr(mcp_server.rpc, "channel_call", fake_call)
     caller, _ = mcp_server.session_caller(
         Path("/a.sock"), None, open_session=lambda _p: {}, configuration=lambda: ("h", "{")
     )
@@ -142,12 +142,12 @@ def test_session_caller_reports_a_timeout_instead_of_resending(monkeypatch: pyte
         attempts.append(method)
         raise TimeoutError
 
-    monkeypatch.setattr(mcp_server.rpc, "call", slow)
+    monkeypatch.setattr(mcp_server.rpc, "channel_call", slow)
     reconnects: list[int] = []
     caller, _ = mcp_server.session_caller(
         Path("/a.sock"), lambda: reconnects.append(1) or Path("/b.sock"), open_session=lambda _p: {}
     )
-    with pytest.raises(RuntimeError, match="did not answer within 600s"):
+    with pytest.raises(RuntimeError, match="did not answer within 100s"):
         caller("groovyscope/duplicates", {})
     assert attempts == ["groovyscope/duplicates"] and not reconnects
 
@@ -161,8 +161,8 @@ def test_session_caller_reconnects_after_a_framing_error(monkeypatch: pytest.Mon
             raise answer
         return answer
 
-    monkeypatch.setattr(mcp_server.rpc, "call", fake_call)
-    monkeypatch.setattr(mcp_server.rpc, "close_session", lambda _s: None)
+    monkeypatch.setattr(mcp_server.rpc, "channel_call", fake_call)
+    monkeypatch.setattr(mcp_server.rpc, "close_channel", lambda _s: None)
     caller, _ = mcp_server.session_caller(Path("/a.sock"), lambda: Path("/b.sock"), open_session=lambda p: {"p": p})
     assert caller("groovyscope/check", {}) == {"ok": True}
 

@@ -79,6 +79,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     private final DiagnosticsPublisher diagnostics;
     private final GroovyscopeTextDocumentService textDocumentService;
     private final GroovyscopeWorkspaceService workspaceService;
+    private final RequestExecutors requests;
     private volatile boolean shutdownRequested;
 
     /**
@@ -109,6 +110,16 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public GroovyscopeLanguageServer(IntConsumer exitHandler, Path fallbackRoot, EngineConfig config,
             Function<Path, LanguageServices> servicesProvider, Runnable daemonShutdown,
             Supplier<EngineConfig> liveConfig, Consumer<EngineConfig> reloader) {
+        this(exitHandler, fallbackRoot, config, servicesProvider, daemonShutdown, liveConfig, reloader, null);
+    }
+
+    /**
+     * @param executors the request lanes shared by every connection of the process; {@code null} creates a
+     *                  private pair sized from {@code config}
+     */
+    public GroovyscopeLanguageServer(IntConsumer exitHandler, Path fallbackRoot, EngineConfig config,
+            Function<Path, LanguageServices> servicesProvider, Runnable daemonShutdown,
+            Supplier<EngineConfig> liveConfig, Consumer<EngineConfig> reloader, RequestExecutors executors) {
         this.exitHandler = Objects.requireNonNull(exitHandler, "exitHandler");
         this.fallbackRoot = Objects.requireNonNull(fallbackRoot, "fallbackRoot");
         Objects.requireNonNull(config, "config");
@@ -128,10 +139,16 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             this.liveConfig = liveConfig;
             this.reloader = reloader;
         }
+        this.requests = executors == null ? RequestExecutors.forConfig(config) : executors;
         this.diagnostics = new DiagnosticsPublisher(services::get, client::get);
-        this.textDocumentService = new GroovyscopeTextDocumentService(services::get, diagnostics);
+        this.textDocumentService = new GroovyscopeTextDocumentService(services::get, diagnostics, requests);
         this.diagnostics.openDocuments(textDocumentService::openedDocuments);
-        this.workspaceService = new GroovyscopeWorkspaceService(services::get, diagnostics);
+        this.workspaceService = new GroovyscopeWorkspaceService(services::get, diagnostics, requests);
+    }
+
+    /** The request lanes this server submits to (shared in the daemon). */
+    public RequestExecutors requests() {
+        return requests;
     }
 
     @Override
@@ -217,10 +234,15 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         memory.put("usedMb", (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024));
         memory.put("maxMb", runtime.maxMemory() / (1024 * 1024));
         status.put("memory", memory);
+        Map<String, Object> load = new LinkedHashMap<>();
+        load.put("heavy", requests.heavyLoad());
+        load.put("workerThreads", requests.heavyThreads());
+        status.put("load", load);
         LanguageServices current = services.get();
         if (current != null) {
+            // Answered from what is already known: a probe must stay cheap on a busy daemon, so no tree walk here.
             status.put("dirty", current.isDirty());
-            status.put("files", current.workspace().discoverSourceFiles().size());
+            status.put("files", current.fileCount());
             status.put("trust", current.workspace().config().trust());
         }
         return CompletableFuture.completedFuture(status);
@@ -234,7 +256,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/reloadConfig")
     public CompletableFuture<Map<String, Object>> reloadConfig(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             Object json = params == null ? null : params.get("config");
             if (!(json instanceof String text) || text.isBlank()) {
                 throw new IllegalArgumentException("reloadConfig needs the configuration JSON in `config`");
@@ -263,7 +285,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/check")
     public CompletableFuture<Map<String, Object>> check(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             List<String> uris = targets(current, params);
             Object profile = params.get("profile");
@@ -297,7 +319,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/fix")
     public CompletableFuture<Map<String, Object>> fix(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             List<String> uris = targets(current, params);
             org.groovyscope.engine.services.QualityServices.FixResult result = noneInside(params, uris)
@@ -322,7 +344,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** Contract items of every profile-governed document, for {@code groovyscope baseline save}. Params: {@code root}. */
     @JsonRequest("groovyscope/contracts")
     public CompletableFuture<Map<String, Object>> contracts(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("files", requireServices(params).quality().contracts());
             return response;
@@ -332,7 +354,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** The runtime profile's view of one document. Params: {@code uri}, {@code root}. */
     @JsonRequest("groovyscope/profile")
     public CompletableFuture<Map<String, Object>> profile(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("profile needs a uri");
@@ -356,7 +378,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** Formatting edits for the given documents (all workspace documents when {@code uris} is empty). */
     @JsonRequest("groovyscope/format")
     public CompletableFuture<Map<String, Object>> format(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             List<String> uris = targets(current, params);
             if (uris.isEmpty() && !noneInside(params, uris)) {
@@ -397,7 +419,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/impact")
     public CompletableFuture<List<Map<String, Object>>> impact(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             org.groovyscope.engine.model.ImpactReport.Change change;
             try {
@@ -430,7 +452,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/callGraph")
     public CompletableFuture<Map<String, Object>> callGraph(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             boolean outgoing = "out".equalsIgnoreCase(String.valueOf(params.getOrDefault("direction", "in")));
             int depth = params.get("depth") instanceof Number number ? Math.max(1, Math.min(6, number.intValue())) : 2;
@@ -454,7 +476,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** Declarations whose name contains {@code query}. Params: {@code query}, {@code root}. */
     @JsonRequest("groovyscope/symbols")
     public CompletableFuture<Map<String, Object>> symbols(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             String query = params.get("query") == null ? "" : params.get("query").toString();
             List<Map<String, Object>> symbols = new java.util.ArrayList<>();
@@ -471,7 +493,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** The declaration under a position with its confidence, or {@code null}. Params: {@code uri}, {@code line}, {@code character}, {@code root}. */
     @JsonRequest("groovyscope/definition")
     public CompletableFuture<Map<String, Object>> definition(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("definition needs a uri with line and character");
@@ -494,7 +516,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** Hover text for a position (types, documentation, runtime-profile parameters, finding notes), or null. */
     @JsonRequest("groovyscope/hover")
     public CompletableFuture<Map<String, Object>> hover(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("hover needs a uri with line and character");
@@ -515,7 +537,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** The declaration of the type of the expression under a position, or null. */
     @JsonRequest("groovyscope/typeDefinition")
     public CompletableFuture<Map<String, Object>> typeDefinition(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("typeDefinition needs a uri with line and character");
@@ -538,7 +560,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** The outline of one document: declarations with their children. Params: {@code uri}, {@code root}. */
     @JsonRequest("groovyscope/documentSymbols")
     public CompletableFuture<Map<String, Object>> documentSymbols(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("documentSymbols needs a uri");
@@ -581,7 +603,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/rename")
     public CompletableFuture<Map<String, Object>> rename(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null || params.get("newName") == null) {
                 throw invalid("rename needs a uri with line and character, and newName");
@@ -613,7 +635,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** References to the symbol under a position, each with its confidence. */
     @JsonRequest("groovyscope/references")
     public CompletableFuture<Map<String, Object>> references(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("references needs a uri with line and character");
@@ -639,7 +661,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** Constructs that defeat static analysis. Params: {@code uris} (optional), {@code root}. */
     @JsonRequest("groovyscope/dynamicCode")
     public CompletableFuture<Map<String, Object>> dynamicCode(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             List<Map<String, Object>> findings = new java.util.ArrayList<>();
             Map<String, Integer> counts = new LinkedHashMap<>();
@@ -669,7 +691,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/readSymbol")
     public CompletableFuture<Map<String, Object>> readSymbol(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null || params.get("symbol") == null || params.get("symbol").toString().isBlank()) {
                 throw invalid("readSymbol needs a uri and a symbol");
@@ -693,7 +715,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/findCode")
     public CompletableFuture<Map<String, Object>> findCode(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             org.groovyscope.engine.search.CodeSearch.Query query = new org.groovyscope.engine.search.CodeSearch.Query(
                     text(params, "kind"), text(params, "name"), text(params, "type"), text(params, "pattern"),
@@ -719,7 +741,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/duplicates")
     public CompletableFuture<Map<String, Object>> duplicates(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             List<String> uris = targets(current, params);
             Integer minLines = number(params, "minLines");
@@ -734,7 +756,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** Sizes of the workspace by package, file and class, test files and untested classes. Params: {@code root}. */
     @JsonRequest("groovyscope/overview")
     public CompletableFuture<Map<String, Object>> overview(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             Map<String, String> sources = new LinkedHashMap<>(current.workspace().sources());
             sources.keySet().removeIf(uri -> !current.workspace().contains(uri));
@@ -749,7 +771,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/explainCode")
     public CompletableFuture<Map<String, Object>> explainCode(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             org.groovyscope.engine.services.Snapshot snapshot = current.snapshot();
             org.groovyscope.engine.callgraph.CallGraph graph = current.callGraph();
@@ -810,7 +832,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/graph")
     public CompletableFuture<Map<String, Object>> graph(Map<String, Object> params) {
-        return org.eclipse.lsp4j.jsonrpc.CompletableFutures.computeAsync(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             org.groovyscope.engine.services.Snapshot snapshot = current.snapshot();
             List<org.codehaus.groovy.ast.ClassNode> seeds = new ArrayList<>();

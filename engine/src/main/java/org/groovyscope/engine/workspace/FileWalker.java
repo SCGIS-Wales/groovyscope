@@ -134,7 +134,8 @@ public final class FileWalker {
     /** Prints a message on stderr the first time {@code key} is reported; returns whether it printed. */
     public static boolean reportOnce(String key, String message) {
         if (REPORTED.size() >= REPORT_LIMIT) {
-            return false;
+            // Full: forget what was reported rather than fall silent; a repeat after that is a small price.
+            REPORTED.clear();
         }
         if (REPORTED.add(key)) {
             org.groovyscope.engine.log.EngineLog.warn("%s", "" + message);

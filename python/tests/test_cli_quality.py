@@ -528,7 +528,10 @@ def test_hook_command_checks_written_files_and_gates_stop(
         return {"diagnostics": {uri: [finding]}, "summary": {}}
 
     monkeypatch.setattr(cli, "_RPC", fake_rpc)
-    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "sock", {"hooks": {"timeoutSeconds": 9}}))
+    probes: list[Path] = []
+    monkeypatch.setattr(cli, "_PROBE", lambda socket_file: probes.append(socket_file) or {"engine": "x"})
+    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: pytest.fail("a hook must never start the engine"))
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  timeoutSeconds: 9\n")
     payload = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "write", "tool_input": {"path": str(target)}})
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
     assert result.exit_code == 0, result.output
@@ -536,13 +539,16 @@ def test_hook_command_checks_written_files_and_gates_stop(
     assert seen[0]["method"] == "groovyscope/check" and seen[0]["timeout"] == 9.0
     assert seen[0]["params"]["include"] == ["compile", "lint", "practices"]
 
+    assert len(probes) == 1
+
     other = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "read", "tool_input": {"path": str(target)}})
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=other).output == ""
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input="{}").output == ""
 
     stop = json.dumps({"hook_event_name": "Stop"})
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop).output == ""  # gate off
-    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "sock", {"hooks": {"stopGate": True}}))
+    assert len(probes) == 1  # none of those three events touched the engine
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  stopGate: true\n")
     monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, " M src/main/groovy/A.groovy\n"))
     blocked = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop)
     assert json.loads(blocked.output)["decision"] == "block" and seen[-1]["params"]["include"] == ["compile"]
@@ -554,9 +560,6 @@ def test_hook_command_checks_written_files_and_gates_stop(
     skipped = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
     assert skipped.exit_code == 0 and "hook check skipped" in skipped.output
 
-    def down(_obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
-        raise SystemExit(1)
-
-    monkeypatch.setattr(cli, "daemon_socket_for", down)
+    monkeypatch.setattr(cli, "_PROBE", lambda _socket_file: None)
     unavailable = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
-    assert unavailable.exit_code == 0 and "engine is unavailable" in unavailable.output
+    assert unavailable.exit_code == 0 and "daemon is not running" in unavailable.output

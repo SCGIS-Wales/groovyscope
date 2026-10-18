@@ -132,6 +132,11 @@ public final class WorkspaceModel {
             return null;
         }
         try {
+            long limit = config.maxFileBytes();
+            if (limit > 0 && Files.size(path) > limit) {
+                // The compile skips it; format and code actions must not read it either.
+                return null;
+            }
             return Files.readString(path, StandardCharsets.UTF_8);
         } catch (IOException e) {
             return null;

@@ -53,6 +53,9 @@ hard failures.
 | Kiro shows `1 MCP failure` | `groovyscope mcp` could not start or reach the daemon; run `groovyscope doctor`, then `groovyscope daemon status` and read its log |
 | An MCP tool answers `... failed: ...` | The engine refused the request (unknown symbol, bad position, unknown change kind); the message names the cause |
 | `daemon unavailable (...); running the engine directly` on stderr | The daemon could not start; `groovyscope daemon status` shows the log path, read it, then `groovyscope daemon start` |
+| An MCP tool answers `groovyscope engine is busy: ...` | The heavy lane's queue is full (`daemon.requestQueue` waiting behind `daemon.workerThreads` running); retry in a moment, or raise either in `.groovyscope.yaml` on a large machine |
+| An MCP tool answers `... did not answer within 100s; the engine was told to stop it` | The request was over `mcp.requestTimeoutSeconds` and cancelled on the engine; narrow the paths, or raise the budget (keep it under Kiro's tool timeout in `mcp.json`) |
+| An MCP tool answers `... another call is still running it` | An identical call is in flight and this one waited its budget for it; the first call's answer arrives when the work is done, so retry rather than start a different request |
 | `daemon status` or `doctor` says `exited with OutOfMemoryError` | The workspace needs more heap than `daemon.heap` (default 1g) allows; raise it in `.groovyscope.yaml`, then `groovyscope daemon restart` |
 | `doctor` warns `heap ... in use` | The daemon is near its limit; raise `daemon.heap` before it runs out, or lower `workspace.javaSources` and the source roots to what the agent needs |
 | Stale answers after switching branches | Every CLI and MCP request re-checks the files on disk; if an editor session still looks stale, `groovyscope daemon restart` |

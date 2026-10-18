@@ -134,6 +134,7 @@ public final class TypeCheckAnalyzer {
                         attempt, remaining.size());
                 return diagnostics;
             }
+            org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             Pass pass = compileOnce(remaining, classpath, trust, extensions);
             if (attempt == 0) {
                 deadline = started + RetryBudget.of(System.nanoTime() - started);

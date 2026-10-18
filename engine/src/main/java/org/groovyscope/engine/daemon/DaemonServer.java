@@ -93,6 +93,7 @@ public final class DaemonServer implements Closeable {
     private Thread acceptor;
     private ScheduledExecutorService watchdog;
     private volatile Object boundFileKey;
+    private final org.groovyscope.engine.lsp.RequestExecutors executors;
 
     /**
      * @param socketPath where to listen; a stale file at that path is removed first
@@ -111,6 +112,7 @@ public final class DaemonServer implements Closeable {
         this.registry = new WorkspaceRegistry(config, cacheDir);
         this.idleTimeout = Objects.requireNonNull(idleTimeout, "idleTimeout");
         this.onExit = Objects.requireNonNull(onExit, "onExit");
+        this.executors = org.groovyscope.engine.lsp.RequestExecutors.forConfig(config);
     }
 
     /** Binds the socket and starts accepting connections. */
@@ -285,7 +287,7 @@ public final class DaemonServer implements Closeable {
         try (InputStream in = Channels.newInputStream(channel); OutputStream out = Channels.newOutputStream(channel)) {
             front = new GroovyscopeLanguageServer(
                     code -> closeQuietly(channel), socketPath.toAbsolutePath().getParent(), config, registry,
-                    this::requestExit, registry::config, registry::reload);
+                    this::requestExit, registry::config, registry::reload, executors);
             Launcher<LanguageClient> launcher = new LSPLauncher.Builder<LanguageClient>().setLocalService(front)
                     .setRemoteInterface(LanguageClient.class).setInput(in).setOutput(out)
                     .wrapMessages(org.groovyscope.engine.lsp.GroovyscopeLanguageServer.messageLogging()).create();
@@ -315,6 +317,12 @@ public final class DaemonServer implements Closeable {
             return;
         }
         Duration idle = Duration.between(lastActivity.get(), Instant.now());
+        // With nobody connected, a workspace idle for daemon.workspaceIdleMinutes is released: its trees, index,
+        // loader and jars go, and the next connection that opens it compiles afresh.
+        int evicted = registry.evictIdle(Duration.ofMinutes(registry.config().daemon().workspaceIdleMinutes()));
+        if (evicted > 0) {
+            org.groovyscope.engine.log.EngineLog.info("released %d idle workspace(s)", evicted);
+        }
         if (idle.compareTo(idleTimeout) >= 0) {
             org.groovyscope.engine.log.EngineLog.info("%s", "idle for " + idle.toSeconds() + "s, exiting");
             requestExit(true);
@@ -383,6 +391,7 @@ public final class DaemonServer implements Closeable {
         if (watchdog != null) {
             watchdog.shutdownNow();
         }
+        executors.shutdown();
         if (server != null) {
             try {
                 server.close();

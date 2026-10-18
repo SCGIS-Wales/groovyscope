@@ -69,11 +69,19 @@ public final class AstIndex {
         Map<String, ClassNode> classesByName = new HashMap<>();
         List<NodeEntry> declarations = new ArrayList<>();
         for (Map.Entry<String, ModuleNode> module : modules.entrySet()) {
+            org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             String uri = module.getKey();
             TextLines lines = new TextLines(sources.getOrDefault(uri, ""));
             linesByUri.put(uri, lines);
             IndexVisitor visitor = new IndexVisitor(uri, lines.fullRange());
-            visitor.index(module.getValue());
+            try {
+                visitor.index(module.getValue());
+            } catch (RuntimeException | LinkageError | StackOverflowError e) {
+                // One tree the visitor cannot walk (a linkage error from a classpath type, a pathological depth)
+                // costs that file's entries, not the whole index.
+                org.groovyscope.engine.log.EngineLog.warn("%s", "not indexed: " + uri + ": " + e);
+                continue;
+            }
             List<NodeEntry> entries = visitor.entries();
             entries.sort((a, b) -> a.range().start().compareTo(b.range().start()));
             entriesByUri.put(uri, Collections.unmodifiableList(entries));

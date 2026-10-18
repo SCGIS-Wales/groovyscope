@@ -60,6 +60,24 @@ status`, `doctor` and `checkup` read `OutOfMemoryError` from the log tail and na
 `groovyscope/status` reports `memory.usedMb` and `memory.maxMb`, and the same commands warn once the heap in
 use passes 85% of the maximum, before the daemon dies.
 
+Requests from every connection run on two bounded lanes shared by the process (`RequestExecutors`), not on the
+common pool: a heavy lane of `daemon.workerThreads` threads (the processor count by default) for anything that
+compiles, lints, type-checks or formats, with at most `daemon.requestQueue` requests waiting, and a small light
+lane for hover, definition, outline, references and status, so one long type check never starves navigation.
+A request that finds the heavy queue full is answered at once with a `RequestFailed` error that names the load,
+which is back pressure the client can act on instead of a timeout. Each request runs with its cancel flag bound
+to the thread (`Cancellation`), and the compiler (between rounds), the type checker (between attempts), the
+linter (between files), the index and the call graph (between modules and batches) check it at their safe
+points, so `$/cancelRequest` stops work within one unit. Nothing is interrupted or stopped from outside.
+
+A compile is single flight: the first request that finds the snapshot stale runs it, later requests join its
+future and poll their own cancel flag while they wait. A cancelled waiter leaves without touching the compile the
+others still need; the compile itself is abandoned, at its next checkpoint, only when every request interested
+in it is gone, and the workspace then stays stale for the next request. With no client connected, a workspace
+nobody has asked about for `daemon.workspaceIdleMinutes` is released (trees, index, loader and jars), and the
+next connection that opens it compiles afresh. `status` answers from counters the model already holds, never
+from a walk of the tree, so the liveness probe stays cheap on a busy daemon.
+
 Locations (overridable with `GROOVYSCOPE_SOCKET_DIR` and `GROOVYSCOPE_CACHE_DIR`):
 
 | What | macOS | Linux |
@@ -300,8 +318,14 @@ engine. Each tool maps to one engine request: `groovyscope/symbols`, `/definitio
 Results are returned as one compact JSON text block per call. The SDK would otherwise pretty-print each result
 and also attach it as `structuredContent`, sending every answer twice and about a third larger;
 `output.structured: true` restores the structured copy for clients that read it. Tools carry titles and
-`ToolAnnotations` (read-only, idempotent, closed-world). The SDK runs tools on worker threads, so the one engine
-session is guarded by a lock and reopened (with a daemon restart if needed) when the engine went away.
+`ToolAnnotations` (read-only, idempotent, closed-world). The SDK runs tools on worker threads and agents call
+tools in parallel, so the one engine connection is a channel: a reader thread matches replies to requests by id
+and each call waits on its own future, with no lock held for the duration of a request. Three guardrails sit in
+front of it (`mcp.*` in `.groovyscope.yaml`): a budget of `mcp.requestTimeoutSeconds` (100 s, under Kiro's
+120 s tool timeout) after which the call sends `$/cancelRequest` to the engine and answers "still running";
+`mcp.maxInFlight` (4) calls on the engine at a time, the rest waiting within the same budget; and single flight,
+where a call identical to one still running joins it instead of doubling the work. The channel is reopened
+(with a daemon restart if needed) when the engine went away; a slow engine is never mistaken for a dead one.
 `hover`, `type_definition`, `document_symbols` and `rename` map to `groovyscope/hover`, `/typeDefinition`,
 `/documentSymbols` and `/rename`, which reuse the LSP implementations.
 

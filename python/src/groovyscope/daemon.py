@@ -132,6 +132,29 @@ def start_lock(socket_file: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+PROBE_RUNNING = "running"
+PROBE_ABSENT = "absent"  # no socket, or nothing listens on it
+PROBE_BUSY = "busy"  # the socket accepted the connection but the status did not come back in time
+PROBE_REFUSED = "refused"  # something answered, but not a groovyscope status (another engine, a broken frame)
+State = Callable[[Path], str]
+
+
+def probe_state(socket_file: Path, timeout: float = 5.0) -> str:
+    """What the socket told us: ``running``, ``absent``, ``busy`` or ``refused``. A busy daemon is alive, so a
+    caller must wait or retry rather than start a second JVM against the same socket."""
+    if not socket_file.exists():
+        return PROBE_ABSENT
+    try:
+        result = rpc.request(socket_file, STATUS_METHOD, {}, timeout=timeout)
+    except TimeoutError:
+        return PROBE_BUSY
+    except OSError:
+        return PROBE_ABSENT
+    except (RuntimeError, ValueError):
+        return PROBE_REFUSED
+    return PROBE_RUNNING if isinstance(result, dict) and "engine" in result else PROBE_REFUSED
+
+
 def probe(socket_file: Path, timeout: float = 5.0) -> dict[str, Any] | None:
     """The daemon's status, or None when nothing answers on the socket."""
     if not socket_file.exists():
@@ -231,17 +254,23 @@ def ensure_running(
     start_fn: Callable[..., dict[str, Any]] | None = None,
     stop_fn: Callable[[Path], bool] | None = None,
     expected_engine: str | None = None,
+    state_fn: State | None = None,
 ) -> dict[str, Any]:
     """Probe first; start only when nothing answers. A daemon running another engine version (left over from
-    before an upgrade) is stopped and replaced. Probe and start run under a lock, so concurrent clients share
-    one daemon."""
+    before an upgrade) is stopped and replaced. A daemon that is alive but too busy to answer the probe is left
+    alone: the caller gets ``{"busy": True}`` and connects to it anyway. Probe and start run under a lock, so
+    concurrent clients share one daemon."""
     check = _probe(probe_fn)
+    state = probe_state if state_fn is None else state_fn
     launch = start if start_fn is None else start_fn
     halt = stop if stop_fn is None else stop_fn
     check_socket_path(socket_file)
     secure_dir(socket_file.parent)
     with start_lock(socket_file):
         status = check(socket_file)
+        if status is None and state(socket_file) == PROBE_BUSY:
+            LOG.info("daemon on %s is busy; not starting another", socket_file)
+            return {"busy": True}
         if status is not None and expected_engine and status.get("engine") not in (None, expected_engine):
             LOG.info("daemon runs engine %s, expected %s; restarting it", status.get("engine"), expected_engine)
             halt(socket_file)

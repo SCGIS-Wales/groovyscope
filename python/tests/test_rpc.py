@@ -124,6 +124,11 @@ class _SessionHandler(socketserver.StreamRequestHandler):
                 )
             elif message["method"] == "hangup":
                 return
+            elif message["method"] == "hang":
+                continue  # never answered: what a client's timeout and cancel are for
+            elif message["method"] == "slow":
+                threading.Event().wait(0.3)
+                self.request.sendall(rpc.encode({"jsonrpc": "2.0", "id": message["id"], "result": "late"}))
             else:
                 # Noise a client must skip: a notification and a request from the engine, then the reply.
                 self.request.sendall(rpc.encode({"jsonrpc": "2.0", "method": "window/logMessage", "params": {}}))
@@ -194,3 +199,54 @@ def test_oversized_frames_are_refused() -> None:
         rpc.split_frame(f"Content-Length: {rpc.MAX_FRAME_BYTES + 1}\r\n\r\n".encode())
     with pytest.raises(ValueError, match="header too long"):
         rpc.split_frame(b"x" * (rpc.MAX_HEADER_BYTES + 1))
+
+
+def test_channel_answers_concurrent_requests_by_id(session_server: _SessionServer, short_dir: Path) -> None:
+    channel = rpc.open_channel(short_dir / "e.sock", timeout=5)
+    try:
+        results: dict[str, object] = {}
+
+        def one(name: str, method: str) -> None:
+            results[name] = rpc.channel_call(channel, method, {"who": name}, timeout=10)
+
+        threads = [
+            threading.Thread(target=one, args=("slowpoke", "slow")),
+            threading.Thread(target=one, args=("quick", "groovyscope/status")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(15)
+        assert results["quick"] == {"echo": {"who": "quick"}}
+        assert results["slowpoke"] == "late"
+        assert rpc.channel_alive(channel)
+        with pytest.raises(RuntimeError, match="fail failed: nope"):
+            rpc.channel_call(channel, "fail", {}, timeout=5)
+    finally:
+        rpc.close_channel(channel)
+    assert not rpc.channel_alive(channel)
+    with pytest.raises(OSError):
+        rpc.channel_submit(channel, "groovyscope/status", {})
+
+
+def test_channel_timeout_cancels_the_request_on_the_engine(session_server: _SessionServer, short_dir: Path) -> None:
+    channel = rpc.open_channel(short_dir / "e.sock", timeout=5)
+    try:
+        with pytest.raises(TimeoutError, match=r"hang did not answer within 0\.3s"):
+            rpc.channel_call(channel, "hang", {"n": 1}, timeout=0.3)
+        _wait_for(session_server, 2)
+        cancel = [m for m in session_server.received if m.get("method") == rpc.CANCEL_METHOD]
+        assert cancel and cancel[0]["params"] == {"id": 1}
+        assert channel["pending"] == {}
+        # The channel is still usable after a timed-out request.
+        assert rpc.channel_call(channel, "groovyscope/status", {}, timeout=5) == {"echo": {}}
+    finally:
+        rpc.close_channel(channel)
+
+
+def test_channel_fails_every_waiter_when_the_engine_hangs_up(session_server: _SessionServer, short_dir: Path) -> None:
+    channel = rpc.open_channel(short_dir / "e.sock", timeout=5)
+    with pytest.raises(OSError):
+        rpc.channel_call(channel, "hangup", {}, timeout=5)
+    assert not rpc.channel_alive(channel)
+    rpc.close_channel(channel)

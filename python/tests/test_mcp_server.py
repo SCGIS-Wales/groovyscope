@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -220,19 +221,18 @@ def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) ->
     events: list[tuple[str, Any]] = []
     session = {"sock": None}
 
-    monkeypatch.setattr(mcp_server.rpc, "open_session", lambda path: events.append(("open", path)) or session)
+    monkeypatch.setattr(mcp_server.rpc, "open_channel", lambda path: events.append(("open", path)) or session)
     monkeypatch.setattr(
-        mcp_server.rpc, "call", lambda _s, method, _params=None, timeout=None: events.append((method, timeout)) or {}
+        mcp_server.rpc,
+        "channel_call",
+        lambda _s, method, _params=None, timeout=None: events.append((method, timeout)) or {},
     )
-    monkeypatch.setattr(
-        mcp_server.rpc, "notify_session", lambda _s, method, _params=None: events.append((method, None))
-    )
-    monkeypatch.setattr(mcp_server.rpc, "close_session", lambda s: events.append(("close", s)))
+    monkeypatch.setattr(mcp_server.rpc, "close_channel", lambda s: events.append(("close", s)))
 
     class _Server:
         def run(self, transport: str) -> None:
             events.append(("run", transport))
-            # The tools call the engine through the session-bound function with a long timeout.
+            # The tools call the engine through the channel-bound function within the request budget.
             self.call("groovyscope/status", {})
 
     def build(root: Path, call: Any, output: Any, environ: Any) -> _Server:
@@ -241,11 +241,11 @@ def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) ->
         return server
 
     monkeypatch.setattr(mcp_server, "build_server", build)
-    assert mcp_server.serve(ROOT, Path("/s.sock"), {}, {}) == 0
+    assert mcp_server.serve(ROOT, Path("/s.sock"), {"mcp": {"requestTimeoutSeconds": 90}}, {}) == 0
     assert events == [
         ("open", Path("/s.sock")),
         ("run", "stdio"),
-        ("groovyscope/status", 600.0),
+        ("groovyscope/status", 90.0),
         ("close", session),
     ]
 
@@ -357,7 +357,7 @@ def test_writes_stay_inside_the_workspace_and_keep_line_endings(
         local_tools["fix"](paths=["../elsewhere.groovy"])
 
 
-def test_session_caller_reconnects_once_after_the_engine_went_away(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_session_caller_reconnects_once_after_the_engine_went_away() -> None:
     opened: list[Path] = []
     attempts: list[str] = []
 
@@ -368,21 +368,102 @@ def test_session_caller_reconnects_once_after_the_engine_went_away(monkeypatch: 
             raise ConnectionError(msg)
         return {"ok": method}
 
-    monkeypatch.setattr(mcp_server.rpc, "call", call)
-    monkeypatch.setattr(mcp_server.rpc, "close_session", lambda _s: None)
     names = iter(["first", "second"])
 
     def opener(path: Path) -> dict[str, Any]:
         opened.append(path)
         return {"name": next(names)}
 
-    caller, close = mcp_server.session_caller(Path("/a.sock"), lambda: Path("/b.sock"), open_session=opener)
+    caller, close = mcp_server.session_caller(
+        Path("/a.sock"), lambda: Path("/b.sock"), open_session=opener, call_fn=call, close_fn=lambda _s: None
+    )
     assert caller("groovyscope/status", {}) == {"ok": "groovyscope/status"}
     assert opened == [Path("/a.sock"), Path("/b.sock")] and attempts == ["first", "second"]
     close()
-    no_retry, _ = mcp_server.session_caller(Path("/a.sock"), None, open_session=lambda _p: {"name": "first"})
+    no_retry, _ = mcp_server.session_caller(
+        Path("/a.sock"), None, open_session=lambda _p: {"name": "first"}, call_fn=call, close_fn=lambda _s: None
+    )
     with pytest.raises(ConnectionError):
         no_retry("groovyscope/status", {})
+
+
+def test_session_caller_runs_calls_concurrently_within_the_in_flight_limit() -> None:
+    running = 0
+    peak = 0
+    gate = threading.Lock()
+    release = threading.Event()
+
+    def call(_session: dict[str, Any], method: str, params: Any = None, timeout: float | None = None) -> Any:
+        nonlocal running, peak
+        with gate:
+            running += 1
+            peak = max(peak, running)
+        release.wait(5)
+        with gate:
+            running -= 1
+        return {"method": method, "params": params, "timeout": timeout}
+
+    caller, close = mcp_server.session_caller(
+        Path("/a.sock"),
+        None,
+        open_session=lambda _p: {"name": "one"},
+        call_fn=call,
+        close_fn=lambda _s: None,
+        limits={"maxInFlight": 2, "requestTimeoutSeconds": 30},
+    )
+    results: list[Any] = []
+    threads = [
+        threading.Thread(target=lambda i=i: results.append(caller("groovyscope/check", {"n": i}))) for i in range(3)
+    ]
+    for thread in threads:
+        thread.start()
+    threading.Event().wait(0.3)
+    assert peak == 2  # the third waits for a slot instead of hitting the engine
+    release.set()
+    for thread in threads:
+        thread.join(10)
+    assert sorted(r["params"]["n"] for r in results) == [0, 1, 2]
+    assert all(r["timeout"] == 30.0 for r in results)
+    close()
+
+
+def test_session_caller_joins_identical_calls_and_reports_a_timed_out_one() -> None:
+    calls: list[str] = []
+    release = threading.Event()
+
+    def call(_session: dict[str, Any], method: str, params: Any = None, timeout: float | None = None) -> Any:
+        calls.append(method)
+        if method == "hang":
+            msg = "hang did not answer"
+            raise TimeoutError(msg)
+        release.wait(5)
+        return {"echo": params}
+
+    caller, close = mcp_server.session_caller(
+        Path("/a.sock"),
+        None,
+        open_session=lambda _p: {},
+        call_fn=call,
+        close_fn=lambda _s: None,
+        limits={"requestTimeoutSeconds": 20, "maxInFlight": 4},
+    )
+    results: list[Any] = []
+    same = [
+        threading.Thread(target=lambda: results.append(caller("groovyscope/check", {"uris": ["a"]}))) for _ in range(3)
+    ]
+    for thread in same:
+        thread.start()
+    threading.Event().wait(0.3)
+    release.set()
+    for thread in same:
+        thread.join(10)
+    assert calls == ["groovyscope/check"]  # one engine request served three identical calls
+    assert results == [{"echo": {"uris": ["a"]}}] * 3
+    with pytest.raises(RuntimeError, match="did not answer within 20s; the engine was told to stop it"):
+        caller("hang", {})
+    assert mcp_server.request_limits(None) == (100.0, 4)
+    assert mcp_server.request_limits({"requestTimeoutSeconds": 0, "maxInFlight": 0}) == (1.0, 1)
+    close()
 
 
 def test_insight_tools_and_rename(

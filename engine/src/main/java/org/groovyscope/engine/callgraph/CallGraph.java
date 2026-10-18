@@ -52,7 +52,11 @@ public final class CallGraph {
     /** Walks every call-like entry in the index and resolves it. */
     public static CallGraph build(AstIndex index, Resolver resolver, Symbols symbols) {
         CallGraph graph = new CallGraph(symbols);
+        int visited = 0;
         for (NodeEntry entry : index.allEntries()) {
+            if ((++visited & 255) == 0) {
+                org.groovyscope.engine.concurrent.Cancellation.checkpoint();
+            }
             if (!isCall(entry)) {
                 continue;
             }

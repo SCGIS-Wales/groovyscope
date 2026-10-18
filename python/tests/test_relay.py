@@ -67,3 +67,30 @@ async def test_pump_runs_on_eof_even_after_an_error() -> None:
     with pytest.raises(OSError, match="sink broke"):
         await relay.pump(reader, write, on_eof)
     assert done.is_set()
+
+
+@pytest.mark.asyncio
+async def test_relay_uses_a_connection_opened_before_stdin_is_touched(short_dir: Path) -> None:
+    path = short_dir / "c.sock"
+    closed = asyncio.Event()
+    server = await _echo_server(path, closed)
+    connection = await asyncio.open_unix_connection(str(path))
+    stdin = asyncio.StreamReader()
+    received: list[bytes] = []
+
+    async def write_out(data: bytes) -> None:
+        received.append(data)
+
+    async def close_out() -> None:
+        pass
+
+    task = asyncio.create_task(relay.relay(path, stdin, write_out, close_out, connection))
+    stdin.feed_data(b"init")
+    await asyncio.sleep(0.1)
+    stdin.feed_eof()
+    assert await asyncio.wait_for(task, 10) == 0
+    assert b"".join(received) == b"echo:init"
+    server.close()
+    await server.wait_closed()
+    with pytest.raises(OSError):
+        await relay.run(short_dir / "nobody.sock")
