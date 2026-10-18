@@ -100,6 +100,13 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
         return services.size();
     }
 
+    /** Every open workspace drops its derived caches (memory pressure). */
+    public void shedAll() {
+        for (LanguageServices open : services.values()) {
+            open.shed();
+        }
+    }
+
     /**
      * Releases every workspace that answered no request for {@code idle} or longer: its loader, trees and index
      * are dropped and its background thread stopped. Returns how many were released. Callers make sure no

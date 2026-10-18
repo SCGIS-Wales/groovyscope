@@ -93,6 +93,7 @@ class RequestExecutorsSpec extends Specification {
         new org.groovyscope.engine.config.EngineConfig.Daemon(3, 0, 0).requestQueue() == 1
         new org.groovyscope.engine.config.EngineConfig.Daemon(3, 0, 0).workspaceIdleMinutes() == 1
         org.groovyscope.engine.config.EngineConfig.fromJson('{"daemon":{"workerThreads":2,"requestQueue":8}}').daemon().workerThreads() == 2
+        org.groovyscope.engine.config.EngineConfig.fromJson('{"daemon":{"heapPressurePercent":70}}').daemon().heapPressurePercent() == 70
         org.groovyscope.engine.config.EngineConfig.fromJson('{}').daemon() == org.groovyscope.engine.config.EngineConfig.Daemon.DEFAULTS
     }
 

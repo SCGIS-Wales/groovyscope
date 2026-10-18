@@ -147,6 +147,7 @@ def test_lsp_execs_the_engine(
     assert "-Xmx2g" in argv
     assert all(flag in argv for flag in SAFETY_FLAGS)
     assert OOM_FLAG in argv
+    assert not any(flag.startswith("-XX:+HeapDumpOnOutOfMemoryError") for flag in argv)
     assert argv[-6:-2] == ["-jar", str(jar), "lsp", "--stdio"]
     assert argv[-2] == "--cache-dir"
     assert "-Xshare:auto" in argv

@@ -98,6 +98,14 @@
             "null"
           ],
           "description": "File listing classpath entries, one per line (written by `groovyscope classpath`)."
+        },
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxTotalBytes": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -128,6 +136,34 @@
           "minimum": 1
         },
         "workspaceIdleMinutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "heapPressurePercent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 99
+        },
+        "maxHeap": {
+          "type": "string",
+          "pattern": "^(auto|[0-9]+[kKmMgG])$"
+        },
+        "heapGrowthFactor": {
+          "type": "number",
+          "minimum": 1
+        },
+        "maxRestartsPerTenMinutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "heapDumpOnOutOfMemory": {
+          "type": "boolean"
+        },
+        "logMaxBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "logsKept": {
           "type": "integer",
           "minimum": 1
         }

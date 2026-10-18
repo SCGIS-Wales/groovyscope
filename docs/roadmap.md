@@ -364,7 +364,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   demultiplexed engine session with per-call futures (G8), timeout and cancel propagation with single flight
   (G9), an in-flight limit (G10), relay and probe fixes (G12). Done when: the specs and tests named in section
   5.3 pass, CI green, merged, released.
-- [ ] **Stage 19: out-of-memory self-healing** — not started. Engine: memory pressure guard that sheds caches
+- [ ] **Stage 19: out-of-memory self-healing** — branch `feat/oom-self-healing`, 2026-10-18, implemented locally,
+  PR open. Engine: memory pressure guard that sheds caches
   and refuses whole-workspace work (G4), workspace size budget (G5), opt-in heap dump (G6). Front end:
   crash-loop guard with backoff and heap escalation up to `daemon.maxHeap` recorded in a state file (G11),
   bounded logs and a cache sweep (G13), stop gate and write fixes (G14). Done when: the specs and tests named
@@ -514,3 +515,12 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   (`mcp.requestTimeoutSeconds`, `mcp.maxInFlight`, single flight), the relay connecting before stdin and one
   restart of a vanished daemon, probe states with a busy guard against a second JVM, hooks that never cold-start
   the engine. Engine specs 392 green, 358 Python tests at 95% coverage.
+- 2026-10-18: Stage 19 implemented locally on `feat/oom-self-healing`. Engine: `MemoryGuard` on the tenured
+  pool (`daemon.heapPressurePercent`) shedding every workspace's caches and refusing whole-workspace requests
+  under pressure, `memory.pressure` in `status`; `workspace.maxFiles` and `workspace.maxTotalBytes` with one
+  `GS101` warning for what is left out. Front end: `selfheal` (state file next to the daemon log, exit cause
+  from the log, restart budget `daemon.maxRestartsPerTenMinutes` with jittered backoff, heap grown by
+  `daemon.heapGrowthFactor` up to `daemon.maxHeap` after an out-of-memory exit and kept), log rotation
+  (`daemon.logMaxBytes`, `daemon.logsKept`), opt-in heap dumps (`daemon.heapDumpOnOutOfMemory`), a cache sweep
+  reported by `doctor` and applied by `checkup --fix`, `git status -z` in the stop gate, and writes that refuse
+  a file changed since it was read. Engine specs 400 green, 367 Python tests at 95% coverage.

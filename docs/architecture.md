@@ -78,6 +78,29 @@ nobody has asked about for `daemon.workspaceIdleMinutes` is released (trees, ind
 next connection that opens it compiles afresh. `status` answers from counters the model already holds, never
 from a walk of the tree, so the liveness probe stays cheap on a busy daemon.
 
+Memory has two more guardrails. In the engine, a `MemoryGuard` watches the tenured pool: once the memory still in
+use after a collection passes `daemon.heapPressurePercent` (85%) of the maximum, every workspace sheds the caches
+it can rebuild (call graph, quality services, folded diagnostics, cached symbols), `status` reports
+`memory.pressure`, and requests that would walk the whole workspace (`duplicates`, `overview`, `graph`, and
+`check`, `format` or `dynamicCode` with no `uris`) are refused with the `daemon.heap` advice while single-document
+requests keep working; pressure clears when a later collection leaves the pool under the threshold.
+`OutOfMemoryError` is still never caught. Before that point, admission control keeps a huge workspace from being
+loaded at all: `workspace.maxFiles` (20,000) and `workspace.maxTotalBytes` (256 MB) bound what the compile reads,
+and the files left out are reported once as a `GS101` warning on the first document, naming the first omitted
+file and the limits to raise.
+
+In the front end, `selfheal` keeps a small state file next to the daemon log (the heap of the last start, the
+start times of the last ten minutes, the log size at the last start). Before each start it reads what the
+previous JVM wrote after that point: an `OutOfMemoryError` there grows the heap by `daemon.heapGrowthFactor`
+(1.5) up to `daemon.maxHeap` (`auto`: a quarter of physical memory, at most 4g), and the grown heap is kept
+across later starts; a start inside the window waits a jittered exponential backoff (1 s, 2 s, 4 s, capped at
+30 s); after `daemon.maxRestartsPerTenMinutes` (3) starts the front end stops starting the daemon and every
+request fails with the advice instead of thrashing. `daemon status`, `doctor` and `checkup` show the grown heap
+and the restart count. The daemon log rotates at `daemon.logMaxBytes` (5 MB, `daemon.logsKept` 3 copies), and
+with `daemon.heapDumpOnOutOfMemory` the JVM writes a heap dump under the cache before exiting. `doctor` reports
+what has piled up under the cache (rotated logs beyond the kept count, CDS archives untouched for a fortnight,
+heap dumps older than a week) and `checkup --fix` removes it.
+
 Locations (overridable with `GROOVYSCOPE_SOCKET_DIR` and `GROOVYSCOPE_CACHE_DIR`):
 
 | What | macOS | Linux |

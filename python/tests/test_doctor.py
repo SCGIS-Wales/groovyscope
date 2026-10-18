@@ -111,6 +111,7 @@ def test_build_report_and_failures(
         "kiro agent",
         "profiles",
         "daemon",
+        "cache",
     ]
     assert has_failures(report)  # no JAR bundled
     assert not has_failures([("ok", "a", ""), ("warn", "b", ""), ("info", "c", "")])

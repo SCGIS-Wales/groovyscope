@@ -274,13 +274,32 @@ public final class WorkspaceModel {
         return read(discoverCompileFiles(), config.javaSources());
     }
 
+    /** Files the last {@link #read} left out because the workspace is over its budget; empty when none. */
+    private volatile List<Path> omitted = List.of();
+
+    /** The files the budget ({@code workspace.maxFiles}, {@code workspace.maxTotalBytes}) left out of the last read. */
+    public List<Path> omitted() {
+        return omitted;
+    }
+
     private Map<String, String> read(List<Path> files, boolean withJava) {
         long limit = config.maxFileBytes();
+        int maxFiles = config.budget().maxFiles();
+        long maxTotal = config.budget().maxTotalBytes();
+        long total = 0;
+        List<Path> leftOut = new ArrayList<>();
         Map<String, String> sources = new TreeMap<>();
         for (Path file : files) {
             String uri = toUri(file);
             if (!openDocuments.containsKey(uri)) {
                 try {
+                    long size = Files.size(file);
+                    if ((maxFiles > 0 && sources.size() >= maxFiles) || (maxTotal > 0 && total + size > maxTotal)) {
+                        // Over budget: the rest is left out (and reported once) rather than read until the heap goes.
+                        leftOut.add(file);
+                        continue;
+                    }
+                    total += size;
                     sources.put(uri, Files.readString(file, StandardCharsets.UTF_8));
                 } catch (IOException e) {
                     // Unreadable or non-UTF-8 files are skipped rather than failing the whole workspace.
@@ -300,6 +319,11 @@ public final class WorkspaceModel {
             }
                 sources.put(uri, open.getValue());
         }
+        if (!leftOut.isEmpty() && omitted.isEmpty()) {
+            org.groovyscope.engine.log.EngineLog.warn("%d file(s) left out: the workspace is over its budget (workspace.maxFiles %d, workspace.maxTotalBytes %d)",
+                    leftOut.size(), maxFiles, maxTotal);
+        }
+        omitted = List.copyOf(leftOut);
         return sources;
     }
 

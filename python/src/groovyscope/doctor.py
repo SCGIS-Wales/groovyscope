@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__, daemon, kiro_agent, profiles
+from groovyscope import __version__, daemon, kiro_agent, profiles, sweep
 from groovyscope.config import load_config_with_notes
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover, jdk_status
@@ -156,15 +156,29 @@ AGENT_FORMAT_MEANING = {
 
 def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
     details = daemon.info(root, environ)
+    grown = ""
+    if details["heap"]:
+        grown = f"; the last start used a {details['heap']} heap, grown after an out-of-memory exit"
     if details["running"]:
         engine = (details["status"] or {}).get("engine", "?")
         warning = daemon.memory_warning(details["status"])
         if warning:
-            return ("warn", "daemon", f"running on {details['socket']} (engine {engine}); {warning}")
-        return ("ok", "daemon", f"running on {details['socket']} (engine {engine})")
+            return ("warn", "daemon", f"running on {details['socket']} (engine {engine}); {warning}{grown}")
+        return ("info" if grown else "ok", "daemon", f"running on {details['socket']} (engine {engine}){grown}")
     if details["outOfMemory"]:
-        return ("warn", "daemon", daemon.out_of_memory_advice(details["log"]))
+        return ("warn", "daemon", daemon.out_of_memory_advice(details["log"]) + grown)
     return ("info", "daemon", f"not running; starts with the first `groovyscope lsp` session (log: {details['log']})")
+
+
+def cache_check(environ: Mapping[str, str], config: Mapping[str, Any] | None) -> Check:
+    """What has piled up under the cache directory: rotated logs beyond the kept count, stale CDS archives and
+    old heap dumps; `groovyscope checkup --fix` removes them."""
+    section = (config or {}).get("daemon", {}) if isinstance(config, Mapping) else {}
+    kept = int(section.get("logsKept", 3)) if isinstance(section, Mapping) else 3
+    items = sweep.inventory(daemon.cache_dir(environ), logs_kept=kept)
+    if not items:
+        return ("ok", "cache", f"nothing to sweep under {daemon.cache_dir(environ)}")
+    return ("info", "cache", f"{sweep.summary(items)}; `groovyscope checkup --fix` removes them")
 
 
 def profiles_check(root: Path, config: Mapping[str, Any] | None, home: Path) -> Check:
@@ -195,6 +209,7 @@ def build_report(
         kiro_agent_check(root, kiro_home(environ, home or Path.home()), kiro),
         profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
+        cache_check(environ, config),
     ]
 
 

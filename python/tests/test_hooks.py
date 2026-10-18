@@ -98,10 +98,10 @@ def test_changed_groovy_files_from_git_status(tmp_path: Path) -> None:
     (tmp_path / "A.groovy").write_text("class A {}")
     (tmp_path / "B.groovy").write_text("class B {}")
     (tmp_path / "build.gradle").write_text("")
-    status = " M A.groovy\n?? B.groovy\n D Gone.groovy\nA  build.gradle\n M README.md\n"
+    status = " M A.groovy\0?? B.groovy\0 D Gone.groovy\0A  build.gradle\0 M README.md\0"
 
     def runner(command: list[str], cwd: Path) -> tuple[int, str]:
-        assert command[:2] == ["git", "status"] and cwd == tmp_path
+        assert command[:2] == ["git", "status"] and "-z" in command and cwd == tmp_path
         return (0, status)
 
     assert hooks.changed_groovy_files(tmp_path, runner) == [
