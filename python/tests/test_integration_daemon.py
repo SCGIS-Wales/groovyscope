@@ -94,7 +94,10 @@ def test_configuration_changes_reach_the_running_daemon_in_place(
         assert first.exit_code in {0, 1}, first.output
         same = daemon.probe(socket_file) or {}
         assert same.get("memory", {}).get("maxMb", 0) > 0  # Stage 17: the status reports heap use
-        assert {k: v for k, v in same.items() if k != "memory"} == {k: v for k, v in before.items() if k != "memory"}
+        varying = {"memory", "load"}  # heap use and lane occupancy change between calls
+        assert {k: v for k, v in same.items() if k not in varying} == {
+            k: v for k, v in before.items() if k not in varying
+        }
 
         (workspace / ".groovyscope.yaml").write_text("practices:\n  enabled: false\n", encoding="utf-8")
         second = runner.invoke(cli.main, ["--root", str(workspace), "check", "--json"])
