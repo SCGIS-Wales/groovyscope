@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.17.0...v0.18.0) (2026-10-18)
+
+
+### Features
+
+* **mcp:** confirmations before writes, progress notes and the practices resource ([#77](https://github.com/SCGIS-Wales/groovyscope/issues/77)) ([bdf0688](https://github.com/SCGIS-Wales/groovyscope/commit/bdf0688ba23954e356da0471a1a63240b980ac96))
+
+
+### Bug Fixes
+
+* **ci:** never merge a release pr before its checks run ([#76](https://github.com/SCGIS-Wales/groovyscope/issues/76)) ([9fbc7ae](https://github.com/SCGIS-Wales/groovyscope/commit/9fbc7aeaba36de642be296179f22e9fd476aa6aa))
+
 ## [0.17.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.16.1...v0.17.0) (2026-10-18)
 
 
