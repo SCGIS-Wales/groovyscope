@@ -343,8 +343,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
   `/context show` numbers before and after. Done when: both numbers lower, CI green, merged, released.
 
-- [ ] **Stage 17: engine memory and out-of-memory resilience** — branch `feat/engine-memory`, 2026-10-18,
-  implemented locally (see the log), PR open; from
+- [x] **Stage 17: engine memory and out-of-memory resilience** — branch `feat/engine-memory`, 2026-10-18,
+  merged as PR #65 (see the log); from
   the reliability review [research/2026-10-18-reliability-and-kiro-features.md](research/2026-10-18-reliability-and-kiro-features.md)
   (findings E1, E2, E4, E6) and the owner's priority: the JVM must not wedge or grow without bound. Planned:
   the kept compile's class loader owned by the result and closed when the next snapshot is published; a file
@@ -356,18 +356,27 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   log; `groovyscope/status` reporting heap use so `doctor` warns before the limit. Done when: specs for each
   change (a base class with a syntax error compiles in bounded rounds, the previous loader is closed, memory is
   reported), CI green, merged, released.
-- [ ] **Stage 18: front-end resilience** — not started. Findings P1 to P10 of the same review: MCP requests
-  demultiplexed per session with timeouts under the client's budget and a "still running" answer; the LSP
-  relay connects before touching stdin; hooks return before resolving the engine and never cold-start it; the
-  liveness probe tells refused, busy and incompatible apart and `status` becomes O(1); `refresh_classpath` kills
-  the process group, refuses a concurrent build and reads trust live; output caps on every answer; log
-  rotation and a cache sweep reported by `doctor`; user scalars kept in `mcp.json`; the stop gate on a session
-  baseline with `git status -z`. Done when: CI green, merged, released.
-- [ ] **Stage 19: elicitation and progress** — not started, after the owner's Kiro 3 check. `rename`, `fix`,
+- [ ] **Stage 18: asynchronous guardrails** — not started, awaiting the owner's approval of the revised plan
+  ([research/2026-10-18-reliability-and-kiro-features.md](research/2026-10-18-reliability-and-kiro-features.md),
+  section 5). Engine: cooperative cancellation end to end (G1), bounded two-lane request executors with a busy
+  answer (G2), single-flight compile with cancellable waiters (G3), containment and eviction (G7). Front end:
+  demultiplexed engine session with per-call futures (G8), timeout and cancel propagation with single flight
+  (G9), an in-flight limit (G10), relay and probe fixes (G12). Done when: the specs and tests named in section
+  5.3 pass, CI green, merged, released.
+- [ ] **Stage 19: out-of-memory self-healing** — not started. Engine: memory pressure guard that sheds caches
+  and refuses whole-workspace work (G4), workspace size budget (G5), opt-in heap dump (G6). Front end:
+  crash-loop guard with backoff and heap escalation up to `daemon.maxHeap` recorded in a state file (G11),
+  bounded logs and a cache sweep (G13), stop gate and write fixes (G14). Done when: the specs and tests named
+  in section 5.3 pass, CI green, merged, released.
+- [ ] **Stage 20: elicitation and progress** — not started, after the owner's Kiro 3 check. `rename`, `fix`,
   `format` with `apply`, `refresh_classpath` and draw.io writes ask the user through MCP elicitation when the
   client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
   long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
   green, merged, released; the owner's Kiro check of one elicitation prompt recorded here.
+- [ ] **Process: merge and release automation** — PRs merge without a human once CI is green (auto-merge
+  after the owner enables it in the repository settings; by API until then), release-please runs with a
+  fine-grained token so its PR's checks run unattended and it auto-merges, and the session that cut a release
+  verifies the publish (tag, workflow, PyPI, tap). Recorded in `docs/ci.md` when applied.
 
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
@@ -487,3 +496,5 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   `-XX:+ExitOnOutOfMemoryError` on the daemon's JVM; `groovyscope/status` reports `memory`; `daemon status`,
   `doctor` and `checkup` warn above 85% heap use and name the `daemon.heap` fix after an out-of-memory exit.
   Engine specs 385 green, 349 Python tests at 95% coverage.
+- 2026-10-18: revised plan for asynchronous calls and out-of-memory guardrails written (research doc, section
+  5); stages 18 to 20 re-cut around it, awaiting the owner's approval. PR #64 merged.
