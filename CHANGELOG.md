@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.14.0...v0.15.0) (2026-10-18)
+
+
+### Features
+
+* **engine:** memory and out-of-memory resilience ([#65](https://github.com/SCGIS-Wales/groovyscope/issues/65)) ([9d03018](https://github.com/SCGIS-Wales/groovyscope/commit/9d03018a6849bc75f89cba6b30033f36a10bb2aa))
+
+
+### Documentation
+
+* reliability review, the unused MCP and Kiro features, and stages 17 to 19 in the roadmap ([#64](https://github.com/SCGIS-Wales/groovyscope/issues/64)) ([52aa1f9](https://github.com/SCGIS-Wales/groovyscope/commit/52aa1f937c15db9ab88454461b0533ff33e58bde))
+
 ## [0.14.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.13.0...v0.14.0) (2026-10-18)
 
 

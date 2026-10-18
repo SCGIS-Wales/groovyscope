@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "groovyscope"
-version = "0.14.0"
+version = "0.15.0"
 description = "Groovy 5/6 code intelligence for AI coding agents: LSP and MCP front ends over one JVM engine"
 readme = "README.md"
 license = "Apache-2.0"
