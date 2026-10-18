@@ -542,3 +542,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   `kiro repair` keeps a user's `timeout`, `requestTimeout`, `disabledTools`, `autoApprove`, `disabled` and log
   level on the groovyscope `mcp.json` entry (P8). `docs/kiro.md` has the numbers and the `disabledTools`
   guidance. Left for the owner: `/tools` and `/context show` in Kiro before and after.
+- 2026-10-18: incident. The auto-merge step added to `release-please.yml` in PR #69 called
+  `gh pr merge --auto`, which merges at once when the repository allows no auto-merge and nothing is required
+  yet. Release PRs #73 (0.16.1, documentation only) and #75 (0.17.0, Stage 16) were merged by the bot seconds
+  after they opened, before any check ran; being merged by the built-in token, neither started the tagging run,
+  so v0.16.1 was tagged only by the next push and v0.17.0 not at all. The code in both had passed CI on its own
+  PR and the publish workflow builds and tests again. Fixed on `fix/release-pr-merge`: only GitHub's auto-merge
+  is requested (the GraphQL mutation, which fails rather than merges), and only with `RELEASE_PLEASE_TOKEN`;
+  `AGENTS.md` says never to merge before checks run and how to tag a release PR merged by the bot.

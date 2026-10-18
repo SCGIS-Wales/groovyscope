@@ -40,9 +40,12 @@ Read `docs/roadmap.md` first: it says which stage is in progress and what "done"
   merges itself once "Allow auto-merge" is on; without the secret its runs sit at "action required" until
   approved in the Actions tab or re-run through the API (a re-run by a maintainer starts them). The publish can
   also be run by hand with `gh workflow run workflow.yml --ref vX.Y.Z -f tag=vX.Y.Z`.
-- Merging: a PR merges (squash) as soon as its checks are green, by auto-merge or through the API. Merge the
-  release PR on its own and let its Release Please run finish before merging anything else: two pushes to
-  `main` seconds apart make the second run fail on the tag the first one just created.
+- Merging: a PR merges (squash) as soon as its checks are green, by auto-merge or through the API; never before
+  its checks have run, release PRs included. Merge the release PR on its own and let its Release Please run
+  finish before merging anything else: two pushes to `main` seconds apart make the second run fail on the tag
+  the first one just created. A release PR merged by the built-in token starts no workflow, so its tag only
+  appears on the next push to `main`; run `release-please.yml` by hand (`gh workflow run release-please.yml`) to
+  tag it at once.
 - The Homebrew formula is rendered by `scripts/homebrew_formula.py` and lives in `SCGIS-Wales/homebrew-tap`,
   whose daily `groovyscope formula` workflow updates it from PyPI (run it by hand with
   `gh workflow run groovyscope.yml --repo SCGIS-Wales/homebrew-tap`);
