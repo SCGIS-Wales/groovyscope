@@ -483,6 +483,16 @@
         "maxInFlight": {
           "type": "integer",
           "minimum": 1
+        },
+        "confirmWrites": {
+          "enum": [
+            "auto",
+            "never"
+          ]
+        },
+        "progressSeconds": {
+          "type": "number",
+          "minimum": 0.5
         }
       }
     }

@@ -349,6 +349,28 @@ front of it (`mcp.*` in `.groovyscope.yaml`): a budget of `mcp.requestTimeoutSec
 `mcp.maxInFlight` (4) calls on the engine at a time, the rest waiting within the same budget; and single flight,
 where a call identical to one still running joins it instead of doubling the work. The channel is reopened
 (with a daemon restart if needed) when the engine went away; a slow engine is never mistaken for a dead one.
+
+A tool can also talk to the person behind the client while it runs (`interaction`). The SDK runs each tool on an
+anyio worker thread and passes it the request context, which the response wrapper binds to that thread (the
+`ctx` parameter never appears in a tool's schema). Before `fix`, `format` or `rename` write with `apply`, before
+`refresh_classpath` runs the build and before `relationship_graph` writes a draw.io file, the tool asks through
+MCP elicitation when the client declared that capability: a one-line question with the files and the lines each
+edit changes, answered with a single yes or no. A no or a cancel writes nothing and the answer says so
+(`confirmation`, `note`); a client without elicitation, or `mcp.confirmWrites: never`, keeps the dry-run
+convention and the client's own tool approval. While a call waits for the engine or the build, a progress note
+goes out every `mcp.progressSeconds` (5 s) for clients that asked for progress. Long-running MCP tasks are not
+used: the SDK has the types but no server support, and Kiro does not negotiate them; the request budget,
+cancellation and progress cover the long build instead.
+
+The classpath export behind `refresh_classpath` and `groovyscope classpath` runs the build tool in its own process
+group and stops the whole group (TERM, then KILL) when it is over its timeout, so an abandoned build never keeps
+running; a lock next to the classpath file refuses a second export of the same workspace while one runs; and the
+MCP tool reads the workspace's trust when it is called, so a `groovyscope trust --revoke` takes effect at once.
+
+The practices catalogue is served as MCP resources: `groovyscope://practices` (the review checklist groups and one
+row per GS and RP code) and `groovyscope://practices/{code}` (why, the bad and good form, the fix, the guide
+section). Resources cost no context until the user or the agent reads one.
+
 `hover`, `type_definition`, `document_symbols` and `rename` map to `groovyscope/hover`, `/typeDefinition`,
 `/documentSymbols` and `/rename`, which reuse the LSP implementations.
 

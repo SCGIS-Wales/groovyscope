@@ -209,6 +209,22 @@ level:
 Then compare `/tools` before and after in Kiro; each dropped tool also leaves the skill that uses it without a
 step, so drop the matching `groovy-*` skill folder too.
 
+## Confirmations, progress and the practices resource
+
+When Kiro supports MCP elicitation, the writing tools ask before they write: `fix`, `format` and `rename` with
+`apply`, `refresh_classpath` (it runs the build) and `relationship_graph` with `drawio_path`. The question lists
+the files and how many lines each edit changes; a no writes nothing and the tool's answer says so. This comes on
+top of the V3 permission rules, which already ask before any of these tools runs: the rule asks whether the tool
+may run, the elicitation shows what it is about to change. Set `mcp.confirmWrites: never` in `.groovyscope.yaml`
+to rely on the permission rule alone. While a tool waits for the engine or the build, it sends a progress note
+every `mcp.progressSeconds` to clients that asked for progress.
+
+The practices catalogue is under `#` as two resources: `groovyscope://practices`, the checklist and every GS and
+RP code, and `groovyscope://practices/<code>`, one code's why, bad and good form and fix.
+
+Owner's check for Stage 20: in Kiro, ask for a safe fix with apply on a file that has one and note whether the
+elicitation question appears, and what a no does.
+
 ## What the `code` tool can ask today
 
 Go to definition, type definition, implementation, find references, document highlight, hover, document

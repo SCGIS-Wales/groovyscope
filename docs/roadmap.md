@@ -338,8 +338,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   which ignores the front matter, so the switch waits for the Kiro 3 check) and the power packaging (plugin
   schema unconfirmed). Left for the owner: one skill run (`/groovy-impact <symbol>`) and whether the custom
   agent lists the skills without a `skill://` resource entry.
-- [ ] **Stage 16: tool surface and context cost** — branch `feat/tool-surface`, 2026-10-18, implemented
-  locally, PR open; started at the owner's "proceed with any open stages" ahead of the Kiro numbers, measured
+- [ ] **Stage 16: tool surface and context cost** — branch `feat/tool-surface`, 2026-10-18, merged as PR #74,
+  waiting for the owner's `/tools` and `/context show` numbers; started at the owner's "proceed with any open stages" ahead of the Kiro numbers, measured
   on the MCP SDK's own `tools/list` output instead. Planned: shorter
   tool descriptions (the explanations move to the skills), a combined `symbol_context` tool (definition,
   hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
@@ -372,7 +372,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   crash-loop guard with backoff and heap escalation up to `daemon.maxHeap` recorded in a state file (G11),
   bounded logs and a cache sweep (G13), stop gate and write fixes (G14). Done when: the specs and tests named
   in section 5.3 pass, CI green, merged, released.
-- [ ] **Stage 20: elicitation and progress** — not started, after the owner's Kiro 3 check. `rename`, `fix`,
+- [ ] **Stage 20: elicitation and progress** — branch `feat/elicitation-progress`, 2026-10-18, implemented
+  locally, PR open; started at the owner's "proceed with any open stages" ahead of the Kiro 3 check. `rename`, `fix`,
   `format` with `apply`, `refresh_classpath` and draw.io writes ask the user through MCP elicitation when the
   client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
   long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
@@ -542,3 +543,14 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   `kiro repair` keeps a user's `timeout`, `requestTimeout`, `disabledTools`, `autoApprove`, `disabled` and log
   level on the groovyscope `mcp.json` entry (P8). `docs/kiro.md` has the numbers and the `disabledTools`
   guidance. Left for the owner: `/tools` and `/context show` in Kiro before and after.
+- 2026-10-18: Stage 16 merged (PR #74, CI green; merged by API, auto-merge still off). Stage 20 implemented
+  locally on `feat/elicitation-progress`: `interaction` binds the SDK's request context to the tool's worker
+  thread (the response wrapper declares a `ctx` parameter the schema never shows); `fix`, `format` and `rename`
+  with `apply`, `refresh_classpath` and draw.io writes ask through MCP elicitation when the client declared it
+  (one yes or no, the files and changed lines in the question; a no or a cancel writes nothing; no capability or
+  `mcp.confirmWrites: never` keeps the dry-run convention); waiting calls send a progress note every
+  `mcp.progressSeconds`; the practices catalogue is served as `groovyscope://practices` and
+  `groovyscope://practices/{code}`. From the plan's section 5 (P5, not delivered in Stage 19): the classpath
+  export runs in its own process group and is stopped whole on timeout, a lock refuses a second export of the
+  same workspace, and `refresh_classpath` reads trust when called. Long-running MCP tasks are not used: the SDK
+  has the types without server support and Kiro does not negotiate them. 390 Python tests at 95% coverage.
