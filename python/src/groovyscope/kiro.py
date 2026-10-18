@@ -136,7 +136,33 @@ def merge_content(
         if current.get(key) == value:
             del current[key]
     merged = deep_merge(current, json.loads(template))
+    if template_name == "mcp.json":
+        merged = keep_user_tuning(current, merged)
     return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+
+
+# What a user tunes on the groovyscope server entry and a repair must not reset: a raised tool timeout, tools a
+# team switched off, tools approved without a prompt, a disabled server, a log level in the environment.
+USER_TUNED_KEYS = ("timeout", "requestTimeout", "disabledTools", "autoApprove", "disabled")
+USER_TUNED_ENV = ("GROOVYSCOPE_LOG",)
+
+
+def keep_user_tuning(current: Mapping[str, Any], merged: dict[str, Any]) -> dict[str, Any]:
+    """``merged`` with the user's own values back on the groovyscope server entry for :data:`USER_TUNED_KEYS`
+    and :data:`USER_TUNED_ENV`; the command and its arguments stay ours."""
+    mine = (current.get("mcpServers") or {}).get("groovyscope")
+    ours = (merged.get("mcpServers") or {}).get("groovyscope")
+    if not isinstance(mine, Mapping) or not isinstance(ours, dict):
+        return merged
+    for key in USER_TUNED_KEYS:
+        if key in mine:
+            ours[key] = mine[key]
+    env_mine = mine.get("env")
+    if isinstance(env_mine, Mapping) and isinstance(ours.get("env"), dict):
+        for key in USER_TUNED_ENV:
+            if key in env_mine:
+                ours["env"][key] = env_mine[key]
+    return merged
 
 
 def planned(

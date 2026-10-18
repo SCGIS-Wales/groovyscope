@@ -144,7 +144,7 @@ kiro-cli --agent groovy
 > find references of <a Groovy method>      # through the code tool: did it open the .groovy file, or report
                                            # "unsupported file extension" (kirodotdev/Kiro#6322)?
 > what does the checkup say?      # proves hooks.agentSpawn (SessionStart on V3) ran
-> /tools                          # token cost of the 27 groovyscope schemas
+> /tools                          # token cost of the 28 groovyscope schemas
 > /context show                   # size of steering/groovyscope.md
 ```
 
@@ -154,13 +154,60 @@ kiro-cli --agent groovy
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
 > /code logs -l ERROR   # empty is good
-> /mcp                  # expect: groovyscope running 27 tools, next to your other servers
+> /mcp                  # expect: groovyscope running 28 tools, next to your other servers
 > /context show         # expect: steering/groovyscope.md among the context files
 > /tools                # the other servers' tools are listed too (available, prompting)
 ```
 
 If a custom agent lacks the `code` tool, Kiro reports "Code tool is not enabled for this agent"; add `"code"`
 or `"@builtin"` to the agent's `tools`.
+
+## Tool surface and context cost
+
+Every tool schema an agent can call is in its context on every session, so groovyscope keeps them small: one
+line per tool saying what it answers and what its arguments mean, and input schemas without the titles,
+`anyOf [T, null]` pairs and `default: null` entries the MCP SDK generates (arguments are still validated
+against the tool's signature, so nothing changes for a caller). How to read an answer and which tool to call
+next live in the `groovy-*` skills and prompts, loaded when a recipe runs, and in the answers themselves. A
+test holds the 28 schemas to a byte budget. Measured with the MCP SDK's own `tools/list` output:
+
+| | Tools | Schema bytes | About tokens | Server instructions |
+|---|---|---|---|---|
+| 0.16.1 | 27 | 21,768 | 5,440 | 1,506 characters |
+| Stage 16 | 28 | 12,973 | 3,240 | 631 characters |
+
+`symbol_context(path, line, col)` answers what an agent otherwise asks `goto_definition`, `hover` and
+`find_references` for in three turns: the definition with its confidence, the hover text and the reference
+count split by confidence.
+
+A team that never uses some tools can take them off the agent's list entirely with `disabledTools` on the
+server entry in `.kiro/settings/mcp.json` (or `~/.kiro/settings/mcp.json`); `groovyscope kiro repair` keeps
+it, together with a raised `timeout`, `requestTimeout`, `autoApprove`, `disabled` and the `GROOVYSCOPE_LOG`
+level:
+
+```json
+{
+  "mcpServers": {
+    "groovyscope": {
+      "command": "groovyscope",
+      "args": ["mcp"],
+      "disabledTools": ["coverage_gaps", "relationship_graph", "profile_status"]
+    }
+  }
+}
+```
+
+| Drop | When |
+|---|---|
+| `coverage_gaps` | The build produces no JaCoCo XML report |
+| `profile_status` | No runtime profile is configured (no RP findings) |
+| `relationship_graph` | Nobody needs class diagrams or draw.io files |
+| `check_naming`, `explain_code` | The team does not use the naming pass or the explanation recipes |
+| `fix`, `format`, `rename`, `refresh_classpath` | A read-only reviewer agent; the review tools stay |
+| `goto_definition`, `hover`, `find_references` | Keep `symbol_context` and the `code` tool instead |
+
+Then compare `/tools` before and after in Kiro; each dropped tool also leaves the skill that uses it without a
+step, so drop the matching `groovy-*` skill folder too.
 
 ## What the `code` tool can ask today
 
@@ -176,7 +223,7 @@ the `GROOVYSCOPE_CONFIG_JSON` variable that `groovyscope lsp` sets, so `workspac
 ## What the MCP tools add
 
 The `code` tool stops at what LSP can express. The `groovyscope` MCP server (one process per Kiro session,
-sharing the workspace daemon with the LSP side) adds 27 tools; the README lists their arguments and
+sharing the workspace daemon with the LSP side) adds 28 tools; the README lists their arguments and
 [docs/prompts.md](prompts.md) the prompts. Typical turns in the `groovy` agent:
 
 - "Review this branch as a merge request reviewer" → `review_changes(base="main")`: verdict, blocking and

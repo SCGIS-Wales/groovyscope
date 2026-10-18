@@ -29,8 +29,8 @@ inclusion: always
 - For any Groovy, Gradle or Jenkinsfile question, use the `code` tool (find references, go to definition,
   hover, diagnostics, rename with dry run) or the `groovyscope` MCP tools. Never grep, rg, sed, awk, head
   or tail to locate Groovy symbols or read Groovy files; if the `code` tool rejects a Groovy file, use
-  `groovyscope.goto_definition`, `find_references`, `hover`, `find_symbol` and `check` instead and mention
-  the failure once.
+  `groovyscope.symbol_context` (definition, hover and reference count in one call), `find_references`,
+  `find_symbol` and `check` instead and mention the failure once.
 - In an unfamiliar workspace: `groovyscope.workspace_overview`, then `document_symbols` for a file's outline,
   then `read_symbol` for the one declaration you need. Never read a whole file to find one declaration. Pass
   `limit` and `cursor` to page long answers.

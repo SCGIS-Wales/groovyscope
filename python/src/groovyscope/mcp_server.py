@@ -22,25 +22,17 @@ from groovyscope import classpath as classpath_export
 from groovyscope.edits import FileChangedError, FileEdit, changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
-from groovyscope.tools_catalog import TOOL_INFO
+from groovyscope.tools_catalog import TOOL_INFO, description
 
 SERVER_NAME = "groovyscope"
 LOG = logging.getLogger("groovyscope.mcp")
 INSTRUCTIONS = (
-    "Groovy code intelligence for this workspace. Use these tools instead of grep, sed, head, tail or reading whole "
-    "files. Start with workspace_overview in an unfamiliar workspace, then document_symbols for a file's outline "
-    "with line ranges, then read_symbol for the one declaration you need. Use find_code (structural search: catch, "
-    "throw, call, new, return-null, string-literal, annotation, def, empty-block, field, method) instead of grep, "
-    "and find_duplicates to find repeated code. Every navigation answer carries a confidence; DYNAMIC_UNKNOWN means "
-    "matched by name only. Lists are paged: pass limit and the next_cursor you were given rather than asking for "
-    "everything. Rename through rename (a dry run first), never by text replace. Paths are workspace-relative; "
-    "lines and columns are 1-based. Before finishing a change, call review on the changed files and fix what it "
-    "reports (fix applies the safe mechanical fixes; check narrows by codes or max_priority); explain says why a "
-    "code matters. A missingDependencies summary (GS100) means no classpath is configured: suggest `groovyscope "
-    "classpath` rather than editing imports. When impact_of is asked about a change, report its transitive callers "
-    "and tests too, not only direct callers. Files governed by a runtime profile (RP codes) run on the Groovy "
-    "version and libraries the profile names: call profile_status before editing one, keep its descriptor "
-    "parameters, test seams and protected methods intact, and use only constructs the profile marks as proven."
+    "Groovy code intelligence for this workspace; use these tools instead of grep or reading whole files. Start "
+    "with workspace_overview, then document_symbols and read_symbol. Navigation answers carry a confidence "
+    "(DYNAMIC_UNKNOWN: matched by name only). Lists are paged: pass limit and next_cursor. Paths are "
+    "workspace-relative, lines and columns 1-based. Rename only through rename. Before finishing a change, call "
+    "review on the changed files and fix what it reports. GS100 means no classpath: suggest `groovyscope classpath`. "
+    "Call profile_status before editing a file a runtime profile governs. The groovy-* prompts hold the recipes."
 )
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "hint": 3}
@@ -286,12 +278,34 @@ def navigation_tools(root: Path, call: Call, paged: Paged, cap: int) -> dict[str
         reports = [compact_report(report, root, cap) for report in raw or []]
         return {"found": bool(reports), "reports": reports}
 
+    def symbol_context(path: str, line: int, col: int) -> dict[str, Any]:
+        """The definition, the hover text and how many places use the symbol at PATH:LINE:COL (1-based), in one
+        call: what an agent otherwise asks goto_definition, hover and find_references for, one after another.
+        The reference count is split by confidence; find_references lists them when they are needed."""
+        params = position_params(root, path, line, col)
+        found = goto_definition(path, line, col)
+        raw_hover = call("groovyscope/hover", params) or {}
+        raw_refs = call("groovyscope/references", {**params, "includeDeclaration": False}) or {}
+        references = raw_refs.get("references", [])
+        by_confidence: dict[str, int] = {}
+        for item in references:
+            key = str(item.get("confidence") or "UNKNOWN")
+            by_confidence[key] = by_confidence.get(key, 0) + 1
+        return {
+            "found": bool(found.get("found")),
+            "symbol": found.get("symbol"),
+            "confidence": found.get("confidence"),
+            "hover": clip(raw_hover.get("markdown", ""), cap * 40) if raw_hover else None,
+            "references": {"total": len(references), "byConfidence": by_confidence},
+        }
+
     return {
         "find_symbol": find_symbol,
         "goto_definition": goto_definition,
         "find_references": find_references,
         "call_graph": call_graph,
         "impact_of": impact_of,
+        "symbol_context": symbol_context,
     }
 
 
@@ -910,19 +924,91 @@ def compact_json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
-def respond(function: Callable[..., Any], *, structured: bool) -> Callable[..., Any]:
+def respond(function: Callable[..., Any], *, structured: bool, max_bytes: int = 0) -> Callable[..., Any]:
     """Return a tool result as one compact JSON text block; with ``output.structured`` also as structuredContent
-    (for clients that read it; most send the text to the model, so it is off by default to avoid doubling)."""
+    (for clients that read it; most send the text to the model, so it is off by default to avoid doubling).
+    With ``max_bytes`` (``output.maxBytes``) no answer is larger: see :func:`fit`."""
 
     @functools.wraps(function)
     def wrapper(*args: Any, **kwargs: Any) -> CallToolResult:
-        result = function(*args, **kwargs)
+        result = fit(function(*args, **kwargs), max_bytes)
         return CallToolResult(
             content=[TextContent(type="text", text=compact_json(result))],
             structured_content=result if structured and isinstance(result, dict) else None,
         )
 
     return wrapper
+
+
+FIT_ROUNDS = 64
+FIT_MIN_STRING = 200
+
+
+def fit(result: Any, max_bytes: int) -> Any:
+    """``result`` cut down to ``max_bytes`` of compact JSON, whatever tool produced it: the largest list loses its
+    tail half until the answer fits, then the longest strings are clipped. What was cut is said in
+    ``truncated`` (path to the number of items dropped) with a note on how to ask for less. The paged tools
+    stay well under the cap already; this is the guarantee for every other answer."""
+    if max_bytes <= 0 or not isinstance(result, dict) or len(compact_json(result).encode("utf-8")) <= max_bytes:
+        return result
+    trimmed: dict[str, Any] = json.loads(compact_json(result))
+    dropped: dict[str, int] = {}
+    for _ in range(FIT_ROUNDS):
+        if len(compact_json({**trimmed, "truncated": dropped}).encode("utf-8")) <= max_bytes:
+            break
+        largest = largest_list(trimmed)
+        if largest is not None and len(largest[1]) > 0:
+            path, items = largest
+            keep = len(items) // 2
+            dropped[path] = dropped.get(path, 0) + len(items) - keep
+            del items[keep:]
+            continue
+        if not clip_longest_string(trimmed):
+            break
+    trimmed["truncated"] = dropped
+    trimmed["note"] = "answer cut to output.maxBytes; narrow the paths, filter, or page with limit and cursor"
+    return trimmed
+
+
+def largest_list(value: Any, path: str = "") -> tuple[str, list[Any]] | None:
+    """The list to cut next, with its dotted path: the one with the largest JSON form among lists of two or more
+    items (so a one-item wrapper keeps its item and the list inside it is cut instead), else the largest
+    one-item list."""
+    best: tuple[int, int, str, list[Any]] | None = None
+    stack: list[tuple[str, Any]] = [(path, value)]
+    while stack:
+        where, node = stack.pop()
+        children: list[tuple[str, Any]] = []
+        if isinstance(node, dict):
+            children = [(f"{where}.{key}" if where else str(key), child) for key, child in node.items()]
+        elif isinstance(node, list):
+            if node:
+                rank = (1 if len(node) > 1 else 0, len(compact_json(node)))
+                if best is None or rank > (best[0], best[1]):
+                    best = (rank[0], rank[1], where or "result", node)
+            children = [(where, child) for child in node]
+        stack.extend(children)
+    return None if best is None else (best[2], best[3])
+
+
+def clip_longest_string(value: Any) -> bool:
+    """Halves the longest string over ``FIT_MIN_STRING`` characters in place; False when there is none."""
+    best: tuple[int, Any, Any] | None = None
+    stack: list[Any] = [value]
+    while stack:
+        node = stack.pop()
+        items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
+        for key, child in items:
+            if isinstance(child, str) and len(child) > FIT_MIN_STRING and (best is None or len(child) > best[0]):
+                best = (len(child), node, key)
+            elif isinstance(child, (dict, list)):
+                stack.append(child)
+    if best is None:
+        return False
+    _, container, key = best
+    text = container[key]
+    container[key] = text[: len(text) // 2] + " ..."
+    return True
 
 
 def register_prompts(server: MCPServer) -> None:
@@ -948,20 +1034,66 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
     register_prompts(server)
     structured = bool(output.get("structured", False))
+    max_bytes = int(output.get("maxBytes", 16000))
     for name, function in build_tools(root, call, output, environ).items():
         title, read_only = TOOL_INFO.get(name, (name, True))
+        # The title is on the tool already; the hints are what clients that honour them act on.
         annotations = ToolAnnotations(
-            title=title,
             read_only_hint=read_only,
             destructive_hint=False,
             idempotent_hint=True,
             open_world_hint=False,
         )
-        tool = respond(diagnostics.timed(name, function, LOG), structured=structured)
+        tool = respond(diagnostics.timed(name, function, LOG), structured=structured, max_bytes=max_bytes)
         server.tool(
-            name=name, title=title, description=function.__doc__, annotations=annotations, structured_output=False
+            name=name,
+            title=title,
+            description=description(name, function.__doc__),
+            annotations=annotations,
+            structured_output=False,
         )(tool)
+        compact_registered_schema(server, name)
     return server
+
+
+def compact_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """The input schema without what costs context and says nothing: the generated titles (the argument names
+    say the same), ``anyOf [T, null]`` with ``default: null`` (an optional argument is one that is not
+    required), the arguments model's own title. Validation is unchanged: the SDK checks arguments against the
+    function signature, not against this schema, and ``null`` is still accepted where it was."""
+    properties: dict[str, Any] = {}
+    for key, value in (schema.get("properties") or {}).items():
+        properties[key] = compact_property(value) if isinstance(value, Mapping) else value
+    compact: dict[str, Any] = {"type": schema.get("type", "object"), "properties": properties}
+    if schema.get("required"):
+        compact["required"] = list(schema["required"])
+    for key in ("$defs", "additionalProperties"):
+        if key in schema:
+            compact[key] = schema[key]
+    return compact
+
+
+def compact_property(prop: Mapping[str, Any]) -> dict[str, Any]:
+    """One argument's schema, compacted as :func:`compact_schema` describes."""
+    out = {key: value for key, value in prop.items() if key != "title"}
+    options = out.get("anyOf")
+    if isinstance(options, list) and len(options) == 2 and {"type": "null"} in options:  # noqa: PLR2004 - T or null
+        other = next(option for option in options if option != {"type": "null"})
+        if isinstance(other, Mapping) and isinstance(other.get("type"), str) and "anyOf" not in other:
+            del out["anyOf"]
+            out = {**{k: v for k, v in other.items() if k != "title"}, **out, "type": [other["type"], "null"]}
+    if "default" in out and out["default"] is None:
+        del out["default"]
+    return out
+
+
+def compact_registered_schema(server: MCPServer, name: str) -> None:
+    """Replaces the advertised input schema of a registered tool with its compact form. The SDK keeps it on the
+    tool record; when a later SDK stores it elsewhere the full schema stays, which is larger but still right."""
+    manager = getattr(server, "_tool_manager", None)
+    tool = manager.get_tool(name) if manager is not None and hasattr(manager, "get_tool") else None
+    if tool is not None and isinstance(getattr(tool, "parameters", None), dict):
+        tool.parameters = compact_schema(tool.parameters)
 
 
 Configuration = Callable[[], tuple[str, str] | None]

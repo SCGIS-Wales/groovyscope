@@ -1,8 +1,13 @@
-"""The MCP tool catalogue: one place that says which tools exist and which of them change the workspace.
+"""The MCP tool catalogue: one place that says which tools exist, what each is for and which of them change the
+workspace.
 
 Kiro CLI does not honour MCP's ``readOnlyHint`` annotation, so the agent files groovyscope writes derive their
 approval rules from this catalogue instead: read-only tools run without a prompt, the others ask. The MCP server
-reads the same table for its tool titles and annotations, so the two can never disagree.
+reads the same table for its tool titles, descriptions and annotations, so the two can never disagree.
+
+Every tool schema is paid for in the agent's context on every session, so the descriptions here are one line:
+what the tool answers and what its arguments mean. How to read an answer and which tool to call next live in
+the skills and the steering file, loaded when they are needed, and in the answers themselves.
 """
 
 from __future__ import annotations
@@ -38,6 +43,45 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "explain_code": ("Explain what code does", True),
     "relationship_graph": ("Class relationship graph", False),
     "check_naming": ("Naming findings and facts", True),
+    "symbol_context": ("Symbol context in one call", True),
+}
+
+# What the agent reads for each tool. Arguments in capitals; PATH:LINE:COL is 1-based everywhere.
+DESCRIPTIONS: dict[str, str] = {
+    "find_symbol": "Declarations whose name contains QUERY (case-insensitive); KIND: class, method, field, variable.",
+    "goto_definition": "The declaration under PATH:LINE:COL, with its confidence.",
+    "type_definition": "The declaration of the type of the expression at PATH:LINE:COL.",
+    "find_references": "Every use of the symbol under PATH:LINE:COL, each with a confidence; paged.",
+    "hover": "Type, signature, documentation and finding notes at PATH:LINE:COL.",
+    "document_symbols": "Outline of PATH with line ranges to DEPTH; filter by KINDS or NAME. Then read_symbol.",
+    "call_graph": "Callers (DIRECTION in) or callees (out) of SYMBOL (pkg.Class.method, Class#method) to DEPTH.",
+    "impact_of": "What breaks if SYMBOL changes (CHANGE: signature, rename, delete, behaviour): callers, tests, risk.",
+    "check": "Findings for PATHS (all when empty), worst first; filter by CODES and MAX_PRIORITY (1 error, 3 info).",
+    "review": "Findings for PATHS grouped by the review checklist with counts per code; MAX_PRIORITY as in check.",
+    "explain": "What a finding CODE means, why it matters and how to fix it.",
+    "profile_status": "The runtime profile governing PATH: target Groovy, construct status, protected parameters.",
+    "find_dynamic_code": "Code that defeats static analysis: untyped classes, public def, methodMissing, metaClass.",
+    "workspace_status": "Daemon, engine, trust and classpath state (fresh, stale, missing, configured, none).",
+    "refresh_classpath": "Re-export the classpath from the Gradle or Maven build when stale; trusted workspaces only.",
+    "format": "Formatting edits for PATHS (all when empty); APPLY writes them.",
+    "fix": "Safe fixes for PATHS and CODES (all when empty); APPLY writes them.",
+    "rename": "Rename the symbol at PATH:LINE:COL to NEW_NAME everywhere; dry run unless APPLY.",
+    "read_symbol": "Source of one class, method or field in PATH (SYMBOL: name or Class.name); LINE picks an overload.",
+    "find_code": (
+        "Structural search (not grep). KIND: catch, throw, call, new, return-null, string-literal, annotation, "
+        "def, empty-block, field, method; narrow with NAME, TYPE, PATTERN, MODIFIERS, EMPTY_BODY, RETHROWS, "
+        "MIN_LINES, MIN_PARAMETERS."
+    ),
+    "find_duplicates": "Groups of repeated code under PATHS, largest first: EXACT copies and SIMILAR shapes.",
+    "workspace_overview": "Map of the codebase: packages, largest files and classes, untested classes. Call it first.",
+    "review_changes": "The branch against BASE (or STAGED) as a merge request: findings, impact, verdict, comments.",
+    "coverage_gaps": "Classes and methods no test executed, from the JaCoCo XML report, most missed first.",
+    "explain_code": "Facts about what SYMBOL (Class, Class.method) or PATH does, from its tree and call graph.",
+    "relationship_graph": (
+        "Class relationships around SYMBOLS or PATHS to DEPTH; DRAWIO_PATH writes a draw.io file, MERMAID a diagram."
+    ),
+    "check_naming": "Naming findings GS020 to GS027 for PATHS, with each declaration's facts; rename via rename.",
+    "symbol_context": "Definition, hover and reference count of the symbol at PATH:LINE:COL in one call.",
 }
 
 
@@ -59,3 +103,8 @@ def v2_allowed_entries() -> tuple[str, ...]:
 def v3_matches(names: tuple[str, ...]) -> list[str]:
     """``permissions.rules`` ``match`` entries for the V3 engine: ``groovyscope/<tool>``."""
     return [f"{SERVER_NAME}/{name}" for name in names]
+
+
+def description(name: str, fallback: str | None = None) -> str:
+    """The one-line description the agent reads for ``name``."""
+    return DESCRIPTIONS.get(name) or (fallback or name).strip()

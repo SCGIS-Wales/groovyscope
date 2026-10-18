@@ -396,3 +396,33 @@ def test_agent_template_carries_the_write_and_stop_hooks_and_the_reviewer_is_rea
         "@groovyscope/fix" not in reviewer["allowedTools"] and "@groovyscope/review_changes" in reviewer["allowedTools"]
     )
     assert ("agents/groovy-reviewer.json", ".kiro/agents/groovy-reviewer.json") in KIRO_FILES
+
+
+def test_repair_keeps_what_the_user_tuned_on_the_mcp_server_entry() -> None:
+    template = load_template("mcp.json")
+    mine = {
+        "mcpServers": {
+            "groovyscope": {
+                "command": "old-groovyscope",
+                "args": ["old"],
+                "timeout": 300000,
+                "disabledTools": ["coverage_gaps", "relationship_graph"],
+                "autoApprove": ["check"],
+                "env": {"GROOVYSCOPE_LOG": "debug", "OTHER": "kept"},
+            },
+            "jira": {"command": "jira-mcp"},
+        }
+    }
+    merged = json.loads(
+        merge_content(json.dumps(mine), template, is_json=True, force=False, path="mcp.json", template_name="mcp.json")
+    )
+    entry = merged["mcpServers"]["groovyscope"]
+    assert entry["command"] == "groovyscope" and entry["args"] == ["mcp"]  # ours
+    assert entry["timeout"] == 300000 and entry["disabledTools"] == ["coverage_gaps", "relationship_graph"]
+    assert entry["autoApprove"] == ["check"]
+    assert entry["env"] == {"GROOVYSCOPE_LOG": "debug", "OTHER": "kept"}
+    assert merged["mcpServers"]["jira"] == {"command": "jira-mcp"}
+    fresh = json.loads(
+        merge_content(None, template, is_json=True, force=False, path="mcp.json", template_name="mcp.json")
+    )
+    assert fresh["mcpServers"]["groovyscope"]["timeout"] == 120000

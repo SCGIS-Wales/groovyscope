@@ -338,7 +338,9 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   which ignores the front matter, so the switch waits for the Kiro 3 check) and the power packaging (plugin
   schema unconfirmed). Left for the owner: one skill run (`/groovy-impact <symbol>`) and whether the custom
   agent lists the skills without a `skill://` resource entry.
-- [ ] **Stage 16: tool surface and context cost** — not started, after the Stage 13 numbers. Planned: shorter
+- [ ] **Stage 16: tool surface and context cost** — branch `feat/tool-surface`, 2026-10-18, implemented
+  locally, PR open; started at the owner's "proceed with any open stages" ahead of the Kiro numbers, measured
+  on the MCP SDK's own `tools/list` output instead. Planned: shorter
   tool descriptions (the explanations move to the skills), a combined `symbol_context` tool (definition,
   hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
   `/context show` numbers before and after. Done when: both numbers lower, CI green, merged, released.
@@ -529,3 +531,14 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   20 (elicitation and progress) after the owner's Kiro 3 check, and the owner's outstanding Kiro checks for
   stages 13 to 16. The owner's two one-off steps for unattended releases (the `RELEASE_PLEASE_TOKEN` secret and
   "Allow auto-merge") are still open.
+- 2026-10-18: Stage 16 implemented locally on `feat/tool-surface`. The tool descriptions are one line each in
+  `tools_catalog.DESCRIPTIONS` (the docstrings stay as developer documentation); the advertised input schemas
+  lose the generated titles, `anyOf [T, null]` pairs and `default: null`; the annotation title that repeated
+  the tool title is gone; the server instructions shrank from 1,506 to 631 characters. `symbol_context` (28th
+  tool) answers definition, hover and reference count in one call. Measured on `tools/list`: 27 schemas in
+  21,768 bytes (about 5,440 tokens) before, 28 in 12,973 (about 3,240) after; `test_tool_surface` holds a
+  14,000-byte budget. Also from the plan's section 5, not delivered in Stage 19: every answer is held to
+  `output.maxBytes` (P6, the largest list is halved until it fits and `truncated` says what went), and
+  `kiro repair` keeps a user's `timeout`, `requestTimeout`, `disabledTools`, `autoApprove`, `disabled` and log
+  level on the groovyscope `mcp.json` entry (P8). `docs/kiro.md` has the numbers and the `disabledTools`
+  guidance. Left for the owner: `/tools` and `/context show` in Kiro before and after.
