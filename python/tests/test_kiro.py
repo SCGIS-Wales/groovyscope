@@ -37,9 +37,9 @@ def test_templates_are_well_formed() -> None:
 
 def test_fresh_init_creates_all_files(tmp_path: Path) -> None:
     changes = plan_changes(tmp_path)
-    assert [c["action"] for c in changes] == ["create"] * 4
+    assert [c["action"] for c in changes] == ["create"] * 5
     written = apply_changes(tmp_path, changes)
-    assert len(written) == 4
+    assert len(written) == 5
     lsp = json.loads((tmp_path / ".kiro/settings/lsp.json").read_text(encoding="utf-8"))
     assert lsp["languages"]["groovy"]["command"] == "groovyscope"
     assert all(present_files(tmp_path).values())
@@ -49,7 +49,7 @@ def test_fresh_init_creates_all_files(tmp_path: Path) -> None:
 def test_second_init_is_a_no_op(tmp_path: Path) -> None:
     apply_changes(tmp_path, plan_changes(tmp_path))
     changes = plan_changes(tmp_path)
-    assert [c["action"] for c in changes] == ["unchanged"] * 4
+    assert [c["action"] for c in changes] == ["unchanged"] * 5
     assert apply_changes(tmp_path, changes) == []
 
 
@@ -94,7 +94,7 @@ def test_markdown_is_replaced_not_merged(tmp_path: Path) -> None:
     steering = tmp_path / ".kiro/steering/groovyscope.md"
     steering.parent.mkdir(parents=True)
     steering.write_text("old policy\n", encoding="utf-8")
-    change = plan_changes(tmp_path)[3]
+    change = plan_changes(tmp_path)[4]
     assert change["action"] == "update"
     assert change["after"] == load_template("steering/groovyscope.md")
     diff = unified_diff(change)
@@ -150,16 +150,16 @@ def test_global_scope_targets_the_kiro_home(tmp_path: Path) -> None:
     )
     changes = plan_changes(base, global_scope=True)
     assert [c["path"] for c in changes] == [path for _, path in GLOBAL_FILES]
-    assert [c["action"] for c in changes] == ["update", "create", "create"]
+    assert [c["action"] for c in changes] == ["update", "create", "create", "create"]
     written = apply_changes(base, changes)
-    assert len(written) == 3
+    assert len(written) == 4
     assert has_global_setup(base) and not has_global_setup(tmp_path / "nowhere")
     mcp = json.loads((base / "settings" / "mcp.json").read_text(encoding="utf-8"))
     assert set(mcp["mcpServers"]) == {"other", "groovyscope"}
     assert (base / "settings" / "mcp.json.bak").is_file()
     agent = json.loads((base / "agents" / "groovy.json").read_text(encoding="utf-8"))
     assert agent["resources"][-1] == f"file://{base.as_posix()}/steering/**/*.md"
-    assert [c["action"] for c in plan_changes(base, global_scope=True)] == ["unchanged"] * 3
+    assert [c["action"] for c in plan_changes(base, global_scope=True)] == ["unchanged"] * 4
     assert [c["path"] for c in plan_changes(tmp_path, lsp_only=True, profile_guidance="x")] == [
         ".kiro/settings/lsp.json"
     ]
@@ -175,7 +175,7 @@ def test_profile_guidance_gets_its_own_steering_file(tmp_path: Path) -> None:
     assert plan_changes(tmp_path / "kh", global_scope=True, profile_guidance="x")[-1]["path"] == (
         "steering/groovyscope-profiles.md"
     )
-    assert len(plan_changes(tmp_path)) == 4
+    assert len(plan_changes(tmp_path)) == 5
 
 
 def fake_kiro(log: list[list[str]], *, upgrade: bool = True, verdict: str = "would upgrade") -> Any:
@@ -373,3 +373,24 @@ def test_bare_groovyscope_entry_and_blanket_rule_are_replaced() -> None:
     v3 = kiro_agent.merge_v3({"permissions": {"rules": [blanket, custom]}})
     rules = v3["permissions"]["rules"]
     assert blanket not in rules and rules[0] == custom and kiro_agent.v3_rules()[1] in rules
+
+
+def test_agent_template_carries_the_write_and_stop_hooks_and_the_reviewer_is_read_only() -> None:
+    agent = json.loads(load_template("agents/groovy.json"))
+    assert agent["hooks"]["postToolUse"] == [{"matcher": "write", "command": "groovyscope hook"}]
+    assert agent["hooks"]["stop"] == [{"command": "groovyscope hook"}]
+    mine = {"name": "groovy", "tools": ["*"], "hooks": {"stop": [{"command": "my-gate"}]}}
+    merged = json.loads(
+        kiro_agent.merge_agent(json.dumps(mine), load_template("agents/groovy.json"), requested="v2", run=None)["text"]
+    )
+    assert [h["command"] for h in merged["hooks"]["stop"]] == ["my-gate", "groovyscope hook"]
+    reviewer = json.loads(load_template("agents/groovy-reviewer.json"))
+    assert (
+        reviewer["name"] == "groovy-reviewer" and "write" not in reviewer["tools"] and "shell" not in reviewer["tools"]
+    )
+    assert "hooks" not in reviewer
+    assert all(entry.startswith("@groovyscope/") for entry in reviewer["allowedTools"][2:])
+    assert (
+        "@groovyscope/fix" not in reviewer["allowedTools"] and "@groovyscope/review_changes" in reviewer["allowedTools"]
+    )
+    assert ("agents/groovy-reviewer.json", ".kiro/agents/groovy-reviewer.json") in KIRO_FILES

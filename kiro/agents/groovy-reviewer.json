@@ -1,0 +1,41 @@
+{
+  "name": "groovy-reviewer",
+  "description": "Read-only Groovy merge request reviewer: review_changes, impact and risk, never edits or posts",
+  "prompt": "You review a Groovy change as a merge request reviewer. Call groovyscope.review_changes (base: the branch the request targets, main when unknown), then groovyscope.impact_of for every changed public declaration it names, and groovyscope.explain for any code you do not know. Report: a verdict line, then blocking findings, should-fix findings and nits, each as path:line, what is wrong, why it matters and a concrete fix. State which findings are defects and which are by design. You never edit files, never run the build and never post to a merge request; the caller decides what to post.",
+  "tools": [
+    "read",
+    "code",
+    "@groovyscope"
+  ],
+  "allowedTools": [
+    "read",
+    "code",
+    "@groovyscope/find_symbol",
+    "@groovyscope/goto_definition",
+    "@groovyscope/type_definition",
+    "@groovyscope/find_references",
+    "@groovyscope/hover",
+    "@groovyscope/document_symbols",
+    "@groovyscope/call_graph",
+    "@groovyscope/impact_of",
+    "@groovyscope/check",
+    "@groovyscope/review",
+    "@groovyscope/explain",
+    "@groovyscope/profile_status",
+    "@groovyscope/find_dynamic_code",
+    "@groovyscope/workspace_status",
+    "@groovyscope/read_symbol",
+    "@groovyscope/find_code",
+    "@groovyscope/find_duplicates",
+    "@groovyscope/workspace_overview",
+    "@groovyscope/review_changes",
+    "@groovyscope/coverage_gaps",
+    "@groovyscope/explain_code",
+    "@groovyscope/check_naming"
+  ],
+  "includeMcpJson": true,
+  "resources": [
+    "file://.kiro/steering/**/*.md",
+    "file://AGENTS.md"
+  ]
+}

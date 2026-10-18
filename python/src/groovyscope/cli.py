@@ -19,8 +19,10 @@ import click
 from groovyscope import (
     __version__,
     benchmark,
+    changes,
     checkup,
     diagnostics,
+    hooks,
     kiro_agent,
     mcp_server,
     practices,
@@ -692,15 +694,17 @@ def uri_to_path(uri: str) -> Path:
     return Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
 
 
-def engine_call(socket_file: Path, method: str, params: dict[str, Any]) -> dict[str, Any]:
-    result = engine_result(socket_file, method, params)
+def engine_call(
+    socket_file: Path, method: str, params: dict[str, Any], timeout: float = RPC_TIMEOUT_SECONDS
+) -> dict[str, Any]:
+    result = engine_result(socket_file, method, params, timeout)
     return dict(result) if isinstance(result, dict) else {}
 
 
-def engine_result(socket_file: Path, method: str, params: dict[str, Any]) -> Any:
+def engine_result(socket_file: Path, method: str, params: dict[str, Any], timeout: float = RPC_TIMEOUT_SECONDS) -> Any:
     """One engine request, whatever shape it answers with (a list for impact reports); exits on failure."""
     try:
-        return _RPC(socket_file, method, params, RPC_TIMEOUT_SECONDS)
+        return _RPC(socket_file, method, params, timeout)
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"groovyscope: {method} failed: {exc}", err=True)
         sys.exit(1)
@@ -845,6 +849,68 @@ def check(
     fail_on = int(effective["lint"]["failOnPriority"])
     if any(row["level"] <= fail_on for row in rows):
         sys.exit(1)
+
+
+@main.command("hook")
+@click.option("--event", default=None, help="The Kiro hook event when stdin does not name it (tests, scripts).")
+@click.pass_obj
+def hook_command(obj: dict[str, Any], event: str | None) -> None:
+    """What Kiro's hooks run: reads the hook JSON from stdin. After a write (PostToolUse) the Groovy file just
+    written is checked and the findings printed for the agent; on Stop, with hooks.stopGate on, the turn is refused
+    while changed Groovy files have compile errors. Never fails the session."""
+    payload = hooks.parse_payload(sys.stdin.read())
+    name = hooks.event_name(payload, event)
+    if name not in {"postToolUse", "stop"}:
+        return
+    try:
+        socket_file, effective = daemon_socket_for(obj)
+    except SystemExit:
+        click.echo("groovyscope: hook skipped, the engine is unavailable (see `groovyscope doctor`)")
+        return
+    settings = hooks.settings(effective)
+    text = (
+        hook_after_write(socket_file, obj["root"], payload, settings)
+        if name == "postToolUse"
+        else hook_stop_gate(socket_file, obj["root"], settings)
+    )
+    if text:
+        click.echo(text)
+
+
+def hook_after_write(socket_file: Path, root: Path, payload: Mapping[str, Any], settings: hooks.HookSettings) -> str:
+    """The after-write block for the Groovy files a write touched; empty when there is nothing to say."""
+    paths = hooks.written_paths(payload, root)
+    if not settings["afterWrite"] or not paths:
+        return ""
+    rows = hook_check_rows(socket_file, root, paths, settings["afterWriteInclude"], settings["timeoutSeconds"])
+    return "" if rows is None else hooks.render_after_write(rows, paths, root, settings["afterWriteMaxFindings"])
+
+
+def hook_stop_gate(socket_file: Path, root: Path, settings: hooks.HookSettings) -> str:
+    """The Stop answer: a block decision as JSON while changed Groovy files have compile errors, else empty."""
+    if not settings["stopGate"]:
+        return ""
+    changed = hooks.changed_groovy_files(root, changes.default_runner)
+    if not changed:
+        return ""
+    rows = hook_check_rows(socket_file, root, changed, ["compile"], settings["timeoutSeconds"])
+    decision = hooks.stop_decision(rows or [], settings["afterWriteMaxFindings"])
+    return json.dumps(decision) if decision else ""
+
+
+def hook_check_rows(
+    socket_file: Path, root: Path, paths: Sequence[Path], include: Sequence[str], timeout: int
+) -> list[dict[str, Any]] | None:
+    """The findings for ``paths`` within ``timeout`` seconds, or None (with one line printed) when the engine did
+    not answer in time: a hook must never hold the agent hostage."""
+    params: dict[str, Any] = {"root": str(root), "uris": to_uris(root, list(paths)), "include": list(include)}
+    try:
+        result = _RPC(socket_file, "groovyscope/check", params, float(timeout))
+    except (OSError, RuntimeError, ValueError) as exc:
+        click.echo(f"groovyscope: hook check skipped ({exc})")
+        return None
+    diagnostics = result.get("diagnostics", {}) if isinstance(result, dict) else {}
+    return finding_rows(diagnostics, root)
 
 
 @main.command("review")

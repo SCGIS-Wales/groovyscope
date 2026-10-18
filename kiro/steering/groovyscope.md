@@ -17,6 +17,14 @@ inclusion: always
   a symbol. Say "run all" runs the first six and reports one combined summary.
 - If the checkup output is missing or says it could not run, continue normally and mention it once.
 
+## After every write
+
+- After you write a Groovy, Gradle or Jenkinsfile file, a hook checks that file and a `groovyscope checked ...`
+  block appears with its findings, errors first. No block means the file is clean. Fix errors before moving
+  on (`groovyscope.fix` applies the safe ones); treat warnings as part of the job you were asked to do.
+- When a `Stop` gate is on, the turn is refused while files you changed do not compile: read the reason, fix,
+  and finish again.
+
 ## Navigation
 
 - For any Groovy, Gradle or Jenkinsfile question, use the `code` tool (find references, go to definition,

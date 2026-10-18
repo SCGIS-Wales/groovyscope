@@ -504,3 +504,59 @@ def test_explain_code_graph_and_naming_commands(
     assert "src/A.groovy:2:5: info [GS023] says nothing" in naming.output and "by code: {'GS023': 1}" in naming.output
     facts_json = runner.invoke(cli.main, ["--root", str(tmp_path), "naming", "src/A.groovy", "--json"])
     assert json.loads(facts_json.output)["declarations"][0]["name"] == "A"
+
+
+def test_hook_command_checks_written_files_and_gates_stop(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "src" / "main" / "groovy"
+    src.mkdir(parents=True)
+    target = src / "A.groovy"
+    target.write_text("class A { def x = 1 / 0 }")
+    uri = target.resolve().as_uri()
+    finding = {
+        "range": {"start": {"line": 0, "character": 10}},
+        "severity": 1,
+        "source": "groovyc",
+        "code": "error",
+        "message": "unexpected token",
+    }
+    seen: list[dict[str, Any]] = []
+
+    def fake_rpc(_socket: Path, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+        seen.append({"method": method, "params": params, "timeout": timeout})
+        return {"diagnostics": {uri: [finding]}, "summary": {}}
+
+    monkeypatch.setattr(cli, "_RPC", fake_rpc)
+    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "sock", {"hooks": {"timeoutSeconds": 9}}))
+    payload = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "write", "tool_input": {"path": str(target)}})
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("groovyscope checked src/main/groovy/A.groovy: 1 error(s)")
+    assert seen[0]["method"] == "groovyscope/check" and seen[0]["timeout"] == 9.0
+    assert seen[0]["params"]["include"] == ["compile", "lint", "practices"]
+
+    other = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "read", "tool_input": {"path": str(target)}})
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=other).output == ""
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input="{}").output == ""
+
+    stop = json.dumps({"hook_event_name": "Stop"})
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop).output == ""  # gate off
+    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "sock", {"hooks": {"stopGate": True}}))
+    monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, " M src/main/groovy/A.groovy\n"))
+    blocked = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop)
+    assert json.loads(blocked.output)["decision"] == "block" and seen[-1]["params"]["include"] == ["compile"]
+
+    def slow(_socket: Path, _method: str, _params: dict[str, Any], _timeout: float) -> dict[str, Any]:
+        raise RuntimeError("timed out")
+
+    monkeypatch.setattr(cli, "_RPC", slow)
+    skipped = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert skipped.exit_code == 0 and "hook check skipped" in skipped.output
+
+    def down(_obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+        raise SystemExit(1)
+
+    monkeypatch.setattr(cli, "daemon_socket_for", down)
+    unavailable = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert unavailable.exit_code == 0 and "engine is unavailable" in unavailable.output
