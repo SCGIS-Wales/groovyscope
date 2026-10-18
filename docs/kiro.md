@@ -71,6 +71,20 @@ finishing. Whether Kiro V3 honours a blocking `Stop` answer is documented both w
 Settings: `hooks.afterWrite` (default true), `hooks.afterWriteInclude`, `hooks.afterWriteMaxFindings` (12),
 `hooks.stopGate` (false), `hooks.timeoutSeconds` (45).
 
+## Skills and prompts
+
+`groovyscope kiro init` writes twelve skills under `.kiro/skills/groovy-*/SKILL.md` (`~/.kiro/skills/` with
+`--global`), one per recipe of the [prompts cookbook](prompts.md): `groovy-review`, `groovy-fix`,
+`groovy-quality`, `groovy-duplicates`, `groovy-catch-audit`, `groovy-dynamic`, `groovy-coverage`,
+`groovy-impact`, `groovy-rename`, `groovy-explain`, `groovy-naming`, `groovy-profile`. Kiro loads only the name
+and description at start and the body when the skill runs, so the recipes cost nothing until used; each is a
+slash command (`/groovy-impact OrderService.place`). The MCP server serves the same twelve as prompts
+(`prompts/list`, one optional `arguments` string), which Kiro shows under `/` as well, so a client without
+Kiro's skills directory still has them. The steering file now keeps only the session rules and points at the
+skills, which is what cut its size by half. If a custom agent does not list the skills, add
+`skill://.kiro/skills/**/SKILL.md` to its `resources` (Kiro's documented form; the owner's Kiro 3 check
+confirms it).
+
 ## The reviewer agent
 
 `groovyscope kiro init` also writes `agents/groovy-reviewer.json`: a read-only agent whose prompt runs

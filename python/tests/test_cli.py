@@ -11,6 +11,7 @@ from click.testing import CliRunner
 
 from groovyscope import __version__, cli
 from groovyscope.jar import locate_jar
+from groovyscope.kiro import GLOBAL_FILES, KIRO_FILES
 from groovyscope.launch import SAFETY_FLAGS
 
 
@@ -85,7 +86,7 @@ def test_kiro_init_dry_run_then_write(runner: CliRunner, tmp_path: Path) -> None
     assert not (tmp_path / ".kiro").exists()
     real = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init"])
     assert real.exit_code == 0, real.output
-    assert "5 file(s) written" in real.output
+    assert f"{len(KIRO_FILES)} file(s) written" in real.output
     assert "+++ b/.kiro/settings/lsp.json" in real.output
     assert "/code status" in real.output
     again = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init"])
@@ -345,7 +346,7 @@ def test_kiro_init_global_merges_into_the_kiro_home(
     assert not (isolated_home / ".kiro" / "agents").exists()
     real = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init", "--global"])
     assert real.exit_code == 0, real.output
-    assert "5 file(s) written" in real.output and "originals kept as <file>.bak" in real.output
+    assert f"{len(GLOBAL_FILES) + 1} file(s) written" in real.output and "originals kept as <file>.bak" in real.output
     assert "in each Groovy project run `groovyscope kiro init`" in real.output
     mcp = json.loads((settings / "mcp.json").read_text(encoding="utf-8"))
     assert set(mcp["mcpServers"]) == {"other", "groovyscope"}

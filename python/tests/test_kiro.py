@@ -31,15 +31,17 @@ def test_templates_are_well_formed() -> None:
         text = load_template(name)
         if name.endswith(".json"):
             json.loads(text)
+        elif name.startswith("skills/"):
+            assert text.startswith("---\nname: ") and "\ndescription: " in text
         else:
             assert text.startswith("---\ninclusion: always")
 
 
 def test_fresh_init_creates_all_files(tmp_path: Path) -> None:
     changes = plan_changes(tmp_path)
-    assert [c["action"] for c in changes] == ["create"] * 5
+    assert [c["action"] for c in changes] == ["create"] * len(KIRO_FILES)
     written = apply_changes(tmp_path, changes)
-    assert len(written) == 5
+    assert len(written) == len(KIRO_FILES)
     lsp = json.loads((tmp_path / ".kiro/settings/lsp.json").read_text(encoding="utf-8"))
     assert lsp["languages"]["groovy"]["command"] == "groovyscope"
     assert all(present_files(tmp_path).values())
@@ -49,7 +51,7 @@ def test_fresh_init_creates_all_files(tmp_path: Path) -> None:
 def test_second_init_is_a_no_op(tmp_path: Path) -> None:
     apply_changes(tmp_path, plan_changes(tmp_path))
     changes = plan_changes(tmp_path)
-    assert [c["action"] for c in changes] == ["unchanged"] * 5
+    assert [c["action"] for c in changes] == ["unchanged"] * len(KIRO_FILES)
     assert apply_changes(tmp_path, changes) == []
 
 
@@ -94,7 +96,7 @@ def test_markdown_is_replaced_not_merged(tmp_path: Path) -> None:
     steering = tmp_path / ".kiro/steering/groovyscope.md"
     steering.parent.mkdir(parents=True)
     steering.write_text("old policy\n", encoding="utf-8")
-    change = plan_changes(tmp_path)[4]
+    change = next(c for c in plan_changes(tmp_path) if c["path"] == ".kiro/steering/groovyscope.md")
     assert change["action"] == "update"
     assert change["after"] == load_template("steering/groovyscope.md")
     diff = unified_diff(change)
@@ -150,16 +152,16 @@ def test_global_scope_targets_the_kiro_home(tmp_path: Path) -> None:
     )
     changes = plan_changes(base, global_scope=True)
     assert [c["path"] for c in changes] == [path for _, path in GLOBAL_FILES]
-    assert [c["action"] for c in changes] == ["update", "create", "create", "create"]
+    assert [c["action"] for c in changes] == ["update", *["create"] * (len(GLOBAL_FILES) - 1)]
     written = apply_changes(base, changes)
-    assert len(written) == 4
+    assert len(written) == len(GLOBAL_FILES)
     assert has_global_setup(base) and not has_global_setup(tmp_path / "nowhere")
     mcp = json.loads((base / "settings" / "mcp.json").read_text(encoding="utf-8"))
     assert set(mcp["mcpServers"]) == {"other", "groovyscope"}
     assert (base / "settings" / "mcp.json.bak").is_file()
     agent = json.loads((base / "agents" / "groovy.json").read_text(encoding="utf-8"))
     assert agent["resources"][-1] == f"file://{base.as_posix()}/steering/**/*.md"
-    assert [c["action"] for c in plan_changes(base, global_scope=True)] == ["unchanged"] * 4
+    assert [c["action"] for c in plan_changes(base, global_scope=True)] == ["unchanged"] * len(GLOBAL_FILES)
     assert [c["path"] for c in plan_changes(tmp_path, lsp_only=True, profile_guidance="x")] == [
         ".kiro/settings/lsp.json"
     ]
@@ -175,7 +177,7 @@ def test_profile_guidance_gets_its_own_steering_file(tmp_path: Path) -> None:
     assert plan_changes(tmp_path / "kh", global_scope=True, profile_guidance="x")[-1]["path"] == (
         "steering/groovyscope-profiles.md"
     )
-    assert len(plan_changes(tmp_path)) == 5
+    assert len(plan_changes(tmp_path)) == len(KIRO_FILES)
 
 
 def fake_kiro(log: list[list[str]], *, upgrade: bool = True, verdict: str = "would upgrade") -> Any:

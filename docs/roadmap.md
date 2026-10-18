@@ -328,6 +328,16 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   reason. Next branch: skills generated from the cookbook, the same recipes as MCP prompts, the steering
   trimmed (`inclusion: fileMatch` once the owner's Kiro 3 check says custom agents honour it), the
   `kiro init --power` packaging once the plugin schema is confirmed on a Kiro install.
+  Second branch `feat/kiro-skills` (2026-10-18): twelve skills under `.kiro/skills/groovy-*/SKILL.md`, one
+  per cookbook recipe (review, fix, quality, duplicates, catch-audit, dynamic, coverage, impact, rename,
+  explain, naming, profile), each with the tool sequence, how to read the answer and what to report, written
+  by `kiro init` in both scopes and refreshed by `repair`; the same twelve served as MCP prompts (`prompts/list`,
+  one optional `arguments` string, `$ARGUMENTS` in the body); the steering cut from 137 to 55 lines, keeping
+  the session rules, the after-write block, navigation and the every-change rules, and pointing at the
+  skills for the recipes. Not done: `inclusion: fileMatch` (custom agents load steering through `resources`,
+  which ignores the front matter, so the switch waits for the Kiro 3 check) and the power packaging (plugin
+  schema unconfirmed). Left for the owner: one skill run (`/groovy-impact <symbol>`) and whether the custom
+  agent lists the skills without a `skill://` resource entry.
 - [ ] **Stage 16: tool surface and context cost** — not started, after the Stage 13 numbers. Planned: shorter
   tool descriptions (the explanations move to the skills), a combined `symbol_context` tool (definition,
   hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
@@ -437,3 +447,5 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   check after an edit on the corpus. The benchmark re-run with Kiro is the owner's part.
 - 2026-10-18: Stage 15 started on `feat/kiro-native`: `groovyscope hook` (after-write check, opt-in stop gate),
   the `groovy-reviewer` agent and the headless CI review recipe; 331 Python tests at 95%.
+- 2026-10-18: Stage 15 second branch `feat/kiro-skills`: twelve skills from the cookbook, MCP prompts, the
+  steering halved; 347 Python tests at 95%.
