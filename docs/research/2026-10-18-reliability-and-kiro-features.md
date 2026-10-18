@@ -81,3 +81,77 @@ document or pulls, which the owner's check confirms.
 Recommended order: 17 first (the hangs an agent user meets daily, a day of work), then 18 (the large
 workspace cases, two to three sessions), then 19 (small, after the Kiro 3 check). Stage 16 (tool surface and
 context) still waits for the `/tools` and `/context` numbers and can run alongside any of these.
+
+## 5. Revised plan after Stage 17: asynchronous calls and out-of-memory guardrails
+
+Written on 2026-10-18 after Stage 17 (PR #65) at the owner's request: the remaining work is re-cut around two
+questions, what happens when calls overlap and what happens when memory runs out, and every item names the
+guardrail it adds and the practice it follows. Stage 17 left the engine with a bounded compile, one generation
+in memory at a time and a JVM that exits on `OutOfMemoryError`. What it does not yet have is a way to stop
+work that nobody waits for any more, a way to refuse work it cannot afford, and a front end that survives the
+exit without a crash loop.
+
+### 5.1 How the system behaves under concurrency today
+
+- The MCP server holds one engine session and one `threading.Lock` around every request
+  (`mcp_server.py`, `session_call`). Kiro calls tools in parallel; the second call waits for the first, up to
+  the 600 s engine timeout, while Kiro itself gives up at 120 s. A cancelled client request keeps the worker
+  thread and the engine busy.
+- The engine answers every request on `ForkJoinPool.commonPool()` (`CompletableFutures.computeAsync`), with no
+  `CancelChecker` passed into the services, so `$/cancelRequest` from LSP4J is accepted and ignored. A compile
+  or a type check runs to the end even when the request that asked for it is gone.
+- `LanguageServices.refresh()` runs under one monitor; every request that needs a fresh snapshot blocks on
+  it. That is correct (one compile per change) but a waiter cannot give up, and `status`, which should be
+  cheap, walks the file tree on the reader thread.
+- When the JVM exits on `OutOfMemoryError`, the relay's exit code tells Kiro to restart the server, and the
+  MCP server reconnects on the next tool call. Both start a JVM with the same heap, which loads the same
+  workspace and dies the same way: a crash loop that costs a JVM start per request and tells the user nothing
+  until they run `doctor`.
+
+### 5.2 Guardrails, by layer
+
+**Engine (Java)**
+
+| # | Guardrail | Practice it follows |
+|---|---|---|
+| G1 | **Cooperative cancellation end to end.** Every `computeAsync` handler passes its `CancelChecker` into the services; the compiler checks it between rounds, the type checker and CodeNarc between files, the call graph between classes. `$/cancelRequest` then stops the work within one unit. The daemon protocol exposes the same cancel to the MCP front end | Cancellation is cooperative in the JVM: check a flag at safe points, never `Thread.stop`. LSP4J's `CancelChecker` is the standard carrier |
+| G2 | **Bounded request executors with two lanes.** One fixed pool for heavy requests (`daemon.workerThreads`, default the core count, at least 2) and a small pool for cheap ones (hover, definition, outline, status), both with bounded queues. A full heavy queue answers `ServerBusy` (LSP error `RequestFailed`) at once instead of queuing without limit | Bulkhead and bounded queue: a slow type check cannot starve navigation, and back pressure reaches the caller instead of building up in memory |
+| G3 | **Single-flight compile with cancellable waiters.** The monitor in `refresh()` becomes a `CompletableFuture<Snapshot>` that the first requester owns and later requesters join; a cancelled waiter leaves without cancelling the compile the others still need | Request coalescing: one compile per change, but no request is pinned to another's lifetime |
+| G4 | **Memory pressure guard.** A `MemoryGuard` registers a collection usage threshold on the tenured pool (`MemoryPoolMXBean`, 85%, the figure `doctor` already uses). When it fires: a warning in the log, `memory.pressure: true` in `status`, derived caches dropped (call graph, quality and lint caches, in-memory symbol table), and whole-workspace requests (`review` of everything, `find_duplicates`, `workspace_overview`) refused with the `daemon.heap` advice while cheap requests keep working. `OutOfMemoryError` is still never caught: with `-XX:+ExitOnOutOfMemoryError` the JVM exits and the front end handles it | Measure, then shed load and degrade in a declared order; do not catch `OutOfMemoryError` (the heap state after it is undefined) |
+| G5 | **Workspace size budget.** `workspace.maxFiles` (default 20,000) and `workspace.maxTotalBytes` (default 256 MB) in `.groovyscope.yaml`. Past the budget the compile covers the source roots in order until it is spent and reports one `GS101` warning naming the roots left out, instead of loading everything and dying | Admission control before the expensive step, with the limit visible in the configuration file |
+| G6 | **Heap dump on request.** `daemon.heapDumpOnOutOfMemory: false` by default; when on, `-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=<cache dir>`; `doctor` reports dumps present and their size and the sweep (G13) removes old ones | Diagnostics opt in: a dump the size of the heap must never appear on a user's disk unasked |
+| G7 | **Containment and eviction (E3, E6, E7).** Per-module containment in `AstIndex.build` so one bad tree fails one file; `WorkspaceRegistry` evicts a root idle for `daemon.workspaceIdleMinutes` (default 30) and releases its generation; symbol saves coalesce; `maxFileBytes` applied in `text()`; `status` answers from counters kept by the model, not a tree walk | Fail small, release what is idle, keep the liveness probe O(1) |
+
+**Front end (Python, asyncio and the MCP SDK)**
+
+| # | Guardrail | Practice it follows |
+|---|---|---|
+| G8 | **Demultiplexed session with per-call futures.** One reader thread per engine session matches replies to requests by id; each tool awaits its own future with `asyncio.wait_for` under a budget `mcp.requestTimeoutSeconds` (default 100 s, under Kiro's 120 s). No lock is held for the duration of a call; the only serialisation left is frame writing | Never block the event loop; one connection, many outstanding requests, as JSON-RPC intends |
+| G9 | **Timeout and cancel propagation.** On the budget, the tool answers "still running" with the request id and sends `$/cancelRequest` to the engine (G1 makes it effective); an MCP client cancel (`CancelledError` in the handler) does the same. An identical call arriving while the first still runs joins it (single flight keyed by method and parameters) rather than doubling the work | A timed-out request must release everything it holds; idempotent retries join in-flight work |
+| G10 | **Concurrency limit.** `mcp.maxInFlight` (default 4) as an `asyncio.Semaphore` in front of the engine; waiters time out on the same budget with a message that names the limit | A bulkhead on the client side too, so a parallel-tool agent cannot flood the engine or the socket |
+| G11 | **Crash-loop guard and heap escalation (OOM self-healing).** The daemon's exit is recorded in a per-workspace state file in the cache directory (`daemon-state.json`: last exit cause, restarts in the last ten minutes, current heap). A respawn waits a jittered backoff (1 s, 2 s, 4 s, cap 30 s) and is refused after `daemon.maxRestartsPerTenMinutes` (default 3), answering every request with the `daemon.heap` advice instead. When the previous exit was an `OutOfMemoryError`, the next start multiplies the heap by `daemon.heapGrowthFactor` (default 1.5) up to `daemon.maxHeap` (default 25% of physical memory, capped at 4g), keeps the grown value in the state file and says so in the log and in `daemon status`, `doctor` and `checkup`. At `maxHeap` the escalation stops and the guard above takes over | Exponential backoff with jitter and a restart budget; grow the resource once, within a ceiling the user set; make the state visible |
+| G12 | **Relay and probe (P2, P4).** The relay connects before attaching stdin and retries `ensure_running` once; the probe tells refused, busy and incompatible apart; hooks (P3) return before resolving the engine and never cold-start it | Fail before taking input you cannot give back |
+| G13 | **Bounded files on disk (P5 to P8).** `refresh_classpath` kills the process group on timeout, refuses a concurrent build and reads trust live; `output.maxBytes` enforced on every answer; the daemon log rotates at `daemon.logMaxBytes` (default 5 MB, three kept); `doctor` reports and `checkup --fix` sweeps old CDS archives, symbol stores of roots that no longer exist, `.bak.N` files and heap dumps; user scalars in `mcp.json` kept on repair | Everything that grows has a cap and an owner |
+| G14 | **Stop gate (P9, P10).** `git status -z` and a session baseline; writes compare the content they read before replacing it; the spawned daemon is reaped | Correctness fixes with no new surface |
+
+**Process: merge and release without a human in the loop**
+
+| # | Change | Why |
+|---|---|---|
+| G15 | Repository setting **Allow auto-merge** on (one tick by the owner in Settings, General, Pull requests). Each PR is then marked to auto-merge (squash) when its checks pass; until the setting is on, PRs are merged through the API after CI is green | GitHub's native auto-merge waits for the required checks and merges with the author's identity, so release-please still fires |
+| G16 | **A fine-grained token for release-please** (`RELEASE_PLEASE_TOKEN`: contents and pull requests, write, this repository only) used by `release-please.yml`, which then also enables auto-merge on the release PR it opens | Events raised by `GITHUB_TOKEN` do not start workflows and PRs it opens need manual approval of their runs; a token owned by a person removes both blocks, and auto-merge finishes the release PR when its CI is green |
+| G17 | **The publish verified by the session that cut the release**: tag present, workflow run green, PyPI version live, the Homebrew tap updated by its daily workflow or by hand | A release is done when the package is installable, not when the tag exists |
+
+### 5.3 Stages
+
+| Stage | Scope | Done when |
+|---|---|---|
+| **18. Asynchronous guardrails** | G1, G2, G3, G7 (engine); G8, G9, G10, G12 (front end) | Specs: a cancel stops a compile within one round; a full heavy queue answers busy while hover still answers; a cancelled waiter leaves the compile running for the others; Python tests: two parallel tool calls on one session answer independently, a timed-out call sends the cancel and a repeat joins the in-flight one; CI green, merged, released |
+| **19. Out-of-memory self-healing** | G4, G5, G6 (engine); G11, G13 (front end); G14 | Specs: the pressure guard drops caches and refuses a whole-workspace request (threshold injected); the size budget leaves a root out with one warning; Python tests with a fake runner: a crash loop stops after the budget, the heap grows once after an OOM exit and stops at `maxHeap`, the state file and `doctor` show it; CI green, merged, released |
+| **20. Elicitation and progress** | Unchanged from the earlier Stage 19 | Unchanged |
+| Process | G15, G16, G17 | Applied with the next release and recorded in `docs/ci.md` |
+
+Order: 18 then 19, because a cancel that works (G1) is what makes a timeout (G9) and the pressure guard's
+refusals (G4) cheap; the heap escalation (G11) is small and could be pulled forward if an out-of-memory exit is
+seen in practice before Stage 19 starts. Every new value above lives in `.groovyscope.yaml` with a default in
+`defaults.yaml` and a rule in `config-schema.json`; nothing is hardcoded.
