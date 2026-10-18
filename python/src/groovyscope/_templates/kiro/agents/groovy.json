@@ -30,7 +30,8 @@
     "@groovyscope/review_changes",
     "@groovyscope/coverage_gaps",
     "@groovyscope/explain_code",
-    "@groovyscope/check_naming"
+    "@groovyscope/check_naming",
+    "@groovyscope/symbol_context"
   ],
   "toolsSettings": {
     "shell": {

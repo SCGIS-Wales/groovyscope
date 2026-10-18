@@ -35,7 +35,7 @@ Then open any Groovy project:
 cd your-groovy-project
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
-> /mcp                            # expect: groovyscope running 27 tools
+> /mcp                            # expect: groovyscope running 28 tools
 ```
 
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
@@ -163,6 +163,7 @@ closed-world), and parallel calls are queued safely on the one engine session.
 | `workspace_overview()` | A map of the codebase: files and lines per package, the largest files and classes, test files and classes without a test. The first call in an unfamiliar workspace |
 | `find_symbol(query, kind?, limit?, cursor?)` | Declarations whose name contains the query |
 | `goto_definition(path, line, col)` | The declaration under a position, with its confidence |
+| `symbol_context(path, line, col)` | Definition, hover text and reference count (by confidence) of the symbol at a position, in one call |
 | `type_definition(path, line, col)` | The declaration of the type of the expression under a position |
 | `hover(path, line, col)` | What an editor shows on hover: signature, documentation, runtime-profile parameter details, why a finding on that line matters |
 | `document_symbols(path, depth?, kinds?, name?, limit?, cursor?)` | The outline of a file: classes and members with their first and last line and the file's line count, filtered by kind or name and paged, instead of reading it |
