@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.11.0...v0.12.0) (2026-10-18)
+
+
+### Features
+
+* **engine:** resolve the latest stable CodeNarc release at build time and embed it ([#55](https://github.com/SCGIS-Wales/groovyscope/issues/55)) ([84b5da5](https://github.com/SCGIS-Wales/groovyscope/commit/84b5da5b68811cda4a266cccff9ca6bc2ef515d0))
+
+
+### Documentation
+
+* **readme:** add an architecture section with a banner diagram ([#56](https://github.com/SCGIS-Wales/groovyscope/issues/56)) ([d24b424](https://github.com/SCGIS-Wales/groovyscope/commit/d24b42426674d7ecf1c70f0daeb985919712ee32))
+* record the 0.11.0 release verification and the stage 12 round trip ([#53](https://github.com/SCGIS-Wales/groovyscope/issues/53)) ([1a30de0](https://github.com/SCGIS-Wales/groovyscope/commit/1a30de0ad1c22296badbf9179c9fe06f1236faf4))
+
 ## [0.11.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.10.0...v0.11.0) (2026-10-17)
 
 
