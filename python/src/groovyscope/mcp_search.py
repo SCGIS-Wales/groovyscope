@@ -32,6 +32,10 @@ HANDLING_MEANING = {
     "returns-default": "a default value replaces the failed result; by design at a parsing boundary, a gap elsewhere",
     "other": "state is changed or a callback runs; read the body",
 }
+IMPLICIT_TYPE_VERDICT = (
+    "defect: `{name}` in this catch header is a variable name, not a type, so the block catches every Exception; "
+    "name the type and a variable, e.g. `catch ({name} e)`"
+)
 
 
 def compact_match(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
@@ -47,6 +51,9 @@ def compact_match(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
     # Facts a kind knows beyond its detail (a catch clause's handling, variable, catches, code, implicitType).
     facts = {key: value for key, value in item.items() if key not in STANDARD_MATCH_KEYS}
     entry.update({key: value for key, value in facts.items() if value not in (None, "")})
+    if entry.get("implicitType"):
+        # Stated per match: an agent read `catch (MissingResourceException)` as a narrow, harmless catch.
+        entry["verdict"] = IMPLICIT_TYPE_VERDICT.format(name=entry.get("variable") or "the name")
     return entry
 
 

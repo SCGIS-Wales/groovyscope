@@ -221,6 +221,15 @@ may run, the elicitation shows what it is about to change. Set `mcp.confirmWrite
 to rely on the permission rule alone. While a tool waits for the engine or the build, it sends a progress note
 every `mcp.progressSeconds` to clients that asked for progress.
 
+Whether the client can be asked is recorded on the first tool call: `workspace_status` shows it under `client`
+(name, version, protocol, declared capabilities, `elicitation`) and `groovyscope doctor` prints it as the
+`mcp client` line. A write through a client that declares no elicitation says `"confirmation": "not offered"`
+in its answer, so it is clear that Kiro's own tool approval was the only check. Kiro CLI 2.29.1 in classic
+mode asked no groovyscope question in the owner's first check; the terminal UI is the one to try.
+
+Prompts are typed `/groovy-impact` in Kiro's terminal UI (the default) and `@groovy-impact` in the classic chat
+(`--classic`); `/prompts` lists them in both.
+
 The practices catalogue is under `#` as two resources: `groovyscope://practices`, the checklist and every GS and
 RP code, and `groovyscope://practices/<code>`, one code's why, bad and good form and fix.
 

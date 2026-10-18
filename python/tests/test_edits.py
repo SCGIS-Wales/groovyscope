@@ -33,6 +33,10 @@ def test_changed_line_count() -> None:
     assert changed_line_count("a\nb\nc\n", "a\nB\nc\n") == 1
     assert changed_line_count("a\nb\n", "a\nb\nc\nd\n") == 2
     assert changed_line_count("same", "same") == 0
+    # One inserted line near the top is one changed line, not every line after it.
+    body = "\n".join(f"line {n}" for n in range(120))
+    assert changed_line_count(body, "import x\n" + body) == 1
+    assert changed_line_count("a\nb\nc\n", "a\nc\n") == 1
 
 
 def test_write_document_refuses_a_file_that_changed_since_it_was_read(tmp_path: Path) -> None:

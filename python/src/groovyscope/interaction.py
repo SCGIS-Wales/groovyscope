@@ -23,6 +23,11 @@ ACCEPTED = "accepted"
 DECLINED = "declined"
 CANCELLED = "cancelled"
 UNSUPPORTED = "unsupported"
+NOT_OFFERED = "not offered"  # asked for, but the client declared no elicitation: its own approval is the only gate
+NOT_OFFERED_NOTE = (
+    "this client offers no confirmations (MCP elicitation), so its own tool approval was the only check before "
+    "the write"
+)
 POLICY_AUTO = "auto"  # ask through elicitation when the client supports it
 POLICY_NEVER = "never"  # never ask; the client's own tool approval is the only gate
 LOG = logging.getLogger("groovyscope.interaction")
@@ -57,15 +62,52 @@ def can_elicit(context: Any | None) -> bool:
     return capabilities is not None and getattr(capabilities, "elicitation", None) is not None
 
 
-def confirm(message: str, *, policy: str = POLICY_AUTO, run: Runner = anyio.from_thread.run) -> str:
-    """Asks the user ``message`` and returns ``accepted``, ``declined``, ``cancelled`` or ``unsupported``.
+def safe_attribute(owner: Any, name: str) -> Any:
+    """``owner.name``, or None when ``owner`` is None or the property refuses (the SDK's context raises outside a
+    request)."""
+    if owner is None:
+        return None
+    try:
+        return getattr(owner, name, None)
+    except (ValueError, RuntimeError, LookupError):
+        return None
 
-    ``unsupported`` means nothing was asked (policy ``never``, no tool call in progress, or a client without
-    elicitation); the caller then does what the tool's own arguments say. A client that fails to answer counts
-    as ``cancelled``: when the question was asked, nothing is written without an answer."""
+
+def client_summary(context: Any | None) -> dict[str, Any] | None:
+    """Who the MCP client is and what it offers, from the initialize handshake: name, version, protocol version,
+    the capabilities it declared and whether it can answer a question (elicitation). None outside a tool call."""
+    session = safe_attribute(context, "session")
+    if session is None:
+        return None
+    params = safe_attribute(session, "client_params")
+    info = safe_attribute(params, "client_info")
+    capabilities = safe_attribute(params, "capabilities") or safe_attribute(context, "client_capabilities")
+    declared = []
+    if capabilities is not None:
+        dumped = capabilities.model_dump(exclude_none=True) if hasattr(capabilities, "model_dump") else {}
+        declared = sorted(str(key) for key in dumped)
+    return {
+        "name": getattr(info, "name", None),
+        "version": getattr(info, "version", None),
+        "protocol": safe_attribute(session, "protocol_version"),
+        "capabilities": declared,
+        "elicitation": can_elicit(context),
+    }
+
+
+def confirm(message: str, *, policy: str = POLICY_AUTO, run: Runner = anyio.from_thread.run) -> str:
+    """Asks the user ``message`` and returns ``accepted``, ``declined``, ``cancelled``, ``not offered`` or
+    ``unsupported``.
+
+    ``unsupported`` means nothing was asked (policy ``never``, or no tool call in progress) and ``not offered``
+    that the client declared no elicitation; either way the caller does what the tool's own arguments say, and
+    ``not offered`` is reported so the user knows the client's own approval was the only check. A client that
+    fails to answer counts as ``cancelled``: when the question was asked, nothing is written without an answer."""
     context = current()
-    if policy == POLICY_NEVER or context is None or not can_elicit(context):
+    if policy == POLICY_NEVER or context is None:
         return UNSUPPORTED
+    if not can_elicit(context):
+        return NOT_OFFERED
     try:
         result = run(context.elicit, message, CONFIRM_SCHEMA)
     except Exception as exc:  # any failure of the client to answer is a non-answer
