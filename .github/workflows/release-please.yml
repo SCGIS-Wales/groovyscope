@@ -30,18 +30,29 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-      # The release PR merges itself when its checks pass (needs "Allow auto-merge" in the repository settings;
-      # until then this step only prints a note and the PR is merged by hand or through the API).
-      - name: Let the release PR merge itself when its checks pass
+      # The release PR is marked to merge itself once its checks pass. Only GitHub's own auto-merge is requested,
+      # never a merge: `gh pr merge --auto` merges at once when nothing is required yet (no checks reported, no
+      # branch protection), which released 0.16.1 and 0.17.0 without CI. The mutation below fails instead when
+      # "Allow auto-merge" is off or the PR has no pending requirement, and the PR then waits for a person or the
+      # session that drives the release. Without RELEASE_PLEASE_TOKEN nothing is requested: a merge by the
+      # built-in token would not start the tagging run.
+      - name: Mark the release PR to merge itself when its checks pass
         if: steps.release.outputs.prs_created == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PRS: ${{ steps.release.outputs.prs }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::RELEASE_PLEASE_TOKEN is not set; merge the release PR once its checks are green"
+            exit 0
+          fi
           for number in $(printf '%s' "$PRS" | jq -r '.[].number'); do
-            gh pr merge "$number" --auto --squash \
-              || echo "::notice::auto-merge is not available for #$number; merge it once its checks are green"
+            node=$(gh pr view "$number" --json id --jq .id) || continue
+            gh api graphql -f query='mutation($id: ID!) {
+              enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) { clientMutationId }
+            }' -f id="$node" \
+              || echo "::notice::auto-merge was not enabled for the release PR; merge it once its checks are green"
           done
 
   # Releases created with GITHUB_TOKEN do not fire `release: published` in other workflows, and
