@@ -99,6 +99,21 @@ def test_mcp_tools_end_to_end(tmp_path: Path, short_dir: Path, monkeypatch: pyte
         assert tools["hover"]["annotations"]["readOnlyHint"] is True
         assert tools["fix"]["annotations"]["readOnlyHint"] is False and tools["fix"]["title"] == "Apply safe fixes"
 
+        send(process, {"jsonrpc": "2.0", "id": 3, "method": "prompts/list", "params": {}})
+        prompts = {prompt["name"] for prompt in receive(process, 3)["prompts"]}
+        assert "groovy-review" in prompts and len(prompts) == 12
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "prompts/get",
+                "params": {"name": "groovy-impact", "arguments": {"arguments": "Greeter.greet"}},
+            },
+        )
+        rendered = receive(process, 4)["messages"][0]["content"]["text"]
+        assert "Greeter.greet" in rendered and "groovyscope.impact_of" in rendered
+
         hover = call_tool(process, 20, "hover", {"path": "src/main/groovy/app/Greeter.groovy", "line": 4, "col": 12})
         assert hover["found"] and "greet" in hover["markdown"]
         outline = call_tool(process, 21, "document_symbols", {"path": "src/main/groovy/app/Greeter.groovy"})

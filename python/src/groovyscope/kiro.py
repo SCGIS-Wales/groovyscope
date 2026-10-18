@@ -13,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from groovyscope import __version__, kiro_agent
+from groovyscope import __version__, kiro_agent, skills
 from groovyscope.config import deep_merge
 
 # (template name inside the package, destination relative to the workspace root)
@@ -23,6 +23,7 @@ KIRO_FILES: tuple[tuple[str, str], ...] = (
     ("agents/groovy.json", ".kiro/agents/groovy.json"),
     ("agents/groovy-reviewer.json", ".kiro/agents/groovy-reviewer.json"),
     ("steering/groovyscope.md", ".kiro/steering/groovyscope.md"),
+    *((f"skills/{name}/SKILL.md", f".kiro/skills/{name}/SKILL.md") for name in skills.skill_names()),
 )
 # Files relative to the Kiro home (~/.kiro, or $KIRO_HOME) for `kiro init --global`. Kiro CLI 2.x reads LSP servers
 # only from the project's .kiro/settings/lsp.json, so the global setup has no lsp.json.

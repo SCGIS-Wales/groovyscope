@@ -34,7 +34,9 @@ repository you trust; library classes then resolve and the GS100 warnings go awa
 | Are the names in `<folder>` right | `check_naming`, then `rename` | 0.4 to 0.8 |
 | Can I use `<construct>` in this plugin | `profile_status` | 0.2 |
 
-"Run all" runs the first six and gives one combined summary.
+"Run all" runs the first six and gives one combined summary. Every row is also a skill, `/groovy-<name>`
+(review, fix, quality, duplicates, catch-audit, dynamic, coverage, impact, rename, explain, naming, profile),
+and an MCP prompt of the same name; the skill body is this page's recipe, loaded only when it runs.
 
 ## 1. Review this branch as a merge request reviewer
 

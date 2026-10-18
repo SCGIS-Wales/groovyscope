@@ -16,7 +16,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import changes, daemon, diagnostics, mcp_search, mcp_understanding, practices, reports, rpc
+from groovyscope import changes, daemon, diagnostics, mcp_search, mcp_understanding, practices, reports, rpc, skills
 from groovyscope import classpath as classpath_export
 from groovyscope.edits import FileEdit, changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
@@ -924,10 +924,28 @@ def respond(function: Callable[..., Any], *, structured: bool) -> Callable[..., 
     return wrapper
 
 
+def register_prompts(server: MCPServer) -> None:
+    """Each shipped skill as an MCP prompt (Kiro lists them under `/`), with one optional `arguments` string."""
+    for skill in skills.load_skills():
+        server.prompt(name=skill["name"], title=skill["name"].replace("-", " "), description=skill["description"])(
+            prompt_for(skill)
+        )
+
+
+def prompt_for(skill: skills.Skill) -> Callable[[str], str]:
+    def prompt(arguments: str = "") -> str:
+        return skills.render_prompt(skill, arguments)
+
+    prompt.__name__ = skill["name"].replace("-", "_")
+    prompt.__doc__ = skill["description"]
+    return prompt
+
+
 def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]) -> MCPServer:
     """An MCP server exposing the tools of :func:`build_tools` with titles, behaviour annotations and compact
     results."""
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
+    register_prompts(server)
     structured = bool(output.get("structured", False))
     for name, function in build_tools(root, call, output, environ).items():
         title, read_only = TOOL_INFO.get(name, (name, True))
