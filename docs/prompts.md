@@ -210,7 +210,7 @@ Draw the classes around OrderService, two hops, as a draw.io diagram at docs/ord
 ```
 
 Calls `relationship_graph(symbols=["OrderService"], depth=2, drawio_path="docs/order-service.drawio")`. The
-file opens in diagrams.net (or the draw.io desktop and VS Code extensions): one A4 page, base classes and
+file opens in diagrams.net (or the draw.io desktop and VS Code extensions): one page on A4, A3 or A2, the smallest that keeps the text readable, base classes and
 callers above what they use, a calm palette with one colour per package, hollow arrows for `extends`, dashed
 for `implements`, diamonds for `has`, dashed open arrows for `uses`, solid for `calls` with the call count,
 grey dotted edges for calls matched by name only, dashed boxes for tests and classes outside the workspace,

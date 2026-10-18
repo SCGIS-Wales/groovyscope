@@ -36,7 +36,7 @@ hard failures.
 | `check` prints `... is not a SARIF log` on stderr | A file in `reports.sarif` or passed to `--import-sarif` is not SARIF 2.1; the other findings are still reported |
 | SARIF findings show an odd `path` | The tool reported a path relative to its own root; groovyscope matches it to a unique file under the source roots and otherwise keeps it as reported |
 | `benchmark path` fails with `could not unpack` | The home folder is not writable or full; pass `--to DIR` or set `GROOVYSCOPE_BENCHMARK_DIR` |
-| `graph` says `too many nodes for one readable page` | The scope is too wide for A4 at a readable font; seed with fewer symbols, lower `--depth`, raise `--max-nodes` only if you print on A3 |
+| `graph` says `larger than A2 at a readable size` | The drawing moved from A4 to A3 to A2 and still did not fit without shrinking the text, so the A2 page was extended; print it tiled, or seed with fewer symbols, a lower `--depth` or a lower `--max-nodes` |
 | `relationship_graph` answers `must end in .drawio` or `outside the workspace` | The draw.io file is written only inside the workspace with the `.drawio` extension; pass a path such as `docs/classes.drawio` |
 | `rename` answers `rolledBack: true` | The rename left new compile errors (often a same-named member in another class); the files were restored; check the symbol with `find_references` and rename by hand |
 | Too many GS02x naming findings | They are info level by default; list your shorthand under `naming.allowedAbbreviations`, your verbs under `naming.vocabulary`, or set `naming.enabled: false` |

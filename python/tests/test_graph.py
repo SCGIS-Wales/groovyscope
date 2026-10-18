@@ -63,21 +63,34 @@ def test_layout_fits_the_page_without_overlaps() -> None:
     assert spec["dashed"]
 
 
-def test_large_graphs_scale_down_to_the_page_and_say_when_too_big() -> None:
-    big = {
-        "nodes": [node(f"Class{i}") for i in range(40)],
-        "edges": [edge(f"app.Class{i}", f"app.Class{i + 1}", "calls") for i in range(39)],
-    }
-    drawn = graph.layout(big)
-    assert graph.check_layout(drawn) == []
-    assert drawn["scale"] < 1 and drawn["font"] >= graph.MIN_FONT
-    huge = {
-        "nodes": [node(f"C{i}") for i in range(400)],
-        "edges": [edge(f"app.C{i}", f"app.C{i + 1}", "calls") for i in range(399)],
-    }
-    assert "too many nodes" in graph.layout(huge)["note"]
-    wide = {"nodes": [node(f"W{i}") for i in range(8)], "edges": []}
-    assert graph.layout(wide)["orientation"] == "landscape"
+def test_larger_graphs_move_to_a3_then_a2_and_never_shrink_text_below_readable() -> None:
+    def chain(count: int, prefix: str = "C") -> dict[str, Any]:
+        return {
+            "nodes": [node(f"{prefix}{i}") for i in range(count)],
+            "edges": [edge(f"app.{prefix}{i}", f"app.{prefix}{i + 1}", "calls") for i in range(count - 1)],
+        }
+
+    def wide(count: int) -> dict[str, Any]:
+        return {"nodes": [node(f"W{i}") for i in range(count)], "edges": []}
+
+    small = graph.layout(chain(5))
+    assert (small["paper"], small["scale"]) == ("A4", 1.0)
+    # A wide layer wraps onto several lines; the paper grows only when the lines no longer fit at a readable size.
+    papers = {count: graph.layout(wide(count))["paper"] for count in (12, 100, 180)}
+    assert papers == {12: "A3", 100: "A3", 180: "A2"}
+    for count in (12, 100, 180):
+        drawn = graph.layout(wide(count))
+        assert graph.check_layout(drawn) == []
+        assert drawn["scale"] >= graph.READABLE_SCALE and drawn["font"] >= graph.MIN_FONT
+        assert drawn["page"] in {(1169, 827), (827, 1169), (1654, 1169), (1169, 1654), (2339, 1654), (1654, 2339)}
+
+    # Past A2 the page grows instead of the text shrinking out of its boxes (what made the method graph unreadable).
+    huge = graph.layout(chain(60))
+    assert huge["paper"] == "A2" and "larger than A2" in huge["note"]
+    assert huge["scale"] == graph.READABLE_SCALE and huge["page"][1] > 2339
+    assert graph.check_layout(huge) == []
+    lowest = max(box["y"] + box["height"] for box in huge["nodes"])
+    assert lowest <= huge["page"][1] - graph.MARGIN - graph.LEGEND_HEIGHT
     assert graph.layout({"nodes": [], "edges": []})["nodes"] == []
 
 
@@ -189,7 +202,8 @@ def test_no_line_crosses_a_box_and_parents_sit_over_their_children() -> None:
     for parent, kids in children.items():
         low = min(boxes[k]["x"] for k in kids)
         high = max(boxes[k]["x"] + boxes[k]["width"] for k in kids)
-        assert low <= centre[parent] <= high, parent  # over its children, not off to one side
+        # Over its children, not off to one side (within a gap, as a wrapped line of children may shift a little).
+        assert low - graph.H_GAP <= centre[parent] <= high + graph.H_GAP, parent
     # Every child of one base class joins it through one shared port: one arrowhead per base class.
     ends = {}
     for route in drawn["routes"]:

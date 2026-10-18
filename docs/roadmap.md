@@ -585,3 +585,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   classpath refresh question, parallel requests. Failed or not run: see Stage 21. Found while reproducing: an
   unknown type in a method body was not reported in the CodeNarc corpus (any other file with an unresolved
   import hid it), and the `def` fix wrote `Rule` without its import.
+- 2026-10-18: owner's retest on 0.19.0 (Kiro CLI 2.29.1, terminal UI): hook start-up 0.24 s, `/groovy-impact`
+  ran, fix answers carried left counts, classpath export and refresh worked on the owner's own project. A method
+  level draw.io of 252 methods was unusable: the page was shrunk to A4 while the text stopped at 8 px, so labels
+  spilled over every box. At the owner's direction the page now grows from A4 to A3 to A2 instead of the text
+  shrinking (wide rows wrap only when even A2 cannot hold them; past A2 the page is extended and says so), calls
+  share one port and lane per caller, and the layout check is indexed by row (10 s to under 1 s for a thousand
+  edges). Still open from that retest, for the owner to approve: hook findings reaching the agent through
+  `PreToolUse`, an `unresolved-class` code with an add-import fix, and the test kit's default folder.

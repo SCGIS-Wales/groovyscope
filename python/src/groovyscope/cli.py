@@ -1280,7 +1280,7 @@ def graph_command(
             sys.exit(1)
         click.echo(
             f"{result['nodeCount']} class(es), {result['edgeCount']} relation(s) written to {result['written']} "
-            f"({result['page']['orientation']} A4, font {result['page']['font']}px)"
+            f"({result['page']['orientation']} {result['page']['paper']}, font {result['page']['font']}px)"
         )
         for problem in result.get("layoutProblems", []):
             click.echo(f"layout: {problem}", err=True)
