@@ -229,6 +229,39 @@ def understanding_tools(
     }
 
 
+def write_diagram(
+    root: Path, drawio_path: str, raw: Mapping[str, Any], result: dict[str, Any], *, confirm_policy: str, cap: int
+) -> None:
+    """Writes the draw.io file after the user's yes (when the client can ask), and says in ``result`` where it went
+    (relative and absolute), what was asked, and any layout problem left."""
+    try:
+        target = drawio_target(root, drawio_path)
+    except ValueError as exc:
+        result["error"] = str(exc)
+        return
+    shown = relative_path(target.as_uri(), root)
+    decision = interaction.confirm(f"Write the class diagram to {shown}?", policy=confirm_policy)
+    if decision == interaction.NOT_OFFERED:
+        result["confirmationNote"] = interaction.NOT_OFFERED_NOTE
+    if decision != interaction.UNSUPPORTED:
+        result["confirmation"] = decision
+    if decision in {interaction.DECLINED, interaction.CANCELLED}:
+        result["written"] = None
+        result["note"] = "the user said no; no file was written"
+        return
+    drawn = graphs.layout(raw)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    write_atomically(target, graphs.to_drawio(raw, drawn, title=target.stem))
+    result["written"] = shown
+    result["writtenTo"] = str(target)  # the absolute path: the workspace root may not be where the user looks
+    result["page"] = {"orientation": drawn["orientation"], "font": drawn["font"]}
+    problems = graphs.check_layout(drawn)
+    if problems:
+        result["layoutProblems"] = problems[:cap]
+    if drawn["note"]:
+        result["layoutNote"] = drawn["note"]
+
+
 def graph_tools(
     root: Path, call: Call, cap: int, *, confirm_policy: str = interaction.POLICY_AUTO
 ) -> dict[str, Callable[..., Any]]:
@@ -271,29 +304,7 @@ def graph_tools(
         if raw.get("note"):
             result["note"] = raw["note"]
         if drawio_path:
-            try:
-                target = drawio_target(root, drawio_path)
-            except ValueError as exc:
-                result["error"] = str(exc)
-                return result
-            shown = relative_path(target.as_uri(), root)
-            decision = interaction.confirm(f"Write the class diagram to {shown}?", policy=confirm_policy)
-            if decision != interaction.UNSUPPORTED:
-                result["confirmation"] = decision
-            if decision in {interaction.DECLINED, interaction.CANCELLED}:
-                result["written"] = None
-                result["note"] = "the user said no; no file was written"
-                return result
-            drawn = graphs.layout(raw)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            write_atomically(target, graphs.to_drawio(raw, drawn, title=target.stem))
-            result["written"] = shown
-            result["page"] = {"orientation": drawn["orientation"], "font": drawn["font"]}
-            problems = graphs.check_layout(drawn)
-            if problems:
-                result["layoutProblems"] = problems[:cap]
-            if drawn["note"]:
-                result["layoutNote"] = drawn["note"]
+            write_diagram(root, drawio_path, raw, result, confirm_policy=confirm_policy, cap=cap)
         if mermaid:
             text = graphs.to_mermaid(raw)
             result["mermaid"] = text if len(text) <= MAX_MERMAID_CHARS else text[:MAX_MERMAID_CHARS] + "\n%% cut\n"

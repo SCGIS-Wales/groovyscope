@@ -66,5 +66,5 @@
       }
     ]
   },
-  "welcomeMessage": "Groovy agent ready: LSP + groovyscope (27 tools). Try: review this branch as a merge request reviewer; review my changes; full quality check; find duplicated code; find swallowed exceptions; what breaks if I change <symbol>; explain what <Class> does; draw the class graph; check naming; explain <code>. A groovyscope checkup ran at start; I will say what it found."
+  "welcomeMessage": "Groovy agent ready: LSP + groovyscope. Recipes: type / (terminal UI) or @ (classic chat) and pick a groovy- prompt. Try: review this branch as a merge request reviewer; review my changes; full quality check; find duplicated code; find swallowed exceptions; what breaks if I change <symbol>; explain what <Class> does; draw the class graph; check naming; explain <code>. A groovyscope checkup ran at start; I will say what it found."
 }

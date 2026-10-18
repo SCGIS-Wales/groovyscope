@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib
 import json
 import logging
 import os
@@ -29,7 +30,6 @@ from groovyscope import (
     diagnostics,
     hooks,
     kiro_agent,
-    mcp_server,
     practices,
     profiles,
     provision,
@@ -44,7 +44,14 @@ from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config, load_config_with_notes
 from groovyscope.doctor import build_report, has_failures
-from groovyscope.edits import FileChangedError, FileEdit, changed_line_count, file_edits, write_document
+from groovyscope.edits import (
+    FileChangedError,
+    FileEdit,
+    changed_line_count,
+    counts_by_path,
+    file_edits,
+    write_document,
+)
 from groovyscope.jar import locate_jar, read_manifest
 from groovyscope.java import JdkInfo, discover
 from groovyscope.kiro import (
@@ -307,6 +314,16 @@ def profile_guidance_for(obj: dict[str, Any], *, global_scope: bool = False) -> 
     )
 
 
+def diff_size(diff: str) -> str:
+    """`` (+3 -1)`` for a unified diff: the lines it adds and removes, headers left out."""
+    if not diff:
+        return ""
+    lines = diff.splitlines()
+    added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+    removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
+    return f" (+{added} -{removed})"
+
+
 def run_kiro_merge(
     obj: dict[str, Any],
     *,
@@ -316,6 +333,7 @@ def run_kiro_merge(
     global_scope: bool = False,
     full: bool = False,
     agent_format: str = "auto",
+    show_diff: bool = False,
 ) -> None:
     home = kiro_home(dict(os.environ), Path.home())
     base = home if global_scope else obj["root"]
@@ -338,11 +356,14 @@ def run_kiro_merge(
     if global_scope:
         click.echo(f"Kiro home: {base}")
     for change in changes:
-        click.echo(f"{change['action']:9} {change['path']}")
+        diff = unified_diff(change) if change["action"] != "unchanged" else ""
+        click.echo(f"{change['action']:9} {change['path']}{diff_size(diff)}")
         if change.get("note"):
             click.echo(f"          note: {change.get('note')}")
-        if change["action"] != "unchanged":
-            click.echo(unified_diff(change), nl=False)
+        if diff and (show_diff or dry_run):
+            click.echo(diff, nl=False)
+    if not (show_diff or dry_run) and any(change["action"] != "unchanged" for change in changes):
+        click.echo("(--diff shows the changes line by line)")
     if dry_run:
         click.echo("dry run: nothing written")
     else:
@@ -395,6 +416,7 @@ FORMAT_CHOICE = click.Choice(list(kiro_agent.REQUESTABLE))
 @click.option("--global", "global_scope", is_flag=True, help=GLOBAL_HELP)
 @click.option("--full", is_flag=True, help=FULL_HELP)
 @click.option("--agent-format", type=FORMAT_CHOICE, default="auto", show_default=True, help=FORMAT_HELP)
+@click.option("--diff", "show_diff", is_flag=True, help="Show each change line by line, not only a summary.")
 @click.option("--force", is_flag=True, help="Replace existing files instead of merging into them.")
 @click.option("--no-backup", is_flag=True, help="Do not write <file>.bak before overwriting.")
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
@@ -408,6 +430,7 @@ def kiro_init(
     force: bool,
     no_backup: bool,
     dry_run: bool,
+    show_diff: bool,
 ) -> None:
     """Write lsp.json, mcp.json, the groovy agent and the steering file (merging, never clobbering)."""
     run_kiro_merge(
@@ -418,6 +441,7 @@ def kiro_init(
         global_scope=global_scope,
         full=full,
         agent_format=agent_format,
+        show_diff=show_diff,
     )
 
 
@@ -426,8 +450,11 @@ def kiro_init(
 @click.option("--full", is_flag=True, help=FULL_HELP)
 @click.option("--agent-format", type=FORMAT_CHOICE, default="auto", show_default=True, help=FORMAT_HELP)
 @click.option("--dry-run", is_flag=True, help="Show the diff without writing anything.")
+@click.option("--diff", "show_diff", is_flag=True, help="Show each change line by line, not only a summary.")
 @click.pass_obj
-def kiro_repair(obj: dict[str, Any], *, global_scope: bool, full: bool, agent_format: str, dry_run: bool) -> None:
+def kiro_repair(
+    obj: dict[str, Any], *, global_scope: bool, full: bool, agent_format: str, dry_run: bool, show_diff: bool
+) -> None:
     """Re-merge groovyscope's entries after `/code init`, a manual edit or a Kiro upgrade changed them."""
     run_kiro_merge(
         obj,
@@ -437,6 +464,7 @@ def kiro_repair(obj: dict[str, Any], *, global_scope: bool, full: bool, agent_fo
         global_scope=global_scope,
         full=full,
         agent_format=agent_format,
+        show_diff=show_diff,
     )
 
 
@@ -703,7 +731,19 @@ _KIRO: Callable[[], kiro_agent.KiroRunner | None] = kiro_agent.kiro_runner
 _RELAY: Callable[[Path], int] = relay.main
 _RPC: Callable[..., Any] = rpc.request
 _PROBE: Callable[[Path], dict[str, Any] | None] = daemon_lifecycle.probe
-_MCP_SERVE: Callable[..., int] = mcp_server.serve
+
+
+def mcp_module() -> Any:
+    """The MCP server module, imported on first use: it pulls in the MCP SDK (about a second of start-up), which
+    `hook`, `checkup` and the other short commands Kiro runs on every turn never need."""
+    return importlib.import_module("groovyscope.mcp_server")
+
+
+def serve_mcp(*args: Any, **kwargs: Any) -> int:
+    return int(mcp_module().serve(*args, **kwargs))
+
+
+_MCP_SERVE: Callable[..., int] = serve_mcp
 RPC_TIMEOUT_SECONDS = 600.0
 SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
 POSITION_PARTS = 3  # path:line:col
@@ -1128,12 +1168,13 @@ def explain_code_command(obj: dict[str, Any], target: str, as_json: bool) -> Non
 
 def workspace_tools(obj: dict[str, Any], socket_file: Path, effective: dict[str, Any]) -> dict[str, Any]:
     """The MCP tool functions bound to this workspace over the daemon socket, so CLI and agent answers match."""
-    return mcp_server.build_tools(
+    tools: dict[str, Any] = mcp_module().build_tools(
         obj["root"],
         lambda method, params: engine_result(socket_file, method, params),
         tool_settings(effective),
         dict(os.environ),
     )
+    return tools
 
 
 def render_explanation(result: dict[str, Any]) -> list[str]:
@@ -1341,6 +1382,8 @@ def fix(
     rows: list[dict[str, Any]] = []
     changed, refused = file_edits(result.get("edits", {}), obj["root"])
     applied_codes = {uri_to_path(uri): codes for uri, codes in result.get("applied", {}).items()}
+    fixed = counts_by_path(result.get("appliedCounts", {}))
+    left = {shown_path(path, obj["root"]): counts for path, counts in counts_by_path(result.get("left", {})).items()}
     for edit in changed:
         if apply_changes and not write_if_unchanged(edit, refused):
             continue
@@ -1348,6 +1391,7 @@ def fix(
             {
                 "path": shown_path(edit["path"], obj["root"]),
                 "codes": applied_codes.get(edit["path"], []),
+                "fixed": fixed.get(edit["path"], {}),
                 "lines": changed_line_count(edit["before"], edit["after"]),
                 "applied": apply_changes,
             }
@@ -1355,11 +1399,14 @@ def fix(
     rejected = {shown_path(uri_to_path(uri), obj["root"]): why for uri, why in result.get("rejected", {}).items()}
     rejected.update({shown_path(uri_to_path(uri), obj["root"]): "outside the workspace; refused" for uri in refused})
     if as_json:
-        click.echo(compact_json({"files": rows, "rejected": rejected}))
+        click.echo(compact_json({"files": rows, "left": left, "rejected": rejected}))
     else:
         for row in rows:
             state = " (applied)" if row["applied"] else ""
-            click.echo(f"{row['path']}: {', '.join(row['codes'])}{state}")
+            summary = ", ".join(f"{k} {v}" for k, v in row["fixed"].items()) or ", ".join(row["codes"])
+            click.echo(f"{row['path']}: {summary}, {row['lines']} line(s){state}")
+        for path, counts in left.items():
+            click.echo(f"{path}: left without a safe fix: {', '.join(f'{k} {v}' for k, v in counts.items())}")
         for skipped, why in rejected.items():
             click.echo(f"{skipped}: skipped, {why}")
         click.echo(f"{len(rows)} file(s) {'fixed' if apply_changes else 'with fixes available'}")

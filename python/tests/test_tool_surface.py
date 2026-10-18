@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -132,3 +134,13 @@ def test_symbol_context_answers_in_one_call(tools: dict[str, Any], engine: dict[
     engine["responses"].clear()
     nothing = tools["symbol_context"]("src/A.groovy", 1, 1)
     assert nothing["found"] is False and nothing["hover"] is None and nothing["references"]["total"] == 0
+
+
+def test_the_agent_texts_name_no_tool_count_and_both_prompt_syntaxes() -> None:
+    """A fixed count goes stale the day a tool is added (0.18.0 said 27 with 28 served); prompts are `/name` in
+    Kiro's terminal UI and `@name` in the classic chat, so the texts must name both."""
+    templates = resources.files("groovyscope") / "_templates" / "kiro"
+    agent = json.loads((templates / "agents" / "groovy.json").read_text(encoding="utf-8"))
+    assert not re.search(r"\d+ tools", agent["welcomeMessage"])
+    steering = (templates / "steering" / "groovyscope.md").read_text(encoding="utf-8")
+    assert "`/groovy-review`" in steering and "`@groovy-review`" in steering

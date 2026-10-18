@@ -129,3 +129,122 @@ def test_compact_caps_nodes_and_edges() -> None:
     full = graph.compact(SAMPLE, cap=50)
     assert not full["truncated"] and len(full["edges"]) == 7
     assert "test" in next(n for n in full["nodes"] if n["id"] == "app.ServiceSpec")
+
+
+REPORT_WRITERS = {
+    "nodes": [
+        node("ReportWriter", kind="interface", package="org.codenarc.report"),
+        *(
+            node(name, package="org.codenarc.report")
+            for name in (
+                "AbstractReportWriter",
+                "AbstractHtmlReportWriter",
+                "BaselineXmlReportWriter",
+                "AbstractJsonReportWriter",
+                "TextReportWriter",
+                "XmlReportWriter",
+                "HtmlReportWriter",
+                "SortableHtmlReportWriter",
+                "GitlabCodeQualityReportWriter",
+                "JsonReportWriter",
+                "SarifReportWriter",
+                "CompactTextReportWriter",
+                "IdeTextReportWriter",
+                "InlineXmlReportWriter",
+            )
+        ),
+    ],
+    "edges": [
+        edge("org.codenarc.report.AbstractReportWriter", "org.codenarc.report.ReportWriter", "implements"),
+        *(
+            edge(f"org.codenarc.report.{child}", f"org.codenarc.report.{parent}", "extends")
+            for child, parent in (
+                ("AbstractHtmlReportWriter", "AbstractReportWriter"),
+                ("BaselineXmlReportWriter", "AbstractReportWriter"),
+                ("AbstractJsonReportWriter", "AbstractReportWriter"),
+                ("TextReportWriter", "AbstractReportWriter"),
+                ("XmlReportWriter", "AbstractReportWriter"),
+                ("HtmlReportWriter", "AbstractHtmlReportWriter"),
+                ("SortableHtmlReportWriter", "AbstractHtmlReportWriter"),
+                ("GitlabCodeQualityReportWriter", "AbstractJsonReportWriter"),
+                ("JsonReportWriter", "AbstractJsonReportWriter"),
+                ("SarifReportWriter", "AbstractJsonReportWriter"),
+                ("CompactTextReportWriter", "TextReportWriter"),
+                ("IdeTextReportWriter", "TextReportWriter"),
+                ("InlineXmlReportWriter", "XmlReportWriter"),
+            )
+        ),
+    ],
+}
+
+
+def test_no_line_crosses_a_box_and_parents_sit_over_their_children() -> None:
+    drawn = graph.layout(REPORT_WRITERS)
+    assert graph.check_layout(drawn) == []
+    boxes = {box["id"]: box for box in drawn["nodes"]}
+    centre = {key: box["x"] + box["width"] / 2 for key, box in boxes.items()}
+    children: dict[str, list[str]] = {}
+    for e in REPORT_WRITERS["edges"]:
+        children.setdefault(e["to"], []).append(e["from"])
+    for parent, kids in children.items():
+        low = min(boxes[k]["x"] for k in kids)
+        high = max(boxes[k]["x"] + boxes[k]["width"] for k in kids)
+        assert low <= centre[parent] <= high, parent  # over its children, not off to one side
+    # Every child of one base class joins it through one shared port: one arrowhead per base class.
+    ends = {}
+    for route in drawn["routes"]:
+        target = REPORT_WRITERS["edges"][route["edge"]]["to"]
+        ends.setdefault(target, set()).add(route["points"][-1])
+    assert all(len(points) == 1 for points in ends.values())
+    for route in drawn["routes"]:
+        assert all(a[0] == b[0] or a[1] == b[1] for a, b in zip(route["points"], route["points"][1:], strict=False))
+
+
+def test_long_edges_pass_between_boxes_and_same_row_edges_run_below() -> None:
+    sample = {
+        "nodes": [node("Top"), node("Mid1"), node("Mid2"), node("Mid3"), node("Bottom"), node("Peer")],
+        "edges": [
+            edge("app.Top", "app.Mid1", "calls"),
+            edge("app.Top", "app.Mid2", "calls"),
+            edge("app.Top", "app.Mid3", "calls"),
+            edge("app.Mid2", "app.Bottom", "calls"),
+            edge("app.Top", "app.Bottom", "uses"),  # skips the middle row
+            edge("app.Bottom", "app.Top", "calls", "DYNAMIC_UNKNOWN"),  # back edge, upwards
+        ],
+    }
+    drawn = graph.layout(sample)
+    assert graph.check_layout(drawn) == []
+    assert len(drawn["routes"]) == len(sample["edges"])
+    back = next(r for r in drawn["routes"] if sample["edges"][r["edge"]]["from"] == "app.Bottom")
+    assert back["exit"][1] == 0.0 and back["entry"][1] == 1.0  # leaves Bottom upwards, enters Top from below
+
+    def box(name: str, x: float) -> graph.Placed:
+        return {
+            "id": name,
+            "label": name,
+            "sublabel": "",
+            "x": x,
+            "y": 40.0,
+            "width": 100.0,
+            "height": 46.0,
+            "fill": "#fff",
+            "dashed": False,
+            "row": 0,
+        }
+
+    beside = [box("A", 40.0), box("B", 180.0), box("C", 320.0)]
+    (route,) = graph.route_edges([edge("A", "C", "calls")], beside, 64.0)
+    assert route["exit"][1] == 1.0 and route["entry"][1] == 1.0  # within one row: out and in through the bottom
+    assert all(
+        not graph.crosses(a, b, other)
+        for a, b in zip(route["points"], route["points"][1:], strict=False)
+        for other in beside
+    )
+
+
+def test_check_layout_reports_a_line_through_a_box() -> None:
+    drawn = graph.layout(SAMPLE)
+    box = drawn["nodes"][0]
+    through = (box["x"] + box["width"] / 2, box["y"] - 10), (box["x"] + box["width"] / 2, box["y"] + box["height"] + 10)
+    drawn["routes"].append({"edge": 99, "points": list(through), "exit": (0.5, 1.0), "entry": (0.5, 0.0)})
+    assert f"edge 99 crosses {box['id']}" in graph.check_layout(drawn)

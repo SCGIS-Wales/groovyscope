@@ -55,6 +55,16 @@ class Placed(TypedDict):
     height: float
     fill: str
     dashed: bool
+    row: int
+
+
+class Route(TypedDict):
+    """One edge as a polyline from its source port to its target port, every segment horizontal or vertical."""
+
+    edge: int  # index into the graph's edges
+    points: list[tuple[float, float]]
+    exit: tuple[float, float]  # the port on the source box, relative (0..1, 0 top or 1 bottom)
+    entry: tuple[float, float]  # the port on the target box
 
 
 class Layout(TypedDict):
@@ -65,6 +75,7 @@ class Layout(TypedDict):
     font: int
     scale: float
     nodes: list[Placed]
+    routes: list[Route]
     packages: dict[str, str]  # package -> fill
     note: str
 
@@ -163,46 +174,91 @@ def box_width(label: str, sublabel: str) -> float:
     return max(MIN_NODE_WIDTH, min(MAX_NODE_WIDTH, longest * CHAR_WIDTH + 24))
 
 
+def adjacent_neighbours(
+    rows: Sequence[Sequence[str]], layers: Mapping[str, int], kept: Sequence[tuple[str, str]]
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """For every node, its neighbours one row up and one row down (longer edges do not pull on positions)."""
+    up: dict[str, list[str]] = {node: [] for row in rows for node in row}
+    down: dict[str, list[str]] = {node: [] for row in rows for node in row}
+    for source, target in kept:
+        if layers[target] == layers[source] + 1:
+            down[source].append(target)
+            up[target].append(source)
+    return up, down
+
+
+def place_row(row: Sequence[str], widths: Mapping[str, float], wanted: Mapping[str, float]) -> dict[str, float]:
+    """Left edges for one row, in its order, as close to the wanted centres as the gaps allow: the mean of the
+    tightest placement pushed right and the tightest pushed left, which keeps every gap and is centred on the
+    wishes."""
+    want = [wanted[node] - widths[node] / 2 for node in row]
+    pushed_right: list[float] = []
+    for index in range(len(row)):
+        floor = pushed_right[-1] + widths[row[index - 1]] + H_GAP if index else want[index]
+        pushed_right.append(max(want[index], floor))
+    pushed_left = [0.0] * len(row)
+    for index in range(len(row) - 1, -1, -1):
+        ceiling = pushed_left[index + 1] - widths[row[index]] - H_GAP if index < len(row) - 1 else want[index]
+        pushed_left[index] = min(want[index], ceiling)
+    return {node: (pushed_right[i] + pushed_left[i]) / 2 for i, node in enumerate(row)}
+
+
+def assign_x(
+    rows: Sequence[Sequence[str]],
+    widths: Mapping[str, float],
+    up: Mapping[str, list[str]],
+    down: Mapping[str, list[str]],
+) -> dict[str, float]:
+    """Left edges for every node: children under their parents, then parents centred over their children (the last
+    sweep), each row keeping its order and its gaps."""
+    left: dict[str, float] = {}
+    for row in rows:
+        x = 0.0
+        for node in row:
+            left[node] = x
+            x += widths[node] + H_GAP
+
+    def centre(node: str) -> float:
+        return left[node] + widths[node] / 2
+
+    def sweep(indexes: Sequence[int], neighbours: Mapping[str, list[str]]) -> None:
+        for index in indexes:
+            wanted = {
+                node: sum(centre(n) for n in neighbours[node]) / len(neighbours[node])
+                if neighbours[node]
+                else centre(node)
+                for node in rows[index]
+            }
+            left.update(place_row(rows[index], widths, wanted))
+
+    for _ in range(SWEEPS):
+        sweep(range(1, len(rows)), up)
+        sweep(range(len(rows) - 2, -1, -1), down)
+    shift = min(left.values(), default=0.0)
+    return {node: x - shift for node, x in left.items()}
+
+
 def layout(graph: Mapping[str, Any]) -> Layout:
-    """Place every node on an A4 page (portrait or landscape, whichever fits the shape better)."""
+    """Place every node on an A4 page (portrait or landscape, whichever fits the shape better) and route every edge
+    through the gaps between rows and boxes, so no line crosses a box."""
     nodes = list(graph.get("nodes", []))
     ids = [str(n["id"]) for n in nodes]
     by_id = {str(n["id"]): n for n in nodes}
     kept = acyclic(ids, layering_edges(graph.get("edges", [])))
-    rows = order_layers(ids, assign_layers(ids, kept), kept)
+    layers = assign_layers(ids, kept)
+    rows = order_layers(ids, layers, kept)
     packages: dict[str, str] = {}
     for node in nodes:
         package = str(node.get("package") or "(default)")
         if package not in packages:
             packages[package] = FILLS[len(packages) % len(FILLS)]
-    row_widths = []
-    placed_rows: list[list[Placed]] = []
-    for row in rows:
-        boxes: list[Placed] = []
-        x = 0.0
-        for node_id in row:
-            node = by_id[node_id]
-            label, sublabel = label_of(node)
-            width = box_width(label, sublabel)
-            external = node.get("kind") == "external"
-            boxes.append(
-                {
-                    "id": node_id,
-                    "label": label,
-                    "sublabel": sublabel,
-                    "x": x,
-                    "y": 0.0,
-                    "width": width,
-                    "height": float(NODE_HEIGHT),
-                    "fill": EXTERNAL_FILL if external else packages[str(node.get("package") or "(default)")],
-                    "dashed": bool(node.get("test")) or external,
-                }
-            )
-            x += width + H_GAP
-        row_widths.append(max(0.0, x - H_GAP))
-        placed_rows.append(boxes)
-    total_width = max(row_widths, default=0.0)
-    total_height = max(0.0, len(rows) * NODE_HEIGHT + (len(rows) - 1) * V_GAP)
+    labels = {node_id: label_of(by_id[node_id]) for node_id in ids}
+    widths = {node_id: box_width(*labels[node_id]) for node_id in ids}
+    up, down = adjacent_neighbours(rows, layers, kept)
+    left = assign_x(rows, widths, up, down)
+    total_width = max((left[n] + widths[n] for n in ids), default=0.0)
+    # One gap more than the rows need: edges between boxes of the last row run below it.
+    total_height = max(0.0, len(rows) * (NODE_HEIGHT + V_GAP))
     page = A4_LANDSCAPE if total_width > total_height * 1.15 else A4_PORTRAIT
     usable_width = page[0] - 2 * MARGIN
     usable_height = page[1] - 2 * MARGIN - LEGEND_HEIGHT
@@ -213,24 +269,200 @@ def layout(graph: Mapping[str, Any]) -> Layout:
     note = ""
     if scale < MIN_FONT / BASE_FONT:
         note = "too many nodes for one readable page: narrow the scope (fewer seeds, lower depth) or print on A3"
+    offset = (usable_width - total_width * scale) / 2
     placed: list[Placed] = []
-    for index, boxes in enumerate(placed_rows):
-        offset = (total_width - row_widths[index]) / 2
-        for box in boxes:
-            box["x"] = MARGIN + (box["x"] + offset) * scale
-            box["y"] = MARGIN + index * (NODE_HEIGHT + V_GAP) * scale
-            box["width"] = box["width"] * scale
-            box["height"] = NODE_HEIGHT * scale
-            placed.append(box)
+    for index, row in enumerate(rows):
+        for node_id in row:
+            node = by_id[node_id]
+            label, sublabel = labels[node_id]
+            external = node.get("kind") == "external"
+            placed.append(
+                {
+                    "id": node_id,
+                    "label": label,
+                    "sublabel": sublabel,
+                    "x": MARGIN + max(0.0, offset) + left[node_id] * scale,
+                    "y": MARGIN + index * (NODE_HEIGHT + V_GAP) * scale,
+                    "width": widths[node_id] * scale,
+                    "height": NODE_HEIGHT * scale,
+                    "fill": EXTERNAL_FILL if external else packages[str(node.get("package") or "(default)")],
+                    "dashed": bool(node.get("test")) or external,
+                    "row": index,
+                }
+            )
     return {
         "page": page,
         "orientation": "landscape" if page == A4_LANDSCAPE else "portrait",
         "font": font,
         "scale": scale,
         "nodes": placed,
+        "routes": route_edges(graph.get("edges", []), placed, V_GAP * scale),
         "packages": packages,
         "note": note,
     }
+
+
+HIERARCHY = frozenset({"extends", "implements"})
+EPSILON = 1e-6
+PortKey = tuple[str, str, str]  # node, side (top or bottom), what shares the port
+
+
+class Plan(TypedDict):
+    """One edge before routing: its upper and lower box, its port keys and the corridors through the rows between."""
+
+    index: int
+    upper: Placed
+    lower: Placed
+    same: bool
+    upper_key: PortKey
+    lower_key: PortKey
+    corridors: list[float]
+    reversed: bool
+
+
+def middle(box: Placed) -> float:
+    return box["x"] + box["width"] / 2
+
+
+def route_edges(edges: Sequence[Mapping[str, Any]], placed: Sequence[Placed], gap: float) -> list[Route]:
+    """Orthogonal routes: down from the upper box's bottom, along a lane in the gap below its row, through the space
+    between boxes of any row in between, into the lower box's top. Children of one base class share its port and
+    lane (one bus per base class); every other edge gets its own port and lane."""
+    rows: dict[int, list[Placed]] = {}
+    for box in placed:
+        rows.setdefault(box["row"], []).append(box)
+    for row in rows.values():
+        row.sort(key=lambda b: b["x"])
+    plans = plan_edges(edges, {box["id"]: box for box in placed}, rows)
+    ports = port_positions(plans, {box["id"]: box for box in placed})
+    lanes = lane_positions(plans, ports, rows, gap)
+    return [polyline(plan, ports, lanes) for plan in plans]
+
+
+def plan_edges(
+    edges: Sequence[Mapping[str, Any]], boxes: Mapping[str, Placed], rows: Mapping[int, Sequence[Placed]]
+) -> list[Plan]:
+    plans: list[Plan] = []
+    for index, edge in enumerate(edges):
+        source, target = str(edge["from"]), str(edge["to"])
+        if source not in boxes or target not in boxes or source == target:
+            continue
+        a, b = boxes[source], boxes[target]
+        same = a["row"] == b["row"]
+        upper, lower = (a, b) if same or a["row"] < b["row"] else (b, a)
+        shared = str(edge.get("kind")) in HIERARCHY and upper["id"] == target
+        span = lower["row"] - upper["row"]
+        plans.append(
+            {
+                "index": index,
+                "upper": upper,
+                "lower": lower,
+                "same": same,
+                "upper_key": (upper["id"], "bottom", str(edge.get("kind")) if shared else f"e{index}"),
+                "lower_key": (lower["id"], "bottom" if same else "top", f"e{index}"),
+                "corridors": [
+                    corridor(rows[k], middle(upper) + (middle(lower) - middle(upper)) * (k - upper["row"]) / span)
+                    for k in range(upper["row"] + 1, lower["row"])
+                ],
+                "reversed": upper["id"] != source,
+            }
+        )
+    return plans
+
+
+def port_positions(plans: Sequence[Plan], boxes: Mapping[str, Placed]) -> dict[PortKey, float]:
+    """Ports spread evenly along each box side, ordered by where their other ends are, so lines leave without
+    crossing at the box."""
+    sides: dict[tuple[str, str], dict[str, float]] = {}
+    for plan in plans:
+        for key, other in ((plan["upper_key"], plan["lower"]), (plan["lower_key"], plan["upper"])):
+            peers = sides.setdefault((key[0], key[1]), {})
+            peers[key[2]] = peers.get(key[2], 0.0) + middle(other)
+    ports: dict[PortKey, float] = {}
+    for (node_id, side), peers in sides.items():
+        box = boxes[node_id]
+        ordered = sorted(peers, key=lambda k: (peers[k], k))
+        for position, share in enumerate(ordered):
+            ports[(node_id, side, share)] = box["x"] + box["width"] * (position + 1) / (len(ordered) + 1)
+    return ports
+
+
+def lane_positions(
+    plans: Sequence[Plan], ports: Mapping[PortKey, float], rows: Mapping[int, Sequence[Placed]], gap: float
+) -> dict[tuple[int, str], float]:
+    """The y of each horizontal run in the gap below a row: one lane per owner (a shared port, or one edge's own
+    run), spread over the gap and ordered left to right."""
+    owners: dict[int, dict[str, float]] = {}
+    for plan in plans:
+        row = plan["upper"]["row"]
+        owners.setdefault(row, {}).setdefault(first_owner(plan), ports[plan["upper_key"]])
+        for offset, x in enumerate(plan["corridors"], start=1):
+            owners.setdefault(row + offset, {}).setdefault(f"run{plan['index']}", x)
+    lanes: dict[tuple[int, str], float] = {}
+    for row_index, row_owners in owners.items():
+        bottom = rows[row_index][0]["y"] + rows[row_index][0]["height"]
+        ordered = sorted(row_owners, key=lambda k: (row_owners[k], k))
+        for position, owner in enumerate(ordered):
+            lanes[(row_index, owner)] = bottom + gap * (position + 1) / (len(ordered) + 1)
+    return lanes
+
+
+def first_owner(plan: Plan) -> str:
+    return f"same{plan['index']}" if plan["same"] else "|".join(plan["upper_key"])
+
+
+def polyline(plan: Plan, ports: Mapping[PortKey, float], lanes: Mapping[tuple[int, str], float]) -> Route:
+    upper, lower = plan["upper"], plan["lower"]
+    start_x, end_x = ports[plan["upper_key"]], ports[plan["lower_key"]]
+    points = [(start_x, upper["y"] + upper["height"])]
+    x = start_x
+    for step, row_index in enumerate(range(upper["row"], max(lower["row"], upper["row"] + 1))):
+        lane = lanes[(row_index, first_owner(plan) if step == 0 else f"run{plan['index']}")]
+        following = plan["corridors"][step] if step < len(plan["corridors"]) else end_x
+        points += [(x, lane), (following, lane)]
+        x = following
+    points.append((end_x, lower["y"] + (lower["height"] if plan["same"] else 0.0)))
+    points = simplify(points)
+    upper_port = ((start_x - upper["x"]) / upper["width"], 1.0)
+    lower_port = ((end_x - lower["x"]) / lower["width"], 1.0 if plan["same"] else 0.0)
+    if plan["reversed"]:
+        points.reverse()
+        upper_port, lower_port = lower_port, upper_port
+    return {"edge": plan["index"], "points": points, "exit": upper_port, "entry": lower_port}
+
+
+def corridor(row: Sequence[Placed], wanted: float) -> float:
+    """The x of a vertical run through a row: in the free space between its boxes (or beside them) nearest to
+    ``wanted``."""
+    edges = [-1e9]
+    for box in row:
+        edges += [box["x"], box["x"] + box["width"]]
+    edges.append(1e9)
+    best = wanted
+    best_distance = float("inf")
+    for low, high in zip(edges[0::2], edges[1::2], strict=True):
+        pad = min(8.0, (high - low) / 2)
+        x = min(max(wanted, low + pad), high - pad)
+        if abs(x - wanted) < best_distance:
+            best, best_distance = x, abs(x - wanted)
+    return best
+
+
+def simplify(points: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Drops repeated points and the middle of three points on one line."""
+    kept: list[tuple[float, float]] = []
+    for point in points:
+        if kept and abs(kept[-1][0] - point[0]) < EPSILON and abs(kept[-1][1] - point[1]) < EPSILON:
+            continue
+        if len(kept) > 1:
+            (x0, y0), (x1, y1) = kept[-2], kept[-1]
+            if (abs(x0 - x1) < EPSILON and abs(x1 - point[0]) < EPSILON) or (
+                abs(y0 - y1) < EPSILON and abs(y1 - point[1]) < EPSILON
+            ):
+                kept[-1] = point
+                continue
+        kept.append(point)
+    return kept
 
 
 def overlaps(a: Placed, b: Placed) -> bool:
@@ -253,7 +485,24 @@ def check_layout(drawn: Layout) -> list[str]:
         for other in nodes[index + 1 :]:
             if overlaps(box, other):
                 problems.append(f"{box['id']} overlaps {other['id']}")
+    for route in drawn.get("routes", []):
+        segments = list(zip(route["points"], route["points"][1:], strict=False))
+        for box in nodes:
+            for start, end in segments:
+                if crosses(start, end, box):
+                    problems.append(f"edge {route['edge']} crosses {box['id']}")
+                    break
     return problems
+
+
+def crosses(start: tuple[float, float], end: tuple[float, float], box: Placed) -> bool:
+    """True when a horizontal or vertical segment runs through the inside of a box (touching its border is fine)."""
+    inset = 0.5
+    left, right = box["x"] + inset, box["x"] + box["width"] - inset
+    top, bottom = box["y"] + inset, box["y"] + box["height"] - inset
+    low_x, high_x = sorted((start[0], end[0]))
+    low_y, high_y = sorted((start[1], end[1]))
+    return low_x < right and high_x > left and low_y < bottom and high_y > top
 
 
 def cell_id(node_id: str) -> str:
@@ -291,24 +540,29 @@ def to_drawio(graph: Mapping[str, Any], drawn: Layout | None = None, *, title: s
             f'vertex="1" parent="1"><mxGeometry x="{box["x"]:.1f}" y="{box["y"]:.1f}" width="{box["width"]:.1f}" '
             f'height="{box["height"]:.1f}" as="geometry"/></mxCell>'
         )
-    placed_ids = {box["id"] for box in drawn["nodes"]}
-    for index, edge in enumerate(graph.get("edges", [])):
+    edges = list(graph.get("edges", []))
+    for route in drawn["routes"]:
+        index = route["edge"]
+        edge = edges[index]
         source, target = str(edge["from"]), str(edge["to"])
-        if source not in placed_ids or target not in placed_ids:
-            continue
         confidence = str(edge.get("confidence") or "STATIC")
+        # Fixed ports and waypoints with no automatic routing: draw.io draws exactly the route laid out here.
         style = (
-            f"edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;"
+            f"edgeStyle=none;rounded=1;html=1;"
+            f"exitX={route['exit'][0]:.4f};exitY={route['exit'][1]:.0f};exitDx=0;exitDy=0;exitPerimeter=0;"
+            f"entryX={route['entry'][0]:.4f};entryY={route['entry'][1]:.0f};entryDx=0;entryDy=0;entryPerimeter=0;"
             f"strokeColor={EDGE_COLOURS.get(confidence, EDGE_COLOURS['STATIC'])};strokeWidth=1.2;"
             f"fontSize={max(MIN_FONT, font - 2)};"
             f"fontColor={TEXT};labelBackgroundColor=#FFFFFF;"
             + EDGE_STYLES.get(str(edge.get("kind")), EDGE_STYLES["calls"])
             + ("dashPattern=1 3;dashed=1;" if confidence == "DYNAMIC_UNKNOWN" else "")
         )
+        waypoints = "".join(f'<mxPoint x="{x:.1f}" y="{y:.1f}"/>' for x, y in route["points"][1:-1])
         cells.append(
             f'<mxCell id="e-{index}" value="{html.escape(edge_label(edge), quote=True)}" style="{style}" '
             'edge="1" parent="1" '
-            f'source="{cell_id(source)}" target="{cell_id(target)}"><mxGeometry relative="1" as="geometry"/></mxCell>'
+            f'source="{cell_id(source)}" target="{cell_id(target)}"><mxGeometry relative="1" as="geometry">'
+            f'<Array as="points">{waypoints}</Array></mxGeometry></mxCell>'
         )
     cells += legend_cells(drawn, font)
     model = (

@@ -59,10 +59,11 @@ def test_bound_contexts_nest_per_thread() -> None:
 
 def test_confirm_answers_for_every_client_and_every_reply() -> None:
     assert interaction.confirm("Write?") == interaction.UNSUPPORTED  # no tool call in progress
+    # A client that cannot be asked is "not offered": the write proceeds and the answer says why nothing was asked.
     with interaction.bound(context(capabilities=None)):
-        assert interaction.confirm("Write?", run=direct) == interaction.UNSUPPORTED
+        assert interaction.confirm("Write?", run=direct) == interaction.NOT_OFFERED
     with interaction.bound(context(capabilities=SimpleNamespace(elicitation=None))):
-        assert interaction.confirm("Write?", run=direct) == interaction.UNSUPPORTED
+        assert interaction.confirm("Write?", run=direct) == interaction.NOT_OFFERED
     replies = {
         interaction.ACCEPTED: SimpleNamespace(action="accept", data=SimpleNamespace(apply=True)),
         interaction.DECLINED: SimpleNamespace(action="decline", data=None),
@@ -123,6 +124,7 @@ def format_edit(target: Path) -> dict[str, Any]:
         (interaction.DECLINED, False),
         (interaction.CANCELLED, False),
         (interaction.UNSUPPORTED, True),
+        (interaction.NOT_OFFERED, True),
     ],
 )
 def test_format_fix_and_rename_write_only_what_the_user_accepts(
@@ -147,6 +149,7 @@ def test_format_fix_and_rename_write_only_what_the_user_accepts(
         assert "confirmation" not in answer
     else:
         assert answer["confirmation"] == decision
+    assert ("confirmationNote" in answer) is (decision == interaction.NOT_OFFERED)
     assert ("note" in answer) is (not written)
 
     target.write_text("a  \n", encoding="utf-8")
@@ -295,3 +298,49 @@ def test_the_practices_catalogue_is_a_resource() -> None:
     assert mcp_server.PRACTICES_URI + "/{code}" in templates
     read = asyncio.run(server.read_resource(mcp_server.PRACTICES_URI + "/GS001"))
     assert "Integer division" in str(read)
+
+
+class Capabilities(SimpleNamespace):
+    def model_dump(self, *, exclude_none: bool = False) -> dict[str, Any]:
+        return {k: v for k, v in vars(self).items() if v is not None or not exclude_none}
+
+
+def client_context(*, elicitation: Any) -> Any:
+    capabilities = Capabilities(elicitation=elicitation, roots={"listChanged": True})
+    params = SimpleNamespace(client_info=SimpleNamespace(name="kiro-cli", version="2.29.1"), capabilities=capabilities)
+    session = SimpleNamespace(client_params=params, protocol_version="2025-06-18")
+    return SimpleNamespace(session=session, client_capabilities=capabilities)
+
+
+class Refusing:
+    @property
+    def session(self) -> Any:
+        raise ValueError("Context is not available outside of a request")
+
+
+def test_the_client_is_recorded_once_with_what_it_offers(tmp_path: Path) -> None:
+    summary = interaction.client_summary(client_context(elicitation=None))
+    assert summary == {
+        "name": "kiro-cli",
+        "version": "2.29.1",
+        "protocol": "2025-06-18",
+        "capabilities": ["roots"],
+        "elicitation": False,
+    }
+    assert interaction.client_summary(client_context(elicitation={}))["elicitation"] is True  # type: ignore[index]
+    assert interaction.client_summary(None) is None
+    assert interaction.client_summary(Refusing()) is None  # outside a request the SDK's context refuses
+
+    target = tmp_path / "daemon" / "key.client.json"
+    record = mcp_server.client_recorder(target)
+    record(client_context(elicitation=None))
+    first = target.read_text(encoding="utf-8")
+    record(client_context(elicitation={}))
+    assert target.read_text(encoding="utf-8") == first and '"elicitation":false' in first
+
+
+def test_workspace_status_names_the_client_of_the_call(tools: dict[str, Any], engine: dict[str, Any]) -> None:
+    engine["responses"]["groovyscope/status"] = {"version": "x"}
+    assert "client" not in tools["workspace_status"]()
+    with interaction.bound(client_context(elicitation=None)):
+        assert tools["workspace_status"]()["client"]["name"] == "kiro-cli"
