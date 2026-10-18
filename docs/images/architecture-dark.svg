@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="392" viewBox="0 0 1200 392" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="groovyscope architecture: Kiro CLI talks to the groovyscope Python front end, which talks to one warm JVM engine per workspace, which reads your code; diagnostics, impact, graphs and merge request comments come back.">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0D1117"/><stop offset="1" stop-color="#161B22"/></linearGradient>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#0F172A" flood-opacity="0.45"/></filter>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#6E7681"/></marker>
+<marker id="arrowR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#E6EDF3"/></marker>
+<linearGradient id="g-agent" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
+<linearGradient id="g-front" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0EA5E9"/><stop offset="1" stop-color="#2563EB"/></linearGradient>
+<linearGradient id="g-engine" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F97316"/><stop offset="1" stop-color="#EF4444"/></linearGradient>
+<linearGradient id="g-code" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22C55E"/><stop offset="1" stop-color="#0D9488"/></linearGradient>
+</defs>
+<rect width="1200" height="392" rx="24" fill="url(#bg)"/>
+<line x1="275" y1="106" x2="323" y2="106" stroke="#6E7681" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="300.0" y="96" text-anchor="middle" font-size="11" fill="#8B949E">stdio</text>
+<line x1="575" y1="106" x2="623" y2="106" stroke="#6E7681" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="600.0" y="96" text-anchor="middle" font-size="11" fill="#8B949E">socket</text>
+<line x1="875" y1="106" x2="923" y2="106" stroke="#6E7681" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="900.0" y="96" text-anchor="middle" font-size="11" fill="#8B949E">reads</text>
+<rect x="25" y="48" width="250" height="232" rx="20" fill="#161B22" stroke="#30363D" filter="url(#shadow)"/>
+<rect x="25" y="48" width="250" height="6" rx="3" fill="url(#g-agent)"/>
+<circle cx="73" cy="106" r="24" fill="url(#g-agent)"/>
+<rect x="61" y="97" width="24" height="18" rx="3" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M67 103 l4 3 l-4 3 M74 109 h5" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="166" font-size="22" font-weight="700" fill="#E6EDF3">Kiro CLI</text>
+<text x="49" y="190" font-size="13" fill="#8B949E">the AI coding agent</text>
+<rect x="49" y="214" width="79" height="24" rx="12" fill="#6366F133"/>
+<text x="88.5" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">code tool</text>
+<rect x="136" y="214" width="86" height="24" rx="12" fill="#6366F133"/>
+<text x="179.0" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">MCP client</text>
+<rect x="325" y="48" width="250" height="232" rx="20" fill="#161B22" stroke="#30363D" filter="url(#shadow)"/>
+<rect x="325" y="48" width="250" height="6" rx="3" fill="url(#g-front)"/>
+<circle cx="373" cy="106" r="24" fill="url(#g-front)"/>
+<circle cx="365" cy="106" r="4" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="381" cy="106" r="4" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M369 106 h8 M365 102 v-6 h16 v6" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="349" y="166" font-size="22" font-weight="700" fill="#E6EDF3">groovyscope</text>
+<text x="349" y="190" font-size="13" fill="#8B949E">Python front end</text>
+<rect x="349" y="214" width="41" height="24" rx="12" fill="#0EA5E933"/>
+<text x="369.5" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">LSP</text>
+<rect x="398" y="214" width="111" height="24" rx="12" fill="#0EA5E933"/>
+<text x="453.5" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">MCP · 27 tools</text>
+<rect x="349" y="246" width="41" height="24" rx="12" fill="#0EA5E933"/>
+<text x="369.5" y="262" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">CLI</text>
+<rect x="625" y="48" width="250" height="232" rx="20" fill="#161B22" stroke="#30363D" filter="url(#shadow)"/>
+<rect x="625" y="48" width="250" height="6" rx="3" fill="url(#g-engine)"/>
+<circle cx="673" cy="106" r="24" fill="url(#g-engine)"/>
+<path d="M673 93 l11 6.5 v13 l-11 6.5 l-11 -6.5 v-13 z" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="673" cy="106" r="3.5" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="649" y="166" font-size="22" font-weight="700" fill="#E6EDF3">Engine</text>
+<text x="649" y="190" font-size="13" fill="#8B949E">one warm JVM per workspace</text>
+<rect x="649" y="214" width="130" height="24" rx="12" fill="#F9731633"/>
+<text x="714.0" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">Groovy 6 compiler</text>
+<rect x="649" y="246" width="86" height="24" rx="12" fill="#F9731633"/>
+<text x="692.0" y="262" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">call graph</text>
+<rect x="743" y="246" width="86" height="24" rx="12" fill="#F9731633"/>
+<text x="786.0" y="262" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">CodeNarc 4</text>
+<rect x="925" y="48" width="250" height="232" rx="20" fill="#161B22" stroke="#30363D" filter="url(#shadow)"/>
+<rect x="925" y="48" width="250" height="6" rx="3" fill="url(#g-code)"/>
+<circle cx="973" cy="106" r="24" fill="url(#g-code)"/>
+<path d="M961 99 h8 l3 3 h13 v14 h-24 z" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M961 107 h24" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="949" y="166" font-size="22" font-weight="700" fill="#E6EDF3">Your code</text>
+<text x="949" y="190" font-size="13" fill="#8B949E">read, never executed</text>
+<rect x="949" y="214" width="60" height="24" rx="12" fill="#22C55E33"/>
+<text x="979.0" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">Groovy</text>
+<rect x="1017" y="214" width="60" height="24" rx="12" fill="#22C55E33"/>
+<text x="1047.0" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">Gradle</text>
+<rect x="949" y="246" width="92" height="24" rx="12" fill="#22C55E33"/>
+<text x="995.0" y="262" text-anchor="middle" font-size="12" font-weight="600" fill="#E6EDF3">Jenkinsfile</text>
+<path d="M750.0 280 v42 q0 20 -20 20 H170.0 q-20 0 -20 -20 V290" fill="none" stroke="#E6EDF3" stroke-width="2.5" stroke-dasharray="1 0" marker-end="url(#arrowR)" opacity="0.9"/>
+<rect x="166.0" y="327" width="568.0" height="30" rx="15" fill="#E6EDF3"/>
+<text x="450.0" y="347" text-anchor="middle" font-size="13" font-weight="600" fill="#0D1117">diagnostics with fixes  ·  impact and risk  ·  graphs  ·  merge request comments</text>
+</svg>

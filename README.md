@@ -85,6 +85,17 @@ or receiver type, `return null`, string literals matching a pattern, annotations
 blocks, long methods) and duplicated code with identifiers and literals ignored (`find_duplicates`). None of
 them returns a whole file.
 
+## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+  <img alt="Kiro CLI talks to the groovyscope Python front end over stdio; it talks to one warm JVM engine per workspace over a Unix socket; the engine reads your code and never executes it; diagnostics with fixes, impact and risk, graphs and merge request comments come back." src="docs/images/architecture.svg" width="100%">
+</picture>
+
+Kiro CLI talks to groovyscope over stdio (LSP for its `code` tool, MCP for everything else). groovyscope keeps one
+warm JVM per workspace and talks to it over a Unix socket. The JVM compiles and indexes your code, never runs it,
+and sends back answers the agent can act on. Package by package: [docs/architecture.md](docs/architecture.md).
+
 ## Commands
 
 | Command | What it does |
