@@ -19,12 +19,30 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # With RELEASE_PLEASE_TOKEN (a fine-grained token of a maintainer: contents and pull requests, write, this
+      # repository only) the release PR is opened as that person: its CI runs without the manual approval that
+      # bot-opened PRs need, and its merge is a user push, which starts this workflow again to cut the tag.
+      # Without the secret the workflow falls back to GITHUB_TOKEN and the old manual steps apply.
       - name: Run release-please
         id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      # The release PR merges itself when its checks pass (needs "Allow auto-merge" in the repository settings;
+      # until then this step only prints a note and the PR is merged by hand or through the API).
+      - name: Let the release PR merge itself when its checks pass
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRS: ${{ steps.release.outputs.prs }}
+        run: |
+          for number in $(printf '%s' "$PRS" | jq -r '.[].number'); do
+            gh pr merge "$number" --auto --squash \
+              || echo "::notice::auto-merge is not available for #$number; merge it once its checks are green"
+          done
 
   # Releases created with GITHUB_TOKEN do not fire `release: published` in other workflows, and
   # calling workflow.yml as a reusable workflow makes the Sigstore certificate name this file as the

@@ -374,10 +374,11 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
   long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
   green, merged, released; the owner's Kiro check of one elicitation prompt recorded here.
-- [ ] **Process: merge and release automation** — PRs merge without a human once CI is green (auto-merge
-  after the owner enables it in the repository settings; by API until then), release-please runs with a
-  fine-grained token so its PR's checks run unattended and it auto-merges, and the session that cut a release
-  verifies the publish (tag, workflow, PyPI, tap). Recorded in `docs/ci.md` when applied.
+- [x] **Process: merge and release automation** — PRs merge without a human once CI is green (auto-merge
+  after the owner enables it in the repository settings; by API until then); `release-please.yml` takes the
+  `RELEASE_PLEASE_TOKEN` secret so the release PR's checks run unattended and it marks itself for auto-merge;
+  the session that cut a release verifies the publish (tag, workflow, PyPI, tap). Recorded in `AGENTS.md`.
+  Still the owner's: add the secret and tick "Allow auto-merge".
 
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
@@ -499,8 +500,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   Engine specs 385 green, 349 Python tests at 95% coverage.
 - 2026-10-18: revised plan for asynchronous calls and out-of-memory guardrails written (research doc, section
   5); stages 18 to 20 re-cut around it, awaiting the owner's approval. PR #64 merged.
-- 2026-10-18: v0.15.0 released (PR #66 merged by API after re-running its parked checks); plan PR #67 merged and
-  the plan approved. Stage 18 implemented locally on `feat/async-guardrails`. Engine: `Cancellation` (thread-bound
+- 2026-10-18: v0.15.0 released (PR #66 merged by API after re-running its parked checks; publish workflow
+  dispatched). Plan PR #67 merged; the owner approved the plan. Release automation PR opened; Stage 18 starts
+  on `feat/async-guardrails`.
+- 2026-10-18: Stage 18 implemented locally on `feat/async-guardrails` (PR #70; release automation PR #69 merged).
+  Engine: `Cancellation` (thread-bound
   cancel flag with checkpoints in the compiler, type checker, linter, index and call graph), `RequestExecutors`
   (heavy and light lanes, bounded queues, a `RequestFailed` busy answer), single-flight compile with cancellable
   waiters in `LanguageServices`, per-module containment in `AstIndex`, idle workspace eviction, O(1) `status`
