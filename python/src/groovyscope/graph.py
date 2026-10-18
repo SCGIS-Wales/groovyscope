@@ -3,8 +3,10 @@ smallest paper that keeps the text readable (A4, then A3, then A2), a calm palet
 written as a draw.io file or a Mermaid diagram.
 
 The graph comes from the engine (``groovyscope/graph``): nodes are classes (or one class's methods), edges are
-``extends``, ``implements``, ``has``, ``uses`` and ``calls`` with a confidence. Everything here is pure: the same
-graph always gives the same file.
+``extends``, ``implements``, ``has``, ``uses`` and ``calls`` with a confidence. A call also carries its effect: blue
+when it only reads, orange when it changes state (a field, a file, a database, a remote service, a process), grey
+when it is matched only by name; the arrow points from the caller to the method it calls. Everything here is pure:
+the same graph always gives the same file.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from typing import Any, TypedDict
 # instead of shrinking its text below MIN_FONT. Margins keep the drawing off the page edge.
 PAPERS = (("A4", (827, 1169)), ("A3", (1169, 1654)), ("A2", (1654, 2339)))
 MARGIN = 40
-LEGEND_HEIGHT = 70
+LEGEND_HEIGHT = 84
 NODE_HEIGHT = 46
 MIN_NODE_WIDTH = 120
 MAX_NODE_WIDTH = 260
@@ -34,12 +36,16 @@ STROKE = "#8A9BA8"
 TEXT = "#2E3A46"
 EXTERNAL_FILL = "#F5F5F5"
 EDGE_COLOURS = {"STATIC": "#5C6F80", "INFERRED": "#8FA3B3", "DYNAMIC_UNKNOWN": "#B5BFC7"}
+# A call's colour says what it does: blue reads, orange writes, grey unknown (resolved only by name). How sure the
+# call is shows as the line: solid when typed, dashed when inferred, dotted when matched by name.
+EFFECT_COLOURS = {"read": "#2B6CB0", "write": "#DD6B20", "unknown": "#8A9BA8"}
+CONFIDENCE_DASHES = {"INFERRED": "dashed=1;dashPattern=6 3;", "DYNAMIC_UNKNOWN": "dashed=1;dashPattern=1 3;"}
 EDGE_STYLES = {
     "extends": "endArrow=block;endFill=0;endSize=10;",
     "implements": "endArrow=block;endFill=0;endSize=10;dashed=1;",
     "has": "startArrow=diamondThin;startFill=1;startSize=10;endArrow=none;",
     "uses": "endArrow=open;endSize=8;dashed=1;",
-    "calls": "endArrow=open;endSize=8;",
+    "calls": "endArrow=block;endFill=1;endSize=7;",
 }
 MERMAID_ARROWS = {"extends": "<|--", "implements": "<|..", "has": "*--", "uses": "..>", "calls": "-->"}
 
@@ -629,12 +635,60 @@ def edge_label(edge: Mapping[str, Any]) -> str:
     return ""
 
 
+def combine_effects(first: str | None, second: str | None) -> str | None:
+    """The effect of several calls together: any write wins, then any unknown, then read."""
+    effects = {first, second} - {None}
+    for effect in ("write", "unknown", "read"):
+        if effect in effects:
+            return effect
+    return None
+
+
+def edge_effect(edge: Mapping[str, Any]) -> str | None:
+    """A call's effect, ``None`` for other relations and for graphs from engines that do not report one."""
+    effect = edge.get("effect")
+    return str(effect) if str(edge.get("kind")) == "calls" and effect in EFFECT_COLOURS else None
+
+
+def effect_counts(graph: Mapping[str, Any]) -> dict[str, int]:
+    """How many drawn calls read, write and are unknown; empty when the engine reports no effects."""
+    counts: dict[str, int] = {}
+    for edge in graph.get("edges", []):
+        effect = edge_effect(edge)
+        if effect:
+            counts[effect] = counts.get(effect, 0) + 1
+    return {name: counts[name] for name in ("read", "write", "unknown") if name in counts}
+
+
+def reference_html(box: Placed, graph: Mapping[str, Any]) -> str:
+    """The shared helpers a box names after the arrow, each coloured by what this box's calls to it do."""
+    text = box["references"]
+    prefix = "\u2192 "
+    if not text.startswith(prefix):
+        return html.escape(text)
+    names = {str(n["id"]): str(n.get("name") or str(n["id"]).rsplit(".", 1)[-1]) for n in graph.get("nodes", [])}
+    effects: dict[str, str | None] = {}
+    for edge in graph.get("edges", []):
+        if str(edge["from"]) == box["id"]:
+            name = names.get(str(edge["to"]), "")
+            effects[name] = combine_effects(effects.get(name), edge_effect(edge))
+    body, _, rest = text[len(prefix) :].partition(" +")
+    shown = []
+    for name in body.split(", "):
+        effect = effects.get(name)
+        escaped = html.escape(name)
+        shown.append(f'<font color="{EFFECT_COLOURS[effect]}">{escaped}</font>' if effect else escaped)
+    return html.escape(prefix) + ", ".join(shown) + (f" +{html.escape(rest)}" if rest else "")
+
+
 def to_drawio(graph: Mapping[str, Any], drawn: Layout | None = None, *, title: str = "groovyscope") -> str:
-    """A draw.io (diagrams.net) file: one page, the nodes as rounded boxes, the edges styled by kind and faded
-    by confidence, a legend band at the bottom."""
+    """A draw.io (diagrams.net) file: one page, the nodes as rounded boxes (a method's border coloured by what it
+    does), the edges styled by kind, calls coloured by effect and dashed by confidence, a legend band at the
+    bottom."""
     drawn = drawn or layout(graph)
     width, height = drawn["page"]
     font = drawn["font"]
+    node_effects = {str(n["id"]): n.get("effect") for n in graph.get("nodes", [])}
     cells: list[str] = ['<mxCell id="0"/>', '<mxCell id="1" parent="0"/>']
     for box in drawn["nodes"]:
         small = max(MIN_FONT, font - 2)
@@ -643,11 +697,13 @@ def to_drawio(graph: Mapping[str, Any], drawn: Layout | None = None, *, title: s
             f'<font style="font-size: {small}px">{html.escape(box["sublabel"])}</font>'
         )
         if box.get("references"):
-            value += f'<br/><font style="font-size: {small}px"><i>{html.escape(box["references"])}</i></font>'
-
+            value += f'<br/><font style="font-size: {small}px"><i>{reference_html(box, graph)}</i></font>'
+        effect = node_effects.get(box["id"])
+        stroke = EFFECT_COLOURS[str(effect)] if effect in EFFECT_COLOURS else STROKE
         style = (
-            f"rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor={box['fill']};strokeColor={STROKE};"
-            f"fontColor={TEXT};fontSize={font};fontFamily=Helvetica;align=center;verticalAlign=middle;"
+            f"rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor={box['fill']};strokeColor={stroke};"
+            + ("strokeWidth=2;" if effect == "write" else "")
+            + f"fontColor={TEXT};fontSize={font};fontFamily=Helvetica;align=center;verticalAlign=middle;"
             + ("dashed=1;" if box["dashed"] else "")
         )
         cells.append(
@@ -661,16 +717,23 @@ def to_drawio(graph: Mapping[str, Any], drawn: Layout | None = None, *, title: s
         edge = edges[index]
         source, target = str(edge["from"]), str(edge["to"])
         confidence = str(edge.get("confidence") or "STATIC")
+        effect = edge_effect(edge)
+        colour = EFFECT_COLOURS[effect] if effect else EDGE_COLOURS.get(confidence, EDGE_COLOURS["STATIC"])
+        # Calls show every confidence as a dash pattern; other relations are dashed by kind, dotted only by name.
+        if str(edge.get("kind")) == "calls" or confidence == "DYNAMIC_UNKNOWN":
+            dashes = CONFIDENCE_DASHES.get(confidence, "")
+        else:
+            dashes = ""
         # Fixed ports and waypoints with no automatic routing: draw.io draws exactly the route laid out here.
         style = (
             f"edgeStyle=none;rounded=1;html=1;"
             f"exitX={route['exit'][0]:.4f};exitY={route['exit'][1]:.0f};exitDx=0;exitDy=0;exitPerimeter=0;"
             f"entryX={route['entry'][0]:.4f};entryY={route['entry'][1]:.0f};entryDx=0;entryDy=0;entryPerimeter=0;"
-            f"strokeColor={EDGE_COLOURS.get(confidence, EDGE_COLOURS['STATIC'])};strokeWidth=1.2;"
+            f"strokeColor={colour};strokeWidth={1.6 if effect == 'write' else 1.2};"
             f"fontSize={max(MIN_FONT, font - 2)};"
             f"fontColor={TEXT};labelBackgroundColor=#FFFFFF;"
             + EDGE_STYLES.get(str(edge.get("kind")), EDGE_STYLES["calls"])
-            + ("dashPattern=1 3;dashed=1;" if confidence == "DYNAMIC_UNKNOWN" else "")
+            + dashes
         )
         waypoints = "".join(f'<mxPoint x="{x:.1f}" y="{y:.1f}"/>' for x, y in route["points"][1:-1])
         cells.append(
@@ -699,17 +762,20 @@ def legend_cells(drawn: Layout, font: int) -> list[str]:
     width, height = drawn["page"]
     top = height - MARGIN - LEGEND_HEIGHT + 8
     small = max(MIN_FONT, font - 2)
-    lines = ["extends: hollow arrow · implements: dashed hollow arrow · has: diamond · uses: dashed · calls: solid"]
-    lines.append(
-        "grey dotted edges: matched by name only (DYNAMIC_UNKNOWN) · dashed boxes: tests, external classes and shared "
-        "helpers (used from many places; each user names them after \u2192 instead of a line)"
-    )
+    lines = [
+        "calls: filled arrow from caller to callee · blue: only reads · orange: changes state (a field, file, "
+        "database, remote service or process; a method's border too) · grey: unknown",
+        "solid: typed call · dashed: inferred · dotted: matched by name only · extends: hollow arrow · implements: "
+        "dashed hollow arrow · has: diamond · uses: dashed open arrow",
+        "dashed boxes: tests, external classes and shared helpers (used from many places; each user names them after "
+        "\u2192, coloured the same way, instead of a line)",
+    ]
     text = "<br/>".join(html.escape(line) for line in lines)
     cells = [
         f'<mxCell id="legend-text" value="{html.escape(text, quote=True)}" '
         f'style="text;html=1;align=left;verticalAlign=top;fontSize={small};fontColor={TEXT};fontFamily=Helvetica;" '
         'vertex="1" parent="1">'
-        f'<mxGeometry x="{MARGIN}" y="{top}" width="{width - 2 * MARGIN}" height="30" as="geometry"/></mxCell>'
+        f'<mxGeometry x="{MARGIN}" y="{top}" width="{width - 2 * MARGIN}" height="44" as="geometry"/></mxCell>'
     ]
     x = float(MARGIN)
     for package, fill in drawn["packages"].items():
@@ -720,7 +786,7 @@ def legend_cells(drawn: Layout, font: int) -> list[str]:
             f'<mxCell id="legend-{cell_id(package)}" value="{html.escape(package, quote=True)}" '
             f'style="rounded=1;html=1;fillColor={fill};strokeColor={STROKE};fontColor={TEXT};fontSize={small};'
             'fontFamily=Helvetica;" vertex="1" parent="1">'
-            f'<mxGeometry x="{x:.1f}" y="{top + 36}" width="{swatch_width:.1f}" height="22" as="geometry"/></mxCell>'
+            f'<mxGeometry x="{x:.1f}" y="{top + 50}" width="{swatch_width:.1f}" height="22" as="geometry"/></mxCell>'
         )
         x += swatch_width + 10
     return cells
@@ -754,7 +820,8 @@ def to_mermaid(graph: Mapping[str, Any]) -> str:
         label = ""
         if kind == "calls":
             count = int(edge.get("count") or 1)
-            label = f" : calls{' x' + str(count) if count > 1 else ''}"
+            verb = {"read": "reads", "write": "writes"}.get(str(edge_effect(edge)), "calls")
+            label = f" : {verb}{' x' + str(count) if count > 1 else ''}"
             if edge.get("confidence") == "DYNAMIC_UNKNOWN":
                 label += " (by name)"
         elif kind == "uses":
@@ -767,8 +834,8 @@ def to_mermaid(graph: Mapping[str, Any]) -> str:
 
 
 def compact(graph: Mapping[str, Any], cap: int) -> dict[str, Any]:
-    """The graph the MCP tool returns: ids, names, kinds and packages for nodes; kind, confidence and count for
-    edges; capped, never file bodies."""
+    """The graph the MCP tool returns: ids, names, kinds and packages (and a method's effect) for nodes; kind,
+    confidence, count and a call's effect for edges; capped, never file bodies."""
     nodes = [
         {
             k: v
@@ -778,6 +845,7 @@ def compact(graph: Mapping[str, Any], cap: int) -> dict[str, Any]:
                 "kind": n.get("kind"),
                 "package": n.get("package"),
                 "test": n.get("test") or None,
+                "effect": n.get("effect"),
             }.items()
             if v is not None
         }
@@ -791,6 +859,7 @@ def compact(graph: Mapping[str, Any], cap: int) -> dict[str, Any]:
             "kind": e.get("kind"),
             "confidence": e.get("confidence"),
             "count": e.get("count"),
+            **({"effect": e["effect"]} if e.get("effect") else {}),
         }
         for e in graph.get("edges", [])
         if e.get("from") in kept and e.get("to") in kept

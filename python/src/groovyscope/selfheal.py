@@ -221,6 +221,18 @@ def started(
     }
 
 
+def forgiven(state: DaemonState) -> DaemonState:
+    """The state after a stop someone asked for (``daemon stop``, ``restart`` or ``start``, or the swap to a newer
+    engine): the starts before it were not a crash loop, so the window starts empty. The grown heap is kept."""
+    return {
+        "heap": state["heap"],
+        "configured": state["configured"],
+        "restarts": [],
+        "lastExit": state["lastExit"],
+        "logSize": state["logSize"],
+    }
+
+
 def grown_heap(state: DaemonState) -> str | None:
     """The heap the self-healing grew past ``daemon.heap``, or nothing when the configured one is in use."""
     if state["heap"] and state["configured"] and state["heap"] != state["configured"]:

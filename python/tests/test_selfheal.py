@@ -131,3 +131,9 @@ def test_prepare_start_rotates_grows_waits_and_records(tmp_path: Path) -> None:
         selfheal.save_state(state_file, selfheal.started(selfheal.load_state(state_file), "2g", "exit", 0, moment))
     with pytest.raises(RuntimeError, match="started 4 times in the last ten minutes"):
         daemon.prepare_start(["java", "-Xmx1g"], log, {**settings, "maxRestartsPerTenMinutes": 3}, now=lambda: 1003.0)
+    daemon.forget_restarts(log)  # a stop or start someone asked for is not a crash
+    forgiven = selfheal.load_state(state_file)
+    assert forgiven["restarts"] == [] and forgiven["heap"] == "2g"
+    daemon.prepare_start(["java", "-Xmx1g"], log, {**settings, "maxRestartsPerTenMinutes": 3}, now=lambda: 1004.0)
+    daemon.forget_restarts(tmp_path / "never.log")
+    assert not selfheal.state_path(tmp_path / "never.log").exists()

@@ -262,3 +262,84 @@ def test_check_layout_reports_a_line_through_a_box() -> None:
     through = (box["x"] + box["width"] / 2, box["y"] - 10), (box["x"] + box["width"] / 2, box["y"] + box["height"] + 10)
     drawn["routes"].append({"edge": 99, "points": list(through), "exit": (0.5, 1.0), "entry": (0.5, 0.0)})
     assert f"edge 99 crosses {box['id']}" in graph.check_layout(drawn)
+
+
+def effect_graph() -> dict[str, Any]:
+    def method(name: str, effect: str | None) -> dict[str, Any]:
+        found = {"id": f"app.Store#{name}", "name": name, "kind": "method", "package": "app"}
+        return {**found, "effect": effect} if effect else found
+
+    return {
+        "nodes": [method("load", "read"), method("save", "write"), method("guess", "unknown"), method("plain", None)],
+        "edges": [
+            {
+                "from": "app.Store#save",
+                "to": "app.Store#load",
+                "kind": "calls",
+                "confidence": "STATIC",
+                "effect": "read",
+            },
+            {
+                "from": "app.Store#guess",
+                "to": "app.Store#save",
+                "kind": "calls",
+                "confidence": "INFERRED",
+                "count": 2,
+                "effect": "write",
+            },
+            {
+                "from": "app.Store#plain",
+                "to": "app.Store#guess",
+                "kind": "calls",
+                "confidence": "DYNAMIC_UNKNOWN",
+                "effect": "unknown",
+            },
+            {"from": "app.Store#plain", "to": "app.Store#load", "kind": "calls", "confidence": "STATIC"},
+        ],
+    }
+
+
+def test_calls_are_coloured_by_effect_and_dashed_by_confidence() -> None:
+    drawn = graph.to_drawio(effect_graph())
+    styles = {cell.get("id"): cell.get("style") or "" for cell in ET.fromstring(drawn).iter("mxCell")}  # noqa: S314
+    assert "strokeColor=#2B6CB0;strokeWidth=1.2;" in styles["e-0"] and "dashed" not in styles["e-0"]
+    assert "strokeColor=#DD6B20;strokeWidth=1.6;" in styles["e-1"] and "dashPattern=6 3;" in styles["e-1"]
+    assert "strokeColor=#8A9BA8;" in styles["e-2"] and "dashPattern=1 3;" in styles["e-2"]
+    assert f"strokeColor={graph.EDGE_COLOURS['STATIC']};" in styles["e-3"]  # an older engine reports no effect
+    assert all("endArrow=block;endFill=1;" in styles[f"e-{i}"] for i in range(4))
+    assert "strokeColor=#DD6B20;strokeWidth=2;" in styles["n-app_Store_save"]
+    assert f"strokeColor={graph.STROKE};" in styles["n-app_Store_plain"]
+    assert "orange: changes state" in drawn and "from caller to callee" in drawn
+    assert graph.effect_counts(effect_graph()) == {"read": 1, "write": 1, "unknown": 1}
+    assert graph.effect_counts({"edges": []}) == {}
+
+
+def test_effects_reach_mermaid_and_the_compact_graph() -> None:
+    mermaid = graph.to_mermaid(effect_graph())
+    assert "Store_save --> Store_load : reads" in mermaid and "Store_guess --> Store_save : writes x2" in mermaid
+    assert "Store_plain --> Store_guess : calls (by name)" in mermaid
+    small = graph.compact(effect_graph(), 10)
+    assert small["nodes"][1]["effect"] == "write" and "effect" not in small["nodes"][3]
+    assert small["edges"][1]["effect"] == "write" and "effect" not in small["edges"][3]
+
+
+def test_shared_helper_names_take_the_colour_of_the_calls_to_them() -> None:
+    effects = effect_graph()
+    box: graph.Placed = {
+        "id": "app.Store#plain",
+        "label": "plain",
+        "sublabel": "",
+        "x": 0.0,
+        "y": 0.0,
+        "width": 100.0,
+        "height": 60.0,
+        "fill": "",
+        "dashed": False,
+        "row": 0,
+        "references": "→ guess, load, other +3",
+    }
+    text = graph.reference_html(box, effects)
+    assert text.startswith("→ ") and '<font color="#8A9BA8">guess</font>' in text
+    assert ", load, other +3" in text  # a call with no effect, and a name with no edge, keep the text colour
+    assert graph.reference_html({**box, "references": "plain"}, effects) == "plain"
+    assert graph.combine_effects(None, None) is None and graph.combine_effects("read", "unknown") == "unknown"

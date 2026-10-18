@@ -199,6 +199,13 @@ def test_relationship_graph_returns_compact_graph_and_writes_drawio(
         paths=["src/app/OrderService.groovy"], drawio_path="docs/classes.drawio"
     )
     assert layered["lines"] == {"layout": "layered", "crossings": 0, "overlaps": 0}
+    engine["responses"]["groovyscope/graph"] = {
+        **GRAPH,
+        "edges": [*GRAPH["edges"], {"from": "app.OrderService", "to": "app.Base", "kind": "calls", "effect": "write"}],
+    }
+    with_effects = local_tools["relationship_graph"](paths=["src/app"], drawio_path="docs/classes.drawio")
+    assert with_effects["lines"]["calls"] == {"write": 1}
+    engine["responses"]["groovyscope/graph"] = GRAPH
     assert engine["calls"][-1][0] == "groovyscope/layout" and engine["calls"][-1][1]["links"][0]["hierarchy"] is True
     root = ET.parse(tmp_path / "docs" / "classes.drawio").getroot()  # noqa: S314 - our own output
     assert root.find("diagram").get("name") == "classes"  # type: ignore[union-attr]
