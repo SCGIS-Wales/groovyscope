@@ -270,6 +270,40 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   tools. Still open: the owner's Kiro checks (the `stale` round trip inside Kiro CLI and one review posted on
   a merge request), to be recorded in the log below when supplied.
 
+- [ ] **Stage 13: Kiro 3.0 readiness** — branch `feat/kiro3-readiness`, 2026-10-18, from the gap analysis
+  [research/2026-10-18-kiro-gap-analysis.md](research/2026-10-18-kiro-gap-analysis.md) (approved 2026-10-18).
+  Kiro CLI 3.0 makes the V3 engine the default at the end of October 2026. In this stage: the V3 permission
+  rules written for the agent allow only the read-only tools, so `fix`, `rename`, `format` with `apply`,
+  `refresh_classpath` and `relationship_graph` with `drawio_path` ask (Kiro ignores `readOnlyHint`); `checkup`
+  and `doctor` warn when the Kiro CLI is 3.x and the agent file is Classic only; `docs/kiro.md` gains a Kiro 3
+  section with the verification checklist and loses the "twenty-six tools" slip; the steering says what to do
+  when the `code` tool cannot open Groovy files. Owner's checks on Kiro 2.31 and on 3.0: the `code` tool
+  answers definition, references, hover and diagnostics on `.groovy`, `.gradle` and `Jenkinsfile` (issue
+  #6322, extension gate); the universal agent's `hooks.agentSpawn` runs under V3 (or needs `SessionStart`);
+  `/tools` token cost of the 27 schemas and `/context show` cost of the steering file.
+  Done when: CI green, merged, released; the owner's four checks recorded here with the numbers.
+- [ ] **Stage 14: edit loop performance** — not started. From the benchmark: edits on the CodeNarc corpus took
+  12 to 15 minutes with groovyscope against under 2 without, because each write recompiles 1,064 files and
+  republishes diagnostics. Planned: a quiet window that coalesces bursts of writes and recompiles lazily
+  (on the next request or when the window closes); push diagnostics off for agent sessions (Kiro pulls them);
+  incremental recompile of the changed files plus their dependants from the import and call graph, the rest
+  of the snapshot kept; the type check verified to survive one file with unresolved imports; a timing spec on
+  the generated workspace. Done when: benchmark tasks 3 and 4 repeated on the corpus under 2 minutes each
+  (about 5 credits, approved), CI green, merged, released.
+- [ ] **Stage 15: Kiro native integration** — not started. Planned: a `PostToolUse` hook on `write` that runs
+  `groovyscope check` on the written file and returns new errors to the model in the same turn; an opt-in
+  `Stop` hook that refuses to end the turn while changed files do not compile; skills generated from the
+  prompts cookbook (`.kiro/skills/<name>/SKILL.md`, each a slash command, body loaded on demand); the
+  steering trimmed and switched to `inclusion: fileMatch` for Groovy, Gradle and Jenkinsfile; the same recipes
+  as MCP prompts; `groovyscope kiro init --power` packaging steering, `mcp.json` and hooks as a Kiro power;
+  a `groovy-reviewer` subagent for merge request review; a headless CI recipe in `docs/ci.md`
+  (`kiro-cli chat --no-interactive --require-mcp-startup --output-format stream-json`). Done when: CI green,
+  merged, released; the owner's Kiro checks of both hooks and one skill run recorded here.
+- [ ] **Stage 16: tool surface and context cost** — not started, after the Stage 13 numbers. Planned: shorter
+  tool descriptions (the explanations move to the skills), a combined `symbol_context` tool (definition,
+  hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
+  `/context show` numbers before and after. Done when: both numbers lower, CI green, merged, released.
+
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
 Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.
@@ -364,3 +398,7 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   it and `groovyscope version` and `doctor` print it. Verified locally: 376 specs green, 318 Python tests at
   95% (one hypothesis flake in `test_deep_merge_identity`, green on re-run, unrelated), the built JAR reports
   `codenarc=4.0.0` (the latest stable release on 2026-10-18). The benchmark corpus stays at 4.0.0 by design.
+- 2026-10-18: Kiro CLI gap analysis written and approved by the owner (`docs/research/2026-10-18-kiro-gap-analysis.md`):
+  the edit loop latency, Kiro 3.0 readiness, unused Kiro features (hooks, skills, powers, prompts) and the
+  context cost of 27 schemas plus always-on steering are the gaps; stages 13 to 16 added above. Stage 13
+  started on `feat/kiro3-readiness`.
