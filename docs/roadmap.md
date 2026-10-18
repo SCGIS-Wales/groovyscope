@@ -356,16 +356,16 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   log; `groovyscope/status` reporting heap use so `doctor` warns before the limit. Done when: specs for each
   change (a base class with a syntax error compiles in bounded rounds, the previous loader is closed, memory is
   reported), CI green, merged, released.
-- [ ] **Stage 18: asynchronous guardrails** — branch `feat/async-guardrails`, 2026-10-18, implemented locally,
-  PR open; from the approved plan
+- [x] **Stage 18: asynchronous guardrails** — branch `feat/async-guardrails`, 2026-10-18, merged as PR #70,
+  released in 0.16.0; from the approved plan
   ([research/2026-10-18-reliability-and-kiro-features.md](research/2026-10-18-reliability-and-kiro-features.md),
   section 5). Engine: cooperative cancellation end to end (G1), bounded two-lane request executors with a busy
   answer (G2), single-flight compile with cancellable waiters (G3), containment and eviction (G7). Front end:
   demultiplexed engine session with per-call futures (G8), timeout and cancel propagation with single flight
   (G9), an in-flight limit (G10), relay and probe fixes (G12). Done when: the specs and tests named in section
   5.3 pass, CI green, merged, released.
-- [ ] **Stage 19: out-of-memory self-healing** — branch `feat/oom-self-healing`, 2026-10-18, implemented locally,
-  PR open. Engine: memory pressure guard that sheds caches
+- [x] **Stage 19: out-of-memory self-healing** — branch `feat/oom-self-healing`, 2026-10-18, merged as PR #71,
+  released in 0.16.0. Engine: memory pressure guard that sheds caches
   and refuses whole-workspace work (G4), workspace size budget (G5), opt-in heap dump (G6). Front end:
   crash-loop guard with backoff and heap escalation up to `daemon.maxHeap` recorded in a state file (G11),
   bounded logs and a cache sweep (G13), stop gate and write fixes (G14). Done when: the specs and tests named
@@ -524,3 +524,8 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   (`daemon.logMaxBytes`, `daemon.logsKept`), opt-in heap dumps (`daemon.heapDumpOnOutOfMemory`), a cache sweep
   reported by `doctor` and applied by `checkup --fix`, `git status -z` in the stop gate, and writes that refuse
   a file changed since it was read. Engine specs 400 green, 367 Python tests at 95% coverage.
+- 2026-10-18: v0.16.0 released with stages 18 and 19 (PRs #70 and #71 merged by API after green CI; the release
+  PR #68 merged alone after its parked checks were re-run; publish workflow green, PyPI 0.16.0 live). Next: Stage
+  20 (elicitation and progress) after the owner's Kiro 3 check, and the owner's outstanding Kiro checks for
+  stages 13 to 16. The owner's two one-off steps for unattended releases (the `RELEASE_PLEASE_TOKEN` secret and
+  "Allow auto-merge") are still open.
