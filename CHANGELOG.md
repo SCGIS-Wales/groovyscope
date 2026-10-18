@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.13.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.12.0...v0.13.0) (2026-10-18)
+
+
+### Features
+
+* **kiro:** after-write check and stop gate hooks, a read-only reviewer agent and the headless review recipe ([#61](https://github.com/SCGIS-Wales/groovyscope/issues/61)) ([8608793](https://github.com/SCGIS-Wales/groovyscope/commit/8608793eec816b94f987e11685165c6da4b714dd))
+* **kiro:** Kiro 3.0 readiness: approval rules from the tool catalogue, Classic agent warning ([#58](https://github.com/SCGIS-Wales/groovyscope/issues/58)) ([3c29b69](https://github.com/SCGIS-Wales/groovyscope/commit/3c29b69cc39342acc9d19a61f3cb91bb09ebadc0))
+
+
+### Performance
+
+* **engine:** push diagnostics for open documents only, pull per document and skip needless type checks ([#60](https://github.com/SCGIS-Wales/groovyscope/issues/60)) ([e90ca1a](https://github.com/SCGIS-Wales/groovyscope/commit/e90ca1aa212bf1b54d69021d292debc97a0efa87))
+
+
+### Documentation
+
+* record the Kiro CLI gap analysis and stages 13 to 16 in the roadmap ([#57](https://github.com/SCGIS-Wales/groovyscope/issues/57)) ([3db6d9c](https://github.com/SCGIS-Wales/groovyscope/commit/3db6d9c4d08ef53a0fcb2b6e48e63b4ba2300c6c))
+
 ## [0.12.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.11.0...v0.12.0) (2026-10-18)
 
 
