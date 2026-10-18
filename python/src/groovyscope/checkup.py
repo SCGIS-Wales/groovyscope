@@ -208,8 +208,13 @@ def benchmark_item(environ: Mapping[str, str], home: Path, *, fix: bool) -> tupl
 def daemon_item(root: Path, environ: Mapping[str, str], config_hash: str | None) -> Item:
     info = daemon.info(root, environ)
     if not info["running"]:
+        if info.get("outOfMemory"):
+            return {"level": "warn", "name": "daemon", "message": daemon.out_of_memory_advice(str(info.get("log", "")))}
         return {"level": "info", "name": "daemon", "message": "not running; starts with the first request"}
     status = info.get("status") or {}
+    warning = daemon.memory_warning(status if isinstance(status, Mapping) else None)
+    if warning:
+        return {"level": "warn", "name": "daemon", "message": warning}
     running = status.get("configHash") if isinstance(status, Mapping) else None
     if config_hash and isinstance(running, str) and running and running != config_hash:
         return {

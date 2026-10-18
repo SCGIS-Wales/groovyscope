@@ -53,6 +53,13 @@ reuse one compile and one index. The daemon exits after `daemon.idleTimeoutMinut
 when `groovyscope daemon stop` sends `groovyscope/shutdownDaemon`. If the daemon cannot be started, the CLI
 says so on stderr and runs the engine directly, exactly as in Stage 1.
 
+The JVM runs with `-Xmx<daemon.heap>`, the serial collector and `-XX:+ExitOnOutOfMemoryError`: a daemon that
+runs out of heap exits at once instead of serving requests from a full heap with wedged threads, the relay and
+the MCP server start a fresh one on the next request, and the log records the cause. `groovyscope daemon
+status`, `doctor` and `checkup` read `OutOfMemoryError` from the log tail and name the `daemon.heap` fix;
+`groovyscope/status` reports `memory.usedMb` and `memory.maxMb`, and the same commands warn once the heap in
+use passes 85% of the maximum, before the daemon dies.
+
 Locations (overridable with `GROOVYSCOPE_SOCKET_DIR` and `GROOVYSCOPE_CACHE_DIR`):
 
 | What | macOS | Linux |
@@ -83,8 +90,13 @@ import would keep every file from reaching `CANONICALIZATION`. The engine theref
 
 Dropping a file breaks the files that use its classes, which then break theirs. In a deep hierarchy (a base
 class with hundreds of subclasses, as in CodeNarc's rules) that cascade would drop most of the workspace. When
-the rounds drop any file the first round did not report, the engine keeps the first round's trees instead:
-that round saw every class at once. Groovy checks for errors after every step of a phase, so it stopped that
+the rounds drop any file the first *resolved* round did not report, the engine keeps that round's trees instead:
+it saw every class at once. The resolved round is the first one that got past parsing: a round that fails on a
+syntax error drops only the broken file and says nothing about the rest, so it cannot anchor the guard, and
+the round after it does. A syntax error in a base class therefore costs three rounds (syntax, resolution, one
+cascade step), not one per subclass. The retries also have a wall-clock budget (`RetryBudget`: three times the
+first round, five seconds at least); past it, the resolved round is kept as it stands. The type checker's retry
+loop uses the same budget. Groovy checks for errors after every step of a phase, so it stopped that
 round after resolving class headers; the engine runs the rest of semantic analysis on those trees itself (a
 fresh `ResolveVisitor` for headers, bodies and variable scopes, then `StaticImportVisitor`). Every name that
 can resolve does, and only the genuinely broken files are partial. Only the first round's errors are
@@ -117,7 +129,13 @@ and impact analysis cover them. Java files are never reported on, linted, format
 code: javac and the IDE own Java. A Java construct Groovy rejects only makes that file partial.
 
 The class loader of the round whose trees are kept stays open with them, because Groovy decompiles classpath
-types lazily when their members are first visited; the loaders of discarded rounds are closed at once.
+types lazily when their members are first visited; the loaders of discarded rounds are closed at once. The kept
+loader is owned by the `CompilationResult` (a `LoaderHandle`), and `LanguageServices` closes it when the next
+snapshot is published, so each generation releases its jars instead of waiting for the garbage collector to
+notice them. A file that stops parsing does not carry its previous tree into the new snapshot either (that
+would pin the whole previous generation, trees and loader, for as long as the error lasts): its last good
+text is parsed again, alone, into the current generation, so the outline and navigation degrade gracefully at
+the cost of one small parse. The call graph is dropped on every recompile for the same reason.
 
 Workspace code is loaded through a parent class loader that exposes only the JDK and the Groovy runtime the
 engine ships, never the engine's own dependencies, and global AST transformations are discovered only from the

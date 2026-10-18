@@ -343,7 +343,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
   `/context show` numbers before and after. Done when: both numbers lower, CI green, merged, released.
 
-- [ ] **Stage 17: engine memory and out-of-memory resilience** — branch `feat/engine-memory`, 2026-10-18, from
+- [ ] **Stage 17: engine memory and out-of-memory resilience** — branch `feat/engine-memory`, 2026-10-18,
+  implemented locally (see the log), PR open; from
   the reliability review [research/2026-10-18-reliability-and-kiro-features.md](research/2026-10-18-reliability-and-kiro-features.md)
   (findings E1, E2, E4, E6) and the owner's priority: the JVM must not wedge or grow without bound. Planned:
   the kept compile's class loader owned by the result and closed when the next snapshot is published; a file
@@ -478,3 +479,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   independent reviews of the engine and the Python package, the MCP features Kiro honours (elicitation above
   all) and the ones it does not. Stages 17 to 19 added; the owner put the JVM's memory behaviour first, so
   Stage 17 starts on `feat/engine-memory` ahead of the front-end work.
+- 2026-10-18: Stage 17 implemented locally: `LoaderHandle` owned by the `CompilationResult` and closed by
+  `LanguageServices` when the next snapshot is published; a file that stops parsing is re-parsed from its last
+  good text into the current generation instead of pinning the previous one; the call graph dropped on every
+  recompile; the cascade guard anchored on the first resolved round (a syntax error in a base class costs three
+  rounds) with a `RetryBudget` for the compile and the type checker; one type check per `fix` call;
+  `-XX:+ExitOnOutOfMemoryError` on the daemon's JVM; `groovyscope/status` reports `memory`; `daemon status`,
+  `doctor` and `checkup` warn above 85% heap use and name the `daemon.heap` fix after an out-of-memory exit.
+  Engine specs 385 green, 349 Python tests at 95% coverage.
