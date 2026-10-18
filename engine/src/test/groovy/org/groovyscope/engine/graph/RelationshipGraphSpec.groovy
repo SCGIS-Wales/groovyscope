@@ -80,6 +80,9 @@ class ServiceSpec {
                            'Repository has Item', 'Repository uses Item', 'Service uses Item',
                            'Service calls Repository', 'ServiceSpec calls Service'])
         built.edges.find { it.kind == 'calls' && it.from == 'app.Service' }.confidence == 'STATIC'
+        built.edges.find { it.kind == 'calls' && it.from == 'app.Service' }.effect == 'read'
+        built.edges.findAll { it.kind != 'calls' }.every { it.effect == null }
+        built.nodes.every { it.effect == null }
         !built.truncated
         built.totalClasses == 6
     }
@@ -105,8 +108,10 @@ class ServiceSpec {
 
         then:
         built.nodes.find { it.id == 'app.Service#render' }.kind == 'method'
+        built.nodes.find { it.id == 'app.Service#render' }.effect == 'read'
+        built.nodes.find { it.id == 'app.Repository' }.effect == null
         built.nodes.any { it.id == 'app.Repository' && it.kind == 'class' }
-        built.edges.any { it.from == 'app.Service#render' && it.to == 'app.Repository' && it.kind == 'calls' }
+        built.edges.any { it.from == 'app.Service#render' && it.to == 'app.Repository' && it.effect == 'read' }
         built.edges.any { it.from == 'app.ServiceSpec' && it.to == 'app.Service#render' }
     }
 }

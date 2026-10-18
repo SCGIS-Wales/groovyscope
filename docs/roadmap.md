@@ -599,3 +599,13 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   one track per edge. Shared helpers used by five or more (`diagram.sharedHelperCallers`) are drawn once and
   named inside their users' boxes. On the CodeNarc corpus: report writers 0 crossings and 0 overlaps on A4; the
   54-class report package with 313 relations went from 37 crossings to 6, 0 overlaps; every diagram about 1.4 s.
+- 2026-10-18: at the owner's request, diagram lines say what a call does and which way it goes. The engine marks
+  every method and call `read`, `write` or `unknown` (`Effects`: field and property assignments, mutating calls on
+  fields and parameters, setters, file writes, non-query SQL, non-fetch HTTP, processes, exits and system
+  properties, propagated up static and inferred calls; a constructor filling its own fields is a read). Calls are
+  drawn with a filled arrow from caller to callee: blue reads, orange writes, grey unknown; solid when typed,
+  dashed when inferred, dotted when matched by name. On the CodeNarc corpus `CodeNarcRunner` shows 17 reads, 17
+  writes (the plugin registration chain) and 18 unknown plugin calls; the HTML report writer only reads; a graph
+  of all 900 classes still answers in 1.4 s. Found on the way: `daemon restart` counted as a crash, so three
+  restarts in ten minutes refused a fourth, and the refusal's own advice (`daemon start`) was refused too; a stop
+  or start someone asks for now empties the crash-loop window.

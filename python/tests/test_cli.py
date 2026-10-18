@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import __version__, cli
+from groovyscope import __version__, cli, selfheal
 from groovyscope.jar import locate_jar
 from groovyscope.kiro import GLOBAL_FILES, KIRO_FILES
 from groovyscope.launch import OOM_FLAG, SAFETY_FLAGS
@@ -367,6 +367,31 @@ def test_daemon_commands(
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "start"]).exit_code == 1
     monkeypatch.setattr(cli.daemon_lifecycle, "stop", failing)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "stop"]).exit_code == 1
+
+
+def test_asking_for_a_start_or_a_stop_clears_the_crash_loop_guard(
+    runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
+    monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv(cli.CONFIG_ENV, "")
+    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9"})
+    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: True)
+    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9"})
+    log_file = Path(cli.daemon_lifecycle.log_path(tmp_path, dict(os.environ)))
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file = selfheal.state_path(log_file)
+    looping = selfheal.empty_state()
+    for moment in (1.0, 2.0, 3.0):
+        looping = selfheal.started(looping, "1g", "exit", 0, moment)
+    for command in ("start", "stop", "restart"):
+        selfheal.save_state(state_file, looping)
+        assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", command]).exit_code == 0
+        assert selfheal.load_state(state_file)["restarts"] == [], command
 
 
 def test_cds_archive_rules(tmp_path: Path) -> None:

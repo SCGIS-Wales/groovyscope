@@ -46,8 +46,10 @@ import org.groovyscope.engine.semantics.TypeNames;
  * The relationships between the workspace's classes as a typed graph: inheritance ({@code extends},
  * {@code implements}), composition ({@code has}: a field or property typed with another workspace class), use
  * ({@code uses}: a non-private method takes or returns another workspace class) and calls ({@code calls}: the
- * call graph's edges aggregated per pair of classes, with the weakest confidence among them). Scoped to seed
- * classes and their neighbourhood when asked, capped in size, and optionally expanded to one class's methods.
+ * call graph's edges aggregated per pair of classes, with the weakest confidence among them). Every call edge
+ * carries its {@link Effects effect}: {@code write} when any of its calls changes state, {@code unknown} when one is
+ * resolved only dynamically, {@code read} otherwise; at method level every method node carries its own. Scoped to
+ * seed classes and their neighbourhood when asked, capped in size, and optionally expanded to one class's methods.
  */
 public final class RelationshipGraph {
 
@@ -56,13 +58,13 @@ public final class RelationshipGraph {
     /** Default cap on nodes. */
     public static final int DEFAULT_MAX_NODES = 60;
 
-    /** A class (or, at method level, a method) in the graph. */
+    /** A class (or, at method level, a method with its {@code effect}; {@code null} for classes) in the graph. */
     public record Node(String id, String name, String kind, String packageName, String uri, int startLine, int endLine,
-            int members, boolean test) {
+            int members, boolean test, String effect) {
     }
 
-    /** A relation between two nodes. */
-    public record Edge(String from, String to, String kind, String confidence, int count) {
+    /** A relation between two nodes; {@code effect} is set for calls only. */
+    public record Edge(String from, String to, String kind, String confidence, int count, String effect) {
     }
 
     /** The graph. */
@@ -85,10 +87,12 @@ public final class RelationshipGraph {
         Map<String, ClassNode> workspace = workspaceClasses(index);
         Map<EdgeKey, int[]> counts = new LinkedHashMap<>();
         Map<EdgeKey, Confidence> confidences = new LinkedHashMap<>();
+        Map<EdgeKey, String> effects = new LinkedHashMap<>();
         for (ClassNode classNode : workspace.values()) {
             declaredEdges(classNode, workspace, wanted, counts, confidences);
         }
         if (wanted.contains("calls")) {
+            Effects model = Effects.of(workspace, graph);
             for (CallSite site : graph.edges()) {
                 String from = ownerOf(site.caller());
                 String to = ownerOf(site.callee());
@@ -96,7 +100,9 @@ public final class RelationshipGraph {
                         || !workspace.containsKey(to)) {
                     continue;
                 }
-                add(counts, confidences, new EdgeKey(from, to, "calls"), site.confidence());
+                EdgeKey key = new EdgeKey(from, to, "calls");
+                add(counts, confidences, key, site.confidence());
+                effects.merge(key, model.call(site), Effects::combine);
             }
         }
         Set<String> chosen = chooseNodes(workspace, counts.keySet(), seeds, depth, maxNodes);
@@ -108,7 +114,8 @@ public final class RelationshipGraph {
         for (Map.Entry<EdgeKey, int[]> entry : counts.entrySet()) {
             EdgeKey key = entry.getKey();
             if (chosen.contains(key.from()) && chosen.contains(key.to())) {
-                edges.add(new Edge(key.from(), key.to(), key.kind(), confidences.get(key).name(), entry.getValue()[0]));
+                edges.add(new Edge(key.from(), key.to(), key.kind(), confidences.get(key).name(), entry.getValue()[0],
+                        effects.get(key)));
             }
         }
         boolean truncated = chosen.size() < reachable(workspace, counts.keySet(), seeds, depth).size();
@@ -124,6 +131,8 @@ public final class RelationshipGraph {
         Map<String, Node> nodes = new LinkedHashMap<>();
         Map<EdgeKey, int[]> counts = new LinkedHashMap<>();
         Map<EdgeKey, Confidence> confidences = new LinkedHashMap<>();
+        Map<EdgeKey, String> effects = new LinkedHashMap<>();
+        Effects model = Effects.of(workspace, graph);
         Set<String> seedNames = new LinkedHashSet<>();
         for (ClassNode classNode : seeds) {
             seedNames.add(classNode.getName());
@@ -136,7 +145,7 @@ public final class RelationshipGraph {
                 nodes.putIfAbsent(id, new Node(id, method.getName(), "method", classNode.getPackageName(),
                         index.declarationEntry(method).map(NodeEntry::uri).orElse(null),
                         range == null ? 0 : range.start().line(), range == null ? 0 : range.end().line(),
-                        method.getParameters().length, false));
+                        method.getParameters().length, false, model.method(id)));
             }
         }
         for (CallSite site : graph.edges()) {
@@ -159,10 +168,13 @@ public final class RelationshipGraph {
             }
             if (!toSeed) {
                 nodes.putIfAbsent(toOwner, workspace.containsKey(toOwner) ? node(workspace.get(toOwner), index)
-                        : new Node(toOwner, simple(toOwner), "external", packageOf(toOwner), null, 0, 0, 0, false));
+                        : new Node(toOwner, simple(toOwner), "external", packageOf(toOwner), null, 0, 0, 0, false,
+                                null));
             }
             if (nodes.containsKey(from) && nodes.containsKey(to)) {
-                add(counts, confidences, new EdgeKey(from, to, "calls"), site.confidence());
+                EdgeKey key = new EdgeKey(from, to, "calls");
+                add(counts, confidences, key, site.confidence());
+                effects.merge(key, model.call(site), Effects::combine);
             }
         }
         List<Node> chosen = new ArrayList<>(nodes.values());
@@ -178,7 +190,8 @@ public final class RelationshipGraph {
         for (Map.Entry<EdgeKey, int[]> entry : counts.entrySet()) {
             EdgeKey key = entry.getKey();
             if (ids.contains(key.from()) && ids.contains(key.to())) {
-                edges.add(new Edge(key.from(), key.to(), key.kind(), confidences.get(key).name(), entry.getValue()[0]));
+                edges.add(new Edge(key.from(), key.to(), key.kind(), confidences.get(key).name(), entry.getValue()[0],
+                        effects.get(key)));
             }
         }
         return new Graph(chosen, edges, truncated, workspace.size());
@@ -382,7 +395,7 @@ public final class RelationshipGraph {
                 || name.endsWith("Tests");
         String kind = classNode.isScript() ? "script" : TypeNames.keywordOf(classNode);
         return new Node(classNode.getName(), name, kind, classNode.getPackageName(), uri,
-                range == null ? 0 : range.start().line(), range == null ? 0 : range.end().line(), members, test);
+                range == null ? 0 : range.start().line(), range == null ? 0 : range.end().line(), members, test, null);
     }
 
     private static String simple(String qualified) {

@@ -467,11 +467,12 @@ def test_explain_code_graph_and_naming_commands(
                     "endLine": 9,
                     "members": 2,
                     "test": False,
-                }
+                },
+                {"id": "app.B", "name": "B", "kind": "class", "package": "app"},
             ],
-            "edges": [],
+            "edges": [{"from": "app.A", "to": "app.B", "kind": "calls", "confidence": "STATIC", "effect": "read"}],
             "truncated": False,
-            "totalClasses": 1,
+            "totalClasses": 2,
         },
         "groovyscope/check": {
             "diagnostics": {uri: [diagnostic(1, 3, "groovyscope", "GS023", "says nothing")]},
@@ -489,14 +490,17 @@ def test_explain_code_graph_and_naming_commands(
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "explain-code", "Nope"]).exit_code == 2
     drawn = runner.invoke(cli.main, ["--root", str(tmp_path), "graph", "app.A", "--out", "out/classes.drawio"])
     assert drawn.exit_code == 0, drawn.output
-    assert drawn.output.startswith("1 class(es), 0 relation(s) written to out/classes.drawio (")
+    assert drawn.output.startswith("2 class(es), 1 relation(s) written to out/classes.drawio (")
+    assert (
+        "calls: 1 read (blue), 0 write (orange), 0 unknown (grey); arrows point from caller to callee" in drawn.output
+    )
     assert (tmp_path / "out" / "classes.drawio").is_file()
     mermaid = runner.invoke(
         cli.main, ["--root", str(tmp_path), "graph", "--path", "src/A.groovy", "--format", "mermaid"]
     )
     assert mermaid.output.startswith("classDiagram\n    class A\n")
     as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "graph", "--format", "json", "--kinds", "calls,has"])
-    assert json.loads(as_json.output)["nodeCount"] == 1
+    assert json.loads(as_json.output)["nodeCount"] == 2
     bad = runner.invoke(cli.main, ["--root", str(tmp_path), "graph", "--format", "json", "--kinds", "nope"])
     assert bad.exit_code == 1 and "unknown edge kind" in bad.output
     responses["groovyscope/explainCode"] = {"found": True, "items": [facts]}

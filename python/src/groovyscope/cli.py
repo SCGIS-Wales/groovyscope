@@ -1294,6 +1294,12 @@ def graph_command(
                 f"lines: {lines.get('layout')} layout, {lines.get('crossings', 0)} crossing(s), "
                 f"{lines.get('overlaps', 0)} overlap(s){shared}"
             )
+            calls = lines.get("calls") or {}
+            if calls:
+                click.echo(
+                    f"calls: {calls.get('read', 0)} read (blue), {calls.get('write', 0)} write (orange), "
+                    f"{calls.get('unknown', 0)} unknown (grey); arrows point from caller to callee"
+                )
         for problem in result.get("layoutProblems", []):
             click.echo(f"layout: {problem}", err=True)
         if result.get("layoutNote"):
@@ -1871,7 +1877,8 @@ def daemon() -> None:
 @daemon.command("start")
 @click.pass_obj
 def daemon_start(obj: dict[str, Any]) -> None:
-    """Start the daemon (or report the one already running)."""
+    """Start the daemon (or report the one already running). Asking for a start clears the crash-loop guard."""
+    daemon_lifecycle.forget_restarts(daemon_paths(obj["root"])[1])
     socket_file, _ = daemon_socket_for(obj)
     status = daemon_lifecycle.probe(socket_file) or {}
     click.echo(f"daemon running on {socket_file} (engine {status.get('engine', '?')})")
@@ -1881,12 +1888,13 @@ def daemon_start(obj: dict[str, Any]) -> None:
 @click.pass_obj
 def daemon_restart(obj: dict[str, Any]) -> None:
     """Stop the daemon and start it again with the current configuration (open editor sessions reconnect)."""
-    socket_file, _, _ = daemon_paths(obj["root"])
+    socket_file, log_file, _ = daemon_paths(obj["root"])
     try:
         daemon_lifecycle.stop(socket_file)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
+    daemon_lifecycle.forget_restarts(log_file)
     socket_file, _ = daemon_socket_for(obj)
     status = daemon_lifecycle.probe(socket_file) or {}
     click.echo(f"daemon restarted on {socket_file} (engine {status.get('engine', '?')})")
@@ -1896,12 +1904,13 @@ def daemon_restart(obj: dict[str, Any]) -> None:
 @click.pass_obj
 def daemon_stop(obj: dict[str, Any]) -> None:
     """Ask the daemon to exit."""
-    socket_file, _, _ = daemon_paths(obj["root"])
+    socket_file, log_file, _ = daemon_paths(obj["root"])
     try:
         stopped = daemon_lifecycle.stop(socket_file)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
+    daemon_lifecycle.forget_restarts(log_file)
     click.echo("daemon stopped" if stopped else "daemon was not running")
 
 

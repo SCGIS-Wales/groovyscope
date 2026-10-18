@@ -46,6 +46,7 @@ import org.codehaus.groovy.ast.expr.PrefixExpression;
 import org.codehaus.groovy.ast.expr.PropertyExpression;
 import org.codehaus.groovy.ast.expr.StaticMethodCallExpression;
 import org.codehaus.groovy.ast.expr.TernaryExpression;
+import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.CaseStatement;
 import org.codehaus.groovy.ast.stmt.CatchStatement;
@@ -91,6 +92,33 @@ public final class CodeFacts {
             "java.util.concurrent.ThreadLocalRandom");
     private static final Set<String> CLOCK_METHODS = Set.of("now", "currentTimeMillis", "nanoTime");
     private static final Set<String> ENVIRONMENT_METHODS = Set.of("getenv", "getProperty", "getProperties");
+    /** Calls on a field's value that change it (collections, builders, counters). */
+    private static final Set<String> MUTATORS = Set.of("add", "addAll", "put", "putAll", "putAt", "remove",
+            "removeAll", "removeIf", "retainAll", "clear", "set", "push", "pop", "leftShift", "offer", "poll",
+            "append", "replaceAll", "sort", "incrementAndGet", "decrementAndGet", "getAndIncrement", "addAndGet",
+            "compareAndSet", "lazySet", "merge", "compute", "computeIfAbsent", "computeIfPresent", "putIfAbsent");
+    /** Values whose methods never change them, whatever the name ({@code String.replaceAll} returns a copy). */
+    private static final Set<String> IMMUTABLE_TYPES = Set.of("java.lang.String", "groovy.lang.GString",
+            "java.lang.CharSequence", "java.lang.Integer", "java.lang.Long", "java.lang.Double", "java.lang.Float",
+            "java.lang.Short", "java.lang.Byte", "java.lang.Boolean", "java.lang.Character", "java.math.BigDecimal",
+            "java.math.BigInteger", "java.util.regex.Pattern", "java.nio.file.Path", "java.net.URI");
+    /** File operations that create, change or delete files; every other file call only reads. */
+    private static final Set<String> FILE_WRITES = Set.of("write", "append", "leftShift", "newWriter",
+            "newOutputStream", "newPrintWriter", "withWriter", "withWriterAppend", "withOutputStream",
+            "withPrintWriter", "setText", "setBytes", "delete", "deleteDir", "deleteOnExit", "deleteIfExists", "mkdir",
+            "mkdirs", "renameTo", "createNewFile", "createDirectory", "createDirectories", "createFile",
+            "createTempFile", "copy", "move", "writeString", "setLastModified", "setReadable", "setWritable",
+            "setExecutable");
+    private static final Set<String> FILE_WRITER_TYPES = Set.of("java.io.FileWriter", "java.io.FileOutputStream",
+            "java.io.RandomAccessFile", "java.io.PrintWriter");
+    /** SQL calls that only query; every other SQL call may change data. */
+    private static final Set<String> SQL_READS = Set.of("rows", "firstRow", "eachRow", "query", "executeQuery",
+            "getConnection", "close", "next", "getString", "getInt", "getLong", "getObject", "getMetaData");
+    /** HTTP calls that only fetch; every other HTTP call (POST, PUT, PATCH, DELETE, send) may change data. */
+    private static final Set<String> HTTP_READS = Set.of("get", "getText", "getContent", "openStream",
+            "getInputStream", "head", "toURI", "getHost", "getPath", "getQuery", "getPort", "getProtocol", "toString",
+            "getResponseCode", "getResponseMessage", "getHeaderField", "getHeaderFields", "openConnection", "connect",
+            "<init>", "disconnect", "setRequestProperty", "setConnectTimeout", "setReadTimeout");
 
     /** One parameter. */
     public record Parameter(String name, String type) {
@@ -340,8 +368,55 @@ public final class CodeFacts {
         return identifier.substring(0, end).toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Whether a call in an external category changes the world: a process or an exit always does; a file call when
+     * it creates, writes or deletes; a SQL or HTTP call unless it only queries or fetches (anything unknown counts
+     * as a change, so a write is never shown as a read); the environment when a system property is set.
+     */
+    public static boolean writesExternally(String category, String typeName, String method) {
+        if (category == null) {
+            return false;
+        }
+        return switch (category) {
+            case "process", "exit" -> true;
+            case "file" -> contains(FILE_WRITES, method)
+                    || "<init>".equals(method) && contains(FILE_WRITER_TYPES, typeName);
+            case "sql" -> !contains(SQL_READS, method);
+            case "http" -> !contains(HTTP_READS, method);
+            default -> false;
+        };
+    }
+
+    /**
+     * How a method changes state by itself, ignoring the methods it calls: the fields and properties it assigns or
+     * mutates ({@code field name}) and the external writes it makes ({@code file}, {@code http}, {@code sql},
+     * {@code process}, {@code exit}, {@code environment}). Empty when it only reads.
+     */
+    public static Set<String> stateChanges(MethodNode method) {
+        Body body = new Body(method.getDeclaringClass());
+        if (method.getCode() != null) {
+            method.getCode().visit(body);
+        }
+        return new TreeSet<>(body.stateChanges);
+    }
+
+    /** Whether a call by this name changes the object it is called on (a collection, builder or counter). */
+    public static boolean mutates(String method) {
+        return contains(MUTATORS, method);
+    }
+
+    /** {@code Set.of} sets throw on a {@code null} lookup; an unknown type or a dynamic method name is no match. */
+    private static boolean contains(Set<String> set, String value) {
+        return value != null && set.contains(value);
+    }
+
+    private static boolean setsSystemProperty(String typeName, String method) {
+        return "java.lang.System".equals(typeName)
+                && ("setProperty".equals(method) || "clearProperty".equals(method) || "setProperties".equals(method));
+    }
+
     /** The external category of a call on a type, or {@code null} when it is plain computation. */
-    static String externalOf(String typeName, String method, String receiverName) {
+    public static String externalOf(String typeName, String method, String receiverName) {
         if (typeName != null) {
             if (typeName.startsWith("java.net.http") || HTTP_TYPES.contains(typeName) || typeName.contains("HttpClient")
                     || typeName.contains("HttpBuilder") || typeName.contains("RESTClient")) {
@@ -358,10 +433,10 @@ public final class CodeFacts {
                 return "process";
             }
             if ("java.lang.System".equals(typeName)) {
-                if (ENVIRONMENT_METHODS.contains(method)) {
+                if (contains(ENVIRONMENT_METHODS, method)) {
                     return "environment";
                 }
-                if (CLOCK_METHODS.contains(method)) {
+                if (contains(CLOCK_METHODS, method)) {
                     return "clock";
                 }
                 if ("exit".equals(method)) {
@@ -390,7 +465,7 @@ public final class CodeFacts {
                 return "process";
             }
         }
-        if (receiverName != null && LOGGER_NAMES.contains(receiverName) && LOG_METHODS.contains(method)) {
+        if (receiverName != null && LOGGER_NAMES.contains(receiverName) && contains(LOG_METHODS, method)) {
             return "logging";
         }
         return null;
@@ -404,6 +479,7 @@ public final class CodeFacts {
         private final TreeSet<String> throwsTypes = new TreeSet<>();
         private final TreeSet<String> catches = new TreeSet<>();
         private final TreeSet<String> externals = new TreeSet<>();
+        private final TreeSet<String> stateChanges = new TreeSet<>();
         private int branches;
 
         Body(ClassNode owner) {
@@ -476,14 +552,41 @@ public final class CodeFacts {
                 String field = fieldOf(expression.getLeftExpression());
                 if (field != null) {
                     writes.add(field);
+                    stateChanges.add("field " + field);
                     if (type != Types.ASSIGN) {
                         reads.add(field);
                     }
                     expression.getRightExpression().visit(this);
                     return;
                 }
+                assignedElsewhere(expression.getLeftExpression());
+            }
+            if (type == Types.LEFT_SHIFT) {
+                String field = fieldOf(expression.getLeftExpression());
+                if (field != null) {
+                    stateChanges.add("field " + field);
+                }
             }
             super.visitBinaryExpression(expression);
+        }
+
+        /**
+         * An assignment to another object's property, or into a field's map or list ({@code cache[key] = v}). An
+         * object held only in a local variable is the method's own scratch state, so setting its properties is not
+         * a change anyone else sees.
+         */
+        private void assignedElsewhere(Expression left) {
+            if (left instanceof PropertyExpression property && property.getPropertyAsString() != null) {
+                if (!isLocal(property.getObjectExpression())) {
+                    stateChanges.add("property " + property.getPropertyAsString());
+                }
+            } else if (left instanceof BinaryExpression index
+                    && index.getOperation().getType() == Types.LEFT_SQUARE_BRACKET) {
+                String field = fieldOf(index.getLeftExpression());
+                if (field != null) {
+                    stateChanges.add("field " + field);
+                }
+            }
         }
 
         @Override
@@ -492,6 +595,7 @@ public final class CodeFacts {
             if (field != null) {
                 writes.add(field);
                 reads.add(field);
+                stateChanges.add("field " + field);
             }
             super.visitPostfixExpression(expression);
         }
@@ -502,6 +606,7 @@ public final class CodeFacts {
             if (field != null) {
                 writes.add(field);
                 reads.add(field);
+                stateChanges.add("field " + field);
             }
             super.visitPrefixExpression(expression);
         }
@@ -531,19 +636,48 @@ public final class CodeFacts {
             Expression receiver = call.getObjectExpression();
             String receiverName = receiver instanceof VariableExpression variable ? variable.getName()
                     : receiver instanceof PropertyExpression property ? property.getPropertyAsString() : null;
-            String external = externalOf(receiverTypeName(receiver, call.isImplicitThis()), method, receiverName);
+            String typeName = receiverTypeName(receiver, call.isImplicitThis());
+            String external = externalOf(typeName, method, receiverName);
             if (external != null) {
                 externals.add(external);
+                if (writesExternally(external, typeName, method)) {
+                    stateChanges.add(external);
+                }
+            }
+            if (!call.isImplicitThis() && contains(MUTATORS, method) && !contains(IMMUTABLE_TYPES, typeName)) {
+                String field = fieldOf(receiver);
+                if (field != null) {
+                    stateChanges.add("field " + field);
+                } else if (receiver instanceof VariableExpression variable
+                        && variable.getAccessedVariable() instanceof org.codehaus.groovy.ast.Parameter parameter) {
+                    stateChanges.add("parameter " + parameter.getName());
+                }
+            }
+            if (setsSystemProperty(typeName, method)) {
+                stateChanges.add("environment");
+            }
+            String property = setterProperty(method, call.getArguments());
+            if (property != null && (call.isImplicitThis() || receiver instanceof VariableExpression self
+                    && self.isThisExpression())) {
+                stateChanges.add("field " + property);
+            } else if (property != null && !isLocal(receiver)) {
+                stateChanges.add("property " + property);
             }
             super.visitMethodCallExpression(call);
         }
 
         @Override
         public void visitStaticMethodCallExpression(StaticMethodCallExpression call) {
-            String external = externalOf(call.getOwnerType() == null ? null : call.getOwnerType().getName(),
-                    call.getMethod(), null);
+            String owner = call.getOwnerType() == null ? null : call.getOwnerType().getName();
+            String external = externalOf(owner, call.getMethod(), null);
             if (external != null) {
                 externals.add(external);
+                if (writesExternally(external, owner, call.getMethod())) {
+                    stateChanges.add(external);
+                }
+            }
+            if (setsSystemProperty(owner, call.getMethod())) {
+                stateChanges.add("environment");
             }
             super.visitStaticMethodCallExpression(call);
         }
@@ -554,9 +688,27 @@ public final class CodeFacts {
                 String external = externalOf(call.getType().getName(), "<init>", null);
                 if (external != null) {
                     externals.add(external);
+                    if (writesExternally(external, call.getType().getName(), "<init>")) {
+                        stateChanges.add(external);
+                    }
                 }
             }
             super.visitConstructorCallExpression(call);
+        }
+
+        /** The property a one-argument {@code setTitle(x)} call sets, or {@code null}. */
+        private static String setterProperty(String method, Expression arguments) {
+            if (method == null || method.length() < 4 || !method.startsWith("set")
+                    || !Character.isUpperCase(method.charAt(3))
+                    || !(arguments instanceof TupleExpression tuple) || tuple.getExpressions().size() != 1) {
+                return null;
+            }
+            return Character.toLowerCase(method.charAt(3)) + method.substring(4);
+        }
+
+        private static boolean isLocal(Expression expression) {
+            return expression instanceof VariableExpression variable && !variable.isThisExpression()
+                    && variable.getAccessedVariable() instanceof VariableExpression;
         }
 
         /** The field of {@code this} an expression reads or writes, or {@code null}. */

@@ -284,6 +284,9 @@ def write_diagram(
     shared = sum(1 for box in drawn["nodes"] if " · used by " in box["sublabel"])
     if shared:
         result["lines"]["sharedHelpers"] = shared
+    effects = graphs.effect_counts(raw)
+    if effects:
+        result["lines"]["calls"] = effects
     problems = graphs.check_layout(drawn)
     if problems:
         result["layoutProblems"] = problems[:cap]

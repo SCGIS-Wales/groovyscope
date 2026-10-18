@@ -290,11 +290,20 @@ def ensure_running(
         if status is not None and expected_engine and status.get("engine") not in (None, expected_engine):
             LOG.info("daemon runs engine %s, expected %s; restarting it", status.get("engine"), expected_engine)
             halt(socket_file)
+            forget_restarts(log_file)
             status = None
         if status is not None:
             return status
         command = prepare_start(list(command), log_file, section, sleep=sleep, now=now)
         return launch(command, socket_file, log_file, environ, probe_fn=check)
+
+
+def forget_restarts(log_file: Path) -> None:
+    """Empties the crash-loop window after a deliberate stop, so asking for a start (as the refusal says to) or
+    restarting after an upgrade is never refused as a crash loop."""
+    state_file = selfheal.state_path(log_file)
+    if state_file.exists():
+        selfheal.save_state(state_file, selfheal.forgiven(selfheal.load_state(state_file)))
 
 
 def prepare_start(

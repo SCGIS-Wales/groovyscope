@@ -131,6 +131,9 @@ final class ExplainJson {
             entry.put("endLine", node.endLine());
             entry.put("members", node.members());
             entry.put("test", node.test());
+            if (node.effect() != null) {
+                entry.put("effect", node.effect());
+            }
             nodes.add(entry);
         }
         List<Map<String, Object>> edges = new ArrayList<>();
@@ -141,6 +144,9 @@ final class ExplainJson {
             entry.put("kind", edge.kind());
             entry.put("confidence", edge.confidence());
             entry.put("count", edge.count());
+            if (edge.effect() != null) {
+                entry.put("effect", edge.effect());
+            }
             edges.add(entry);
         }
         Map<String, Object> json = new LinkedHashMap<>();
