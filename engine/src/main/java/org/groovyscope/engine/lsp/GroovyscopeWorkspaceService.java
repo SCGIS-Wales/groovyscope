@@ -36,9 +36,13 @@ final class GroovyscopeWorkspaceService implements WorkspaceService {
     private final Supplier<LanguageServices> services;
     private final DiagnosticsPublisher diagnostics;
 
-    GroovyscopeWorkspaceService(Supplier<LanguageServices> services, DiagnosticsPublisher diagnostics) {
+    private final RequestExecutors requests;
+
+    GroovyscopeWorkspaceService(Supplier<LanguageServices> services, DiagnosticsPublisher diagnostics,
+            RequestExecutors requests) {
         this.services = services;
         this.diagnostics = diagnostics;
+        this.requests = requests;
     }
 
     @Override
@@ -58,7 +62,7 @@ final class GroovyscopeWorkspaceService implements WorkspaceService {
     @Override
     public CompletableFuture<Either<List<? extends SymbolInformation>, List<? extends WorkspaceSymbol>>> symbol(
             WorkspaceSymbolParams params) {
-        return CompletableFutures.computeAsync(cancel -> {
+        return requests.light(cancel -> {
             LanguageServices current = services.get();
             List<WorkspaceSymbol> symbols = new ArrayList<>();
             if (current != null) {

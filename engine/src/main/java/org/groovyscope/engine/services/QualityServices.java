@@ -493,6 +493,7 @@ public final class QualityServices {
         }
         if (wanted.contains(INCLUDE_LINT)) {
             for (String uri : targets) {
+                org.groovyscope.engine.concurrent.Cancellation.checkpoint();
                 String text = sources.get(uri);
                 if (text != null) {
                     result.get(uri).addAll(lint(uri, text, profile));
@@ -619,6 +620,7 @@ public final class QualityServices {
         Map<String, String> rejected = new TreeMap<>();
         Map<String, Boolean> staticOk = staticVerdicts(targets, sources, codes);
         for (String uri : targets) {
+            org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             String text = sources.get(uri);
             if (text == null || WorkspaceModel.isJavaUri(uri)) {
                 continue;

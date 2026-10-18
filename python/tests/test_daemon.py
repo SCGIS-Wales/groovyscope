@@ -249,3 +249,42 @@ def test_ensure_running_replaces_a_daemon_of_another_engine_version(tmp_path: Pa
         expected_engine="0.8.0",
     )
     assert same == {"engine": "0.8.0"} and started == ["new"]
+
+
+def test_probe_state_tells_the_four_states_apart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert daemon.probe_state(tmp_path / "none.sock") == daemon.PROBE_ABSENT
+    socket_file = tmp_path / "live.sock"
+    socket_file.write_text("")
+    answers: dict[str, object] = {}
+
+    def fake_request(_path: Path, _method: str, _params: object, timeout: float) -> object:
+        answer = answers["value"]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(daemon.rpc, "request", fake_request)
+    answers["value"] = TimeoutError("slow")
+    assert daemon.probe_state(socket_file) == daemon.PROBE_BUSY
+    answers["value"] = ConnectionRefusedError("nobody")
+    assert daemon.probe_state(socket_file) == daemon.PROBE_ABSENT
+    answers["value"] = RuntimeError("method not found")
+    assert daemon.probe_state(socket_file) == daemon.PROBE_REFUSED
+    answers["value"] = {"hello": "world"}
+    assert daemon.probe_state(socket_file) == daemon.PROBE_REFUSED
+    answers["value"] = {"engine": "1.0.0"}
+    assert daemon.probe_state(socket_file) == daemon.PROBE_RUNNING
+
+
+def test_ensure_running_does_not_start_a_second_jvm_against_a_busy_daemon(tmp_path: Path) -> None:
+    started: list[object] = []
+    status = daemon.ensure_running(
+        ["java"],
+        tmp_path / "busy.sock",
+        tmp_path / "busy.log",
+        {},
+        probe_fn=lambda _p: None,
+        start_fn=lambda *a, **_k: started.append(a) or {"engine": "x"},
+        state_fn=lambda _p: daemon.PROBE_BUSY,
+    )
+    assert status == {"busy": True} and started == []

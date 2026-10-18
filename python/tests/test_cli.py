@@ -242,6 +242,39 @@ def test_lsp_relays_through_the_daemon(
     assert "-XX:+AutoCreateSharedArchive" in ensured[0]
 
 
+def test_lsp_starts_the_daemon_once_more_when_it_vanished_before_the_relay_connected(
+    runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
+    monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv(cli.CONFIG_ENV, "")
+    ensured: list[int] = []
+    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: ensured.append(1) or {"engine": "x"})
+    outcomes = iter([ConnectionRefusedError("gone"), 0])
+
+    def relay_once(_socket_file: Path) -> int:
+        outcome = next(outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(cli, "_RELAY", relay_once)
+    monkeypatch.setattr(cli, "_EXEC", lambda _p, _a: pytest.fail("the second start must not fall back"))
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
+    assert result.exit_code == 0, result.output
+    assert len(ensured) == 2 and "starting it again" in result.output
+
+    monkeypatch.setattr(cli, "_RELAY", lambda _s: (_ for _ in ()).throw(ConnectionRefusedError("still gone")))
+    captured: list[Sequence[str]] = []
+    monkeypatch.setattr(cli, "_EXEC", lambda _p, argv: captured.append(argv))
+    again = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
+    assert again.exit_code == 0 and "running the engine directly" in again.output and captured
+
+
 def test_lsp_falls_back_to_direct_exec_when_the_daemon_fails(
     runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

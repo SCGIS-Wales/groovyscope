@@ -356,7 +356,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   log; `groovyscope/status` reporting heap use so `doctor` warns before the limit. Done when: specs for each
   change (a base class with a syntax error compiles in bounded rounds, the previous loader is closed, memory is
   reported), CI green, merged, released.
-- [ ] **Stage 18: asynchronous guardrails** — not started, awaiting the owner's approval of the revised plan
+- [ ] **Stage 18: asynchronous guardrails** — branch `feat/async-guardrails`, 2026-10-18, implemented locally,
+  PR open; from the approved plan
   ([research/2026-10-18-reliability-and-kiro-features.md](research/2026-10-18-reliability-and-kiro-features.md),
   section 5). Engine: cooperative cancellation end to end (G1), bounded two-lane request executors with a busy
   answer (G2), single-flight compile with cancellable waiters (G3), containment and eviction (G7). Front end:
@@ -502,3 +503,14 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
 - 2026-10-18: v0.15.0 released (PR #66 merged by API after re-running its parked checks; publish workflow
   dispatched). Plan PR #67 merged; the owner approved the plan. Release automation PR opened; Stage 18 starts
   on `feat/async-guardrails`.
+- 2026-10-18: Stage 18 implemented locally on `feat/async-guardrails` (PR #70; release automation PR #69 merged).
+  Engine: `Cancellation` (thread-bound
+  cancel flag with checkpoints in the compiler, type checker, linter, index and call graph), `RequestExecutors`
+  (heavy and light lanes, bounded queues, a `RequestFailed` busy answer), single-flight compile with cancellable
+  waiters in `LanguageServices`, per-module containment in `AstIndex`, idle workspace eviction, O(1) `status`
+  with `load`, a bounded report set, `maxFileBytes` in `text()`, coalesced symbol saves; settings
+  `daemon.workerThreads`, `daemon.requestQueue`, `daemon.workspaceIdleMinutes`. Front end: an RPC channel
+  (reader thread, futures by id, `$/cancelRequest` on timeout), the MCP session caller without its global lock
+  (`mcp.requestTimeoutSeconds`, `mcp.maxInFlight`, single flight), the relay connecting before stdin and one
+  restart of a vanished daemon, probe states with a busy guard against a second JVM, hooks that never cold-start
+  the engine. Engine specs 392 green, 358 Python tests at 95% coverage.

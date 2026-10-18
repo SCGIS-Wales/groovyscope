@@ -118,6 +118,18 @@
         },
         "cds": {
           "type": "boolean"
+        },
+        "workerThreads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requestQueue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workspaceIdleMinutes": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     },
@@ -421,6 +433,20 @@
           "additionalProperties": {
             "type": "string"
           }
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestTimeoutSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxInFlight": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

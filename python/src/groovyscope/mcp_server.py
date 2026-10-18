@@ -10,6 +10,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
@@ -965,27 +966,42 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
 
 Configuration = Callable[[], tuple[str, str] | None]
 RELOAD_METHOD = "groovyscope/reloadConfig"
-CALL_TIMEOUT_SECONDS = 600.0
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 100.0  # under Kiro's 120 s tool budget
+DEFAULT_MAX_IN_FLIGHT = 4
+RELOAD_TIMEOUT_SECONDS = 60.0
+Opener = Callable[[Path], Any]
+EngineCall = Callable[..., Any]
+Dispatch = Callable[[str, dict[str, Any]], Any]
 
 
-def session_caller(
+def request_limits(settings: Mapping[str, Any] | None) -> tuple[float, int]:
+    """``(requestTimeoutSeconds, maxInFlight)`` from the ``mcp`` section, with the defaults filled in."""
+    section = settings or {}
+    budget = float(section.get("requestTimeoutSeconds", DEFAULT_REQUEST_TIMEOUT_SECONDS))
+    in_flight = int(section.get("maxInFlight", DEFAULT_MAX_IN_FLIGHT))
+    return (max(1.0, budget), max(1, in_flight))
+
+
+def flight_key(method: str, params: Mapping[str, Any]) -> str:
+    """Two calls with the same method and parameters are the same work: the second joins the first."""
+    return method + " " + json.dumps(params, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def engine_dispatcher(
     socket_file: Path,
-    reconnect: Callable[[], Path] | None = None,
+    reconnect: Callable[[], Path] | None,
     *,
-    open_session: Callable[[Path], rpc.Session] | None = None,
-    configuration: Configuration | None = None,
-) -> tuple[Call, Callable[[], None]]:
-    """A ``call`` bound to one engine session that, when the engine has gone away (daemon stopped, JVM killed,
-    upgraded), restarts it through ``reconnect`` and retries the request once. Also returns a closer.
-
-    ``configuration`` returns the current effective configuration as ``(hash, json)``; before each request, a
-    hash the engine has not seen yet is sent as ``groovyscope/reloadConfig`` first, so a re-exported classpath or
-    an edited ``.groovyscope.yaml`` applies in place, without a restart."""
-    opener = rpc.open_session if open_session is None else open_session
+    opener: Opener,
+    engine: EngineCall,
+    closer: Callable[[Any], None],
+    configuration: Configuration | None,
+    budget: float,
+) -> tuple[Dispatch, Callable[[], None]]:
+    """One engine channel with a configuration that follows the files on disk and a reconnect-and-retry when the
+    engine went away (daemon stopped, JVM killed, upgraded). The lock is held only to swap the channel or to send
+    a configuration, never for the duration of a request."""
     state: dict[str, Any] = {"session": opener(socket_file), "applied": None}
-    # The SDK runs tools on worker threads and agents call tools in parallel; one session carries one exchange
-    # at a time, so calls queue here instead of interleaving their frames.
-    lock = threading.Lock()
+    session_lock = threading.Lock()
 
     def apply_configuration() -> None:
         current = configuration() if configuration is not None else None
@@ -993,7 +1009,7 @@ def session_caller(
             return
         digest, document = current
         try:
-            reply = rpc.call(state["session"], RELOAD_METHOD, {"config": document}, timeout=60.0)
+            reply = engine(state["session"], RELOAD_METHOD, {"config": document}, timeout=RELOAD_TIMEOUT_SECONDS)
         except RuntimeError as exc:  # the engine refused the document; the old configuration stays in force
             LOG.warning("engine kept its configuration: %s", exc)
         else:
@@ -1001,33 +1017,106 @@ def session_caller(
                 LOG.info("engine configuration reloaded (%s)", digest[:12])
         state["applied"] = digest
 
-    def call(method: str, params: dict[str, Any]) -> Any:
-        with lock:
-            try:
-                apply_configuration()
-                return rpc.call(state["session"], method, params, timeout=CALL_TIMEOUT_SECONDS)
-            except TimeoutError as exc:
-                # The engine is still working on it; sending the same request again would only double the work.
+    def dispatch(method: str, params: dict[str, Any]) -> Any:
+        with session_lock:
+            apply_configuration()
+            session = state["session"]
+        try:
+            return engine(session, method, params, timeout=budget)
+        except TimeoutError:
+            # TimeoutError is an OSError in Python 3, but a slow engine is alive: never reconnect for it, and never
+            # send the request again (the channel already told the engine to stop it).
+            raise
+        except (OSError, ValueError) as exc:
+            # The socket died or the stream is out of frame: only a fresh channel can answer.
+            if reconnect is None:
+                raise
+            with session_lock:
+                if state["session"] is session:  # the first caller to notice replaces it; the others reuse it
+                    LOG.info("engine session lost (%s); reconnecting", exc)
+                    closer(session)
+                    state["session"] = opener(reconnect())
+                    state["applied"] = None
+                    apply_configuration()
+                session = state["session"]
+            return engine(session, method, params, timeout=budget)
+
+    return (dispatch, lambda: closer(state["session"]))
+
+
+def single_flight(dispatch: Dispatch, budget: float, max_in_flight: int) -> Call:
+    """``dispatch`` behind two guardrails: at most ``max_in_flight`` calls reach the engine at a time (the rest
+    wait within ``budget``), and a call identical to one still running joins it instead of doubling the work. A
+    leader over its budget has already told the engine to stop (``channel_call`` cancels); it and its followers
+    get a "still running" answer rather than a hang."""
+    gate = threading.BoundedSemaphore(max_in_flight)
+    in_flight: dict[str, Future[Any]] = {}
+    flight_lock = threading.Lock()
+
+    def lead(key: str, method: str, params: dict[str, Any], future: Future[Any]) -> None:
+        try:
+            if not gate.acquire(timeout=budget):
                 msg = (
-                    f"{method} did not answer within {CALL_TIMEOUT_SECONDS:.0f}s; the engine is still busy with it. "
-                    "Narrow the paths or retry in a moment"
+                    f"{method} waited {budget:.0f}s for a free slot: {max_in_flight} tool calls already run on the "
+                    "engine (mcp.maxInFlight); retry in a moment"
                 )
-                raise RuntimeError(msg) from exc
-            except (OSError, ValueError) as exc:
-                # The socket died or the stream is out of frame: only a fresh session can answer.
-                if reconnect is None:
-                    raise
-                LOG.info("engine session lost (%s); reconnecting", exc)
-                rpc.close_session(state["session"])
-                state["session"] = opener(reconnect())
-                state["applied"] = None
-                apply_configuration()
-                return rpc.call(state["session"], method, params, timeout=CALL_TIMEOUT_SECONDS)
+                raise TimeoutError(msg)
+            try:
+                future.set_result(dispatch(method, params))
+            finally:
+                gate.release()
+        except BaseException as exc:  # every outcome must reach the waiters
+            future.set_exception(exc)
+        finally:
+            with flight_lock:
+                if in_flight.get(key) is future:
+                    del in_flight[key]
 
-    def close() -> None:
-        rpc.close_session(state["session"])
+    def call(method: str, params: dict[str, Any]) -> Any:
+        key = flight_key(method, params)
+        own: Future[Any] = Future()
+        with flight_lock:
+            future = in_flight.setdefault(key, own)
+        leader = future is own
+        if leader:
+            lead(key, method, params, future)
+        try:
+            return future.result(timeout=budget)
+        except TimeoutError as exc:
+            tail = "the engine was told to stop it" if leader else "another call is still running it"
+            msg = f"{method} did not answer within {budget:.0f}s; {tail}. Narrow the paths or retry in a moment"
+            raise RuntimeError(msg) from exc
 
-    return (call, close)
+    return call
+
+
+def session_caller(
+    socket_file: Path,
+    reconnect: Callable[[], Path] | None,
+    *,
+    open_session: Opener | None = None,
+    configuration: Configuration | None = None,
+    limits: Mapping[str, Any] | None = None,
+    call_fn: EngineCall | None = None,
+    close_fn: Callable[[Any], None] | None = None,
+) -> tuple[Call, Callable[[], None]]:
+    """A ``call`` bound to one engine channel. Calls run concurrently on the channel (replies are matched by id),
+    at most ``mcp.maxInFlight`` at a time, each within ``mcp.requestTimeoutSeconds``; a call over its budget tells
+    the engine to stop that request and answers "still running", and an identical call arriving while the first
+    one runs joins it. When the engine has gone away the channel is reopened through ``reconnect`` and the
+    request retried once. Also returns a closer. ``configuration`` returns the current effective configuration as
+    ``(hash, json)``; a hash the engine has not seen yet is sent as ``groovyscope/reloadConfig`` first."""
+    budget, max_in_flight = request_limits(limits)
+    dispatch, close = engine_dispatcher(
+        socket_file,
+        reconnect,
+        opener=rpc.open_channel if open_session is None else open_session,
+        engine=rpc.channel_call if call_fn is None else call_fn,
+        closer=rpc.close_channel if close_fn is None else close_fn,
+        configuration=configuration,
+        budget=budget,
+    )
+    return (single_flight(dispatch, budget, max_in_flight), close)
 
 
 def serve(
@@ -1042,7 +1131,7 @@ def serve(
     """Open one engine session, run the MCP server on stdio until the client disconnects, close the session."""
     # No LSP initialize: every groovyscope/* request names its root, and an initialized session would make
     # the engine lint the whole workspace and push diagnostics for every file to a client that ignores them.
-    call, close = session_caller(socket_file, reconnect, configuration=configuration)
+    call, close = session_caller(socket_file, reconnect, configuration=configuration, limits=output.get("mcp"))
     try:
         build_server(root, call, output, environ).run(transport="stdio")
     finally:

@@ -45,11 +45,12 @@ import java.util.Set;
  * @param maxFileBytes source files larger than this are skipped ({@code workspace.maxFileBytes}; 0 means no limit)
  * @param configHash SHA-256 (hex) of the raw configuration JSON handed over in the environment, or empty; lets the
  *     front end detect a daemon started with an older configuration
+ * @param daemon the request executors and workspace eviction of the daemon ({@code daemon.*})
  */
 public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
         Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
         List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, Diagnostics diagnostics,
-        String configHash) {
+        String configHash, Daemon daemon) {
 
     /** Default of {@code workspace.maxFileBytes}. */
     public static final long DEFAULT_MAX_FILE_BYTES = 2_000_000L;
@@ -70,6 +71,28 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      *     {@link #PUSH_NONE} (nothing is pushed; clients pull)
      * @param debounceMillis the quiet window after the last edit before a push, in milliseconds
      */
+    /**
+     * How the daemon serves requests: {@code workerThreads} heavy requests at a time (0 means the processor
+     * count, at least 2) with at most {@code requestQueue} waiting before new ones are refused as busy; cheap
+     * requests (hover, definition, outline, status) have their own small pool. A workspace nobody has used for
+     * {@code workspaceIdleMinutes} is released from memory.
+     */
+    public record Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes) {
+
+        public static final Daemon DEFAULTS = new Daemon(0, 64, 30);
+
+        public Daemon {
+            workerThreads = Math.max(0, workerThreads);
+            requestQueue = Math.max(1, requestQueue);
+            workspaceIdleMinutes = Math.max(1, workspaceIdleMinutes);
+        }
+
+        /** The heavy pool size this setting means on this machine. */
+        public int effectiveWorkerThreads() {
+            return workerThreads > 0 ? workerThreads : Math.max(2, Runtime.getRuntime().availableProcessors());
+        }
+    }
+
     public record Diagnostics(String push, int debounceMillis) {
         public static final String PUSH_OPEN = "open";
         public static final String PUSH_WORKSPACE = "workspace";
@@ -283,6 +306,16 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         profiles = List.copyOf(profiles == null ? List.of() : profiles);
         maxFileBytes = Math.max(0, maxFileBytes);
         configHash = configHash == null ? "" : configHash;
+        daemon = daemon == null ? Daemon.DEFAULTS : daemon;
+    }
+
+    /** Every setting except the daemon's, which keep their defaults. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
+            List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, Diagnostics diagnostics,
+            String configHash) {
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
+                maxFileBytes, diagnostics, configHash, Daemon.DEFAULTS);
     }
 
     /** Every setting, with the default file size limit and no configuration hash. */
@@ -304,19 +337,19 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
     /** This configuration with another Groovy target (used for files a runtime profile governs). */
     public EngineConfig withGroovy(Groovy target) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, target,
-                practices, profiles, maxFileBytes, diagnostics, configHash);
+                practices, profiles, maxFileBytes, diagnostics, configHash, daemon);
     }
 
     /** This configuration with the hash of the raw JSON it was read from. */
     public EngineConfig withConfigHash(String hash) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, maxFileBytes, diagnostics, hash);
+                practices, profiles, maxFileBytes, diagnostics, hash, daemon);
     }
 
     /** This configuration with another file size limit (0 means no limit). */
     public EngineConfig withMaxFileBytes(long limit) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, limit, diagnostics, configHash);
+                practices, profiles, limit, diagnostics, configHash, daemon);
     }
 
     /** SHA-256 (hex) of a raw configuration document, or empty when there is none. */
@@ -384,6 +417,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject practices = objectOrEmpty(document.get("practices"));
         JsonObject naming = objectOrEmpty(document.get("naming"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
+        JsonObject daemon = objectOrEmpty(document.get("daemon"));
         return new EngineConfig(
                 strings(workspace.get("sourceRoots"), DEFAULTS.sourceRoots()),
                 strings(workspace.get("classpath"), DEFAULTS.classpath()),
@@ -420,7 +454,10 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),
                         integer(diagnostics.get("debounceMillis"), Diagnostics.DEFAULTS.debounceMillis())),
-                "");
+                "",
+                new Daemon(integer(daemon.get("workerThreads"), Daemon.DEFAULTS.workerThreads()),
+                        integer(daemon.get("requestQueue"), Daemon.DEFAULTS.requestQueue()),
+                        integer(daemon.get("workspaceIdleMinutes"), Daemon.DEFAULTS.workspaceIdleMinutes())));
     }
 
     private static long longValue(JsonElement element, long fallback) {

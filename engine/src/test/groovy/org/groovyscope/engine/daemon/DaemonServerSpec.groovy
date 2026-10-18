@@ -168,6 +168,8 @@ class DaemonServerSpec extends Specification {
         status.root == null
         status.memory.usedMb instanceof Number
         status.memory.maxMb >= status.memory.usedMb
+        status.load.workerThreads >= 2
+        status.load.heavy instanceof Number
 
         cleanup:
         server.close()

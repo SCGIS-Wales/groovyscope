@@ -37,11 +37,21 @@ def closed_cleanly(task: asyncio.Task[None]) -> bool:
     return task.done() and not task.cancelled() and task.exception() is None
 
 
-async def relay(socket_file: Path, stdin: asyncio.StreamReader, write_out: Write, close_out: Close) -> int:
+Connection = tuple[asyncio.StreamReader, asyncio.StreamWriter]
+
+
+async def relay(
+    socket_file: Path,
+    stdin: asyncio.StreamReader,
+    write_out: Write,
+    close_out: Close,
+    connection: Connection | None = None,
+) -> int:
     """Relay until the socket closes (stdin EOF half-closes the socket first). Returns 0, or 1 when the daemon
     went away mid-session: the client then restarts the server, which is the only sound recovery. Only a failure
-    to connect at all raises, so the caller can fall back to running the engine directly."""
-    sock_reader, sock_writer = await asyncio.open_unix_connection(str(socket_file))
+    to connect at all raises, so the caller can fall back to running the engine directly. ``connection`` is a
+    socket already open (``run`` connects before it attaches stdin, so a failed connect loses no input)."""
+    sock_reader, sock_writer = connection or await asyncio.open_unix_connection(str(socket_file))
     code = 0
 
     async def to_socket(data: bytes) -> None:
@@ -78,7 +88,10 @@ async def relay(socket_file: Path, stdin: asyncio.StreamReader, write_out: Write
 
 
 async def run(socket_file: Path) -> int:
-    """Wire the real stdio of this process to the socket."""
+    """Wire the real stdio of this process to the socket. The socket is connected first: once stdin is attached to
+    the loop its bytes (the client's `initialize` among them) belong to this process, and a fallback that runs the
+    engine directly could not hand them over."""
+    connection = await asyncio.open_unix_connection(str(socket_file))
     loop = asyncio.get_running_loop()
     stdin = asyncio.StreamReader()
     await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(stdin), sys.stdin.buffer)
@@ -90,7 +103,7 @@ async def run(socket_file: Path) -> int:
     async def close_out() -> None:
         transport.close()
 
-    return await relay(socket_file, stdin, write_out, close_out)
+    return await relay(socket_file, stdin, write_out, close_out, connection)
 
 
 def main(socket_file: Path) -> int:

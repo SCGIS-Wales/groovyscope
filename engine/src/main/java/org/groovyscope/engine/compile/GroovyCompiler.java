@@ -116,6 +116,13 @@ public class GroovyCompiler {
                 overBudget = true;
                 break;
             }
+            // A cancelled request stops here, between rounds; the loaders of the rounds so far are released below
+            // through the normal exit when the caller discards the result, or at once when nothing was kept yet.
+            if (org.groovyscope.engine.concurrent.Cancellation.requested()) {
+                release(previous == resolvedOnce ? null : previous);
+                release(resolvedOnce);
+                throw new java.util.concurrent.CancellationException("compile cancelled after " + attempts + " round(s)");
+            }
             Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION);
             attempts++;
             if (attempt == 0) {
@@ -186,6 +193,7 @@ public class GroovyCompiler {
             release(resolvedOnce);
         }
         for (String uri : dropped) {
+            org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             parseInto(modules, uri, sources.get(uri), classpath, trust);
         }
         // Java files are compiled only so Groovy code can resolve them; Groovy's view of Java code is not

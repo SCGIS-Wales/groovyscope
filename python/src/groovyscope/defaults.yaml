@@ -23,6 +23,12 @@ daemon:
   idleTimeoutMinutes: 60
   heap: "1g"
   cds: true               # Class Data Sharing archive for faster starts
+  workerThreads: 0        # heavy requests (check, format, type check) served at a time; 0 = processor count, at least 2
+  requestQueue: 64        # heavy requests allowed to wait; beyond that a request is answered "busy" at once
+  workspaceIdleMinutes: 30  # a workspace nobody asked about for this long is released from memory while no client is connected
+mcp:
+  requestTimeoutSeconds: 100  # budget per tool call, under Kiro's 120 s; over it the tool says "still running" and cancels
+  maxInFlight: 4          # tool calls the server runs on the engine at a time; the rest wait within the same budget
 lint:
   ruleset: null           # path to a CodeNarc ruleset; null = bundled defensive profile
   jenkinsRuleset: null    # path to a Jenkins pipeline ruleset; null = bundled profile

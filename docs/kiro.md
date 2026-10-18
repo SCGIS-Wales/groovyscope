@@ -60,7 +60,8 @@ daemon to check them (`hooks.afterWriteInclude`, default compile, lint and pract
 because it compiles the whole workspace) and prints a `groovyscope checked <file>: N error(s), M warning(s)` block
 with up to `hooks.afterWriteMaxFindings` findings, errors first. Kiro adds the block to the context, so the agent
 sees a broken edit in the same turn instead of at the end of the task. A clean file prints nothing. The engine
-request is bounded by `hooks.timeoutSeconds`; when it is over budget or the daemon is down the hook prints one
+request is bounded by `hooks.timeoutSeconds`; a hook never starts the daemon (the LSP session does, and a cold JVM
+would hold the agent for its start-up), so when it is over budget or the daemon is down the hook prints one
 line and the session carries on.
 
 The `hooks.stop` entry runs the same command at the end of a turn. It does nothing unless `hooks.stopGate: true`
