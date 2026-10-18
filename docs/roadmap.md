@@ -290,6 +290,21 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   of the snapshot kept; the type check verified to survive one file with unresolved imports; a timing spec on
   the generated workspace. Done when: benchmark tasks 3 and 4 repeated on the corpus under 2 minutes each
   (about 5 credits, approved), CI green, merged, released.
+  Progress 2026-10-18 on `feat/edit-loop-performance`: measured first. On the bundled CodeNarc corpus (529
+  Groovy files, no classpath) through the daemon, a single-file `check` after an edit took 6.1 s (recompile
+  3.6 s, separate type-check compile 4.2 s) and a whole-workspace `check` after an edit 4.3 s, so the
+  recompile was never the minutes the benchmark saw. The generated 300-file workspace found the multiplier:
+  a push after an edit cost 18.7 s when it covered every document (practice and lint passes for all of them)
+  against 0.34 s for the one open document, and a pull for one document computed every document too.
+  Delivered: `diagnostics.push` (`open`, the default: the documents the connection has open; `workspace`;
+  `none`) and `diagnostics.debounceMillis`; a pull computes its one document; the type-check compile runs
+  only when a requested file mentions `@CompileStatic` or `@TypeChecked` (the checker and the Groovy 6
+  extensions apply nowhere else); debug timings for pushes and type checks; the performance spec measures the
+  open-document push against the full one. After: single-file `check` after an edit 3.8 s on the corpus, the
+  open-document push 0.33 s on 300 files. Not done, by measurement: incremental recompile of changed files
+  plus dependants stays future work (3.6 s per full recompile on the corpus is not the bottleneck); the
+  quiet window exists as a setting rather than a new scheduler, because the next request already compiles
+  lazily. Left for the owner: benchmark tasks 3 and 4 repeated with Kiro (about 5 credits) to close the stage.
 - [ ] **Stage 15: Kiro native integration** — not started. Planned: a `PostToolUse` hook on `write` that runs
   `groovyscope check` on the written file and returns new errors to the model in the same turn; an opt-in
   `Stop` hook that refuses to end the turn while changed files do not compile; skills generated from the
@@ -402,3 +417,7 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   the edit loop latency, Kiro 3.0 readiness, unused Kiro features (hooks, skills, powers, prompts) and the
   context cost of 27 schemas plus always-on steering are the gaps; stages 13 to 16 added above. Stage 13
   started on `feat/kiro3-readiness`.
+- 2026-10-18: Stage 14 implemented on `feat/edit-loop-performance` (381 specs, 322 Python tests at 95%): pushed
+  diagnostics scoped to the open documents, per-document pull, the type-check compile skipped where it cannot
+  report; measured 18.7 s to 0.33 s per push on the generated workspace and 6.1 s to 3.8 s per single-file
+  check after an edit on the corpus. The benchmark re-run with Kiro is the owner's part.
