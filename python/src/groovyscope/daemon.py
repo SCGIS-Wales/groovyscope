@@ -92,6 +92,11 @@ def log_path(root: Path, environ: Mapping[str, str], platform: str = sys.platfor
     return cache_dir(environ, platform, home) / "daemon" / f"{workspace_key(root)}.log"
 
 
+def client_path(root: Path, environ: Mapping[str, str], platform: str = sys.platform, home: Path | None = None) -> Path:
+    """Where the MCP server records the client that last connected for this workspace (name and capabilities)."""
+    return cache_dir(environ, platform, home) / "daemon" / f"{workspace_key(root)}.client.json"
+
+
 def secure_dir(path: Path) -> None:
     """Create ``path`` (and parents) private to this user, or refuse one another user could tamper with: the
     daemon's socket and log live there, and a planted socket could feed edits to every client."""

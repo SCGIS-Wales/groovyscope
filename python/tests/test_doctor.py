@@ -8,6 +8,7 @@ import pytest
 from groovyscope import daemon
 from groovyscope.doctor import (
     build_report,
+    client_check,
     config_check,
     daemon_check,
     has_failures,
@@ -111,6 +112,7 @@ def test_build_report_and_failures(
         "kiro agent",
         "profiles",
         "daemon",
+        "mcp client",
         "cache",
     ]
     assert has_failures(report)  # no JAR bundled
@@ -202,3 +204,14 @@ def test_kiro_agent_check_reports_hidden_servers_and_the_universal_option(tmp_pa
     assert level == "ok" and "hides" not in message
     agent.write_text("not json")
     assert kiro_agent_check(tmp_path, home, None)[0] == "warn"
+
+
+def test_client_check_reads_what_the_mcp_server_recorded(tmp_path: Path) -> None:
+    environ = {"GROOVYSCOPE_SOCKET_DIR": str(tmp_path), "GROOVYSCOPE_CACHE_DIR": str(tmp_path)}
+    assert "none recorded yet" in client_check(tmp_path, environ)[2]
+    target = daemon.client_path(tmp_path, environ)
+    target.parent.mkdir(parents=True)
+    target.write_text('{"name":"kiro-cli","version":"2.29.1","protocol":"2025-06-18","elicitation":false}')
+    level, name, message = client_check(tmp_path, environ)
+    assert (level, name) == ("info", "mcp client")
+    assert "kiro-cli 2.29.1" in message and "can be asked: no" in message

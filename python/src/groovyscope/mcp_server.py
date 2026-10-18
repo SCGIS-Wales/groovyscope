@@ -33,7 +33,16 @@ from groovyscope import (
     skills,
 )
 from groovyscope import classpath as classpath_export
-from groovyscope.edits import FileChangedError, FileEdit, changed_line_count, file_edits, uri_path, write_document
+from groovyscope.edits import (
+    FileChangedError,
+    FileEdit,
+    changed_line_count,
+    counts_by_path,
+    file_edits,
+    uri_path,
+    write_document,
+)
+from groovyscope.kiro import write_atomically
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
 from groovyscope.tools_catalog import TOOL_INFO, description
@@ -496,6 +505,7 @@ def quality_tools(
             "daemon": {"socket": info["socket"], "running": info["running"], "log": info["log"]},
             "engine": status,
         }
+        result.update(client_entry())
         state = classpath_state(root, classpath)
         if state is not None:
             result["classpath"] = state
@@ -695,22 +705,29 @@ def practice_tools(
         if apply and changed:
             decision = confirm_edits(confirm_policy, f"Apply safe fixes to {len(changed)} file(s)", changed, root)
             apply = not declined(decision)
+        fixed = counts_by_path(raw.get("appliedCounts", {}))
+        left = counts_by_path(raw.get("left", {}))
         files: list[dict[str, Any]] = []
         for edit in changed:
             if apply and not write_if_unchanged(edit, refused):
                 continue
             uri = edit["path"].as_uri()
-            files.append(
-                {
-                    "path": relative_path(uri, root),
-                    "codes": next((v for k, v in raw.get("applied", {}).items() if uri_path(k) == edit["path"]), []),
-                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
-                    "applied": apply,
-                }
-            )
+            entry: dict[str, Any] = {
+                "path": relative_path(uri, root),
+                "codes": next((v for k, v in raw.get("applied", {}).items() if uri_path(k) == edit["path"]), []),
+                "linesChanged": changed_line_count(edit["before"], edit["after"]),
+                "applied": apply,
+            }
+            if edit["path"] in fixed:
+                entry["fixed"] = fixed[edit["path"]]
+            files.append(entry)
         rejected = {relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()}
         rejected.update({relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused})
-        return with_decision({"changed": len(files), "files": files[:cap], "rejected": rejected}, decision)
+        answer: dict[str, Any] = {"changed": len(files), "files": files[:cap], "rejected": rejected}
+        if left:
+            answer["left"] = {relative_path(path.as_uri(), root): counts for path, counts in list(left.items())[:cap]}
+            answer["leftNote"] = LEFT_NOTE
+        return with_decision(answer, decision)
 
     return {
         "explain": explain,
@@ -987,16 +1004,25 @@ def compact_json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
-def respond(function: Callable[..., Any], *, structured: bool, max_bytes: int = 0) -> Callable[..., Any]:
+def respond(
+    function: Callable[..., Any],
+    *,
+    structured: bool,
+    max_bytes: int = 0,
+    on_client: Callable[[Any], None] | None = None,
+) -> Callable[..., Any]:
     """Return a tool result as one compact JSON text block; with ``output.structured`` also as structuredContent
     (for clients that read it; most send the text to the model, so it is off by default to avoid doubling).
-    With ``max_bytes`` (``output.maxBytes``) no answer is larger: see :func:`fit`."""
+    With ``max_bytes`` (``output.maxBytes``) no answer is larger: see :func:`fit`. ``on_client`` sees the request
+    context of every call (the server records the client's name and capabilities from the first)."""
 
     @functools.wraps(function)
     def wrapper(*args: Any, **kwargs: Any) -> CallToolResult:
         # The SDK passes the request context as `ctx` (declared below); the tool itself never sees it, the
         # confirmations and progress notes in `interaction` read it from this worker thread.
         context = kwargs.pop(CONTEXT_PARAMETER, None)
+        if on_client is not None and context is not None:
+            on_client(context)
         with interaction.bound(context):
             result = fit(function(*args, **kwargs), max_bytes)
         return CallToolResult(
@@ -1160,6 +1186,12 @@ def prompt_for(skill: skills.Skill) -> Callable[[str], str]:
     return prompt
 
 
+LEFT_NOTE = (
+    "findings of fixable codes with no safe fix here: the type of a def local could not be inferred (no classpath, or "
+    "a dynamic value) or the fix clashed with another; fix them by hand, or run `groovyscope classpath` and fix again"
+)
+
+
 def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Mapping[str, str]) -> MCPServer:
     """An MCP server exposing the tools of :func:`build_tools` with titles, behaviour annotations and compact
     results."""
@@ -1168,6 +1200,7 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     register_resources(server)
     structured = bool(output.get("structured", False))
     max_bytes = int(output.get("maxBytes", 16000))
+    record = client_recorder(daemon.client_path(root, environ))
     for name, function in build_tools(root, call, output, environ).items():
         title, read_only = TOOL_INFO.get(name, (name, True))
         # The title is on the tool already; the hints are what clients that honour them act on.
@@ -1177,7 +1210,9 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
             idempotent_hint=True,
             open_world_hint=False,
         )
-        tool = respond(diagnostics.timed(name, function, LOG), structured=structured, max_bytes=max_bytes)
+        tool = respond(
+            diagnostics.timed(name, function, LOG), structured=structured, max_bytes=max_bytes, on_client=record
+        )
         server.tool(
             name=name,
             title=title,
@@ -1187,6 +1222,42 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
         )(tool)
         compact_registered_schema(server, name)
     return server
+
+
+def client_entry() -> dict[str, Any]:
+    """``{"client": ...}`` for the client of the tool call in progress (name, capabilities, whether it can be
+    asked), or nothing outside a call."""
+    client = interaction.client_summary(interaction.current())
+    return {} if client is None else {"client": client}
+
+
+def client_recorder(target: Path) -> Callable[[Any], None]:
+    """Records the MCP client (name, version, protocol, capabilities, whether it can be asked) in ``target`` once
+    per server, from the first tool call: `workspace_status`, `groovyscope doctor` and `groovyscope checks report`
+    read it to say why no confirmation was asked. A failure to write is logged, never raised."""
+    done: list[bool] = []
+
+    def record(context: Any) -> None:
+        if done:
+            return
+        summary = interaction.client_summary(context)
+        if summary is None:
+            return
+        done.append(True)
+        LOG.info(
+            "MCP client %s %s (protocol %s): elicitation %s",
+            summary["name"],
+            summary["version"],
+            summary["protocol"],
+            "yes" if summary["elicitation"] else "no",
+        )
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_atomically(target, compact_json({**summary, "recorded": int(time.time())}) + "\n")
+        except OSError as exc:
+            LOG.warning("could not record the MCP client in %s: %s", target, exc)
+
+    return record
 
 
 def compact_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -1253,8 +1324,13 @@ def declined(decision: str) -> bool:
 
 
 def with_decision(result: dict[str, Any], decision: str) -> dict[str, Any]:
-    """The answer with the user's decision when one was asked for; a decline also says that nothing changed."""
+    """The answer with the user's decision when one was asked for; a decline also says that nothing changed, and
+    a client that cannot be asked is named as such."""
     if decision == interaction.UNSUPPORTED:
+        return result
+    if decision == interaction.NOT_OFFERED:
+        result["confirmation"] = interaction.NOT_OFFERED
+        result["confirmationNote"] = interaction.NOT_OFFERED_NOTE
         return result
     result["confirmation"] = decision
     if declined(decision):

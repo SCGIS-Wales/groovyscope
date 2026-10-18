@@ -306,10 +306,14 @@ def test_explain_review_and_fix(
             ]
         },
         "applied": {target.as_uri(): ["GS001"]},
+        "appliedCounts": {target.as_uri(): {"GS001": 1}},
+        "left": {target.as_uri(): {"NoDef": 7}},
         "rejected": {(tmp_path / "src" / "B.groovy").as_uri(): "does not parse"},
     }
     dry = local_tools["fix"](paths=["Fix.groovy"])
     assert dry["files"][0]["codes"] == ["GS001"] and dry["files"][0]["applied"] is False
+    assert dry["files"][0]["fixed"] == {"GS001": 1} and dry["files"][0]["linesChanged"] == 1
+    assert dry["left"] == {"Fix.groovy": {"NoDef": 7}} and "by hand" in dry["leftNote"]
     assert dry["rejected"] == {"src/B.groovy": "does not parse"}
     assert target.read_text(encoding="utf-8") == "int x = a / b\n"
     local_tools["fix"](paths=["Fix.groovy"], codes=["GS001"], apply=True)
@@ -595,6 +599,16 @@ def test_search_tools(tools: dict[str, Any], engine: dict[str, Any]) -> None:
         "rethrows": False,
     }
     assert tools["find_code"]("nonsense")["kinds"][0] == "catch"
+    implicit = {
+        **engine["responses"]["groovyscope/findCode"]["matches"][0],
+        "detail": "catch (MissingResourceException)",
+        "variable": "MissingResourceException",
+        "implicitType": True,
+    }
+    engine["responses"]["groovyscope/findCode"] = {"matches": [implicit], "count": 1}
+    verdict = tools["find_code"]("catch")["items"][0]["verdict"]
+    assert verdict.startswith("defect") and "catch (MissingResourceException e)" in verdict
+    engine["responses"]["groovyscope/findCode"] = {"matches": [], "count": 0}
 
     engine["responses"]["groovyscope/duplicates"] = {
         "groups": [

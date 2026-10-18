@@ -170,6 +170,18 @@ def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
     return ("info", "daemon", f"not running; starts with the first `groovyscope lsp` session (log: {details['log']})")
 
 
+def client_check(root: Path, environ: Mapping[str, str]) -> Check:
+    """The MCP client that last called a groovyscope tool in this workspace, as the MCP server recorded it: whether
+    it can be asked before a write (elicitation) decides if groovyscope's own confirmation appears."""
+    try:
+        recorded = json.loads(daemon.client_path(root, environ).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ("info", "mcp client", "none recorded yet (recorded on the first groovyscope tool call)")
+    name = f"{recorded.get('name') or '?'} {recorded.get('version') or ''}".strip()
+    asks = "yes" if recorded.get("elicitation") else "no: its own tool approval is the only check before a write"
+    return ("info", "mcp client", f"{name}, protocol {recorded.get('protocol') or '?'}; can be asked: {asks}")
+
+
 def cache_check(environ: Mapping[str, str], config: Mapping[str, Any] | None) -> Check:
     """What has piled up under the cache directory: rotated logs beyond the kept count, stale CDS archives and
     old heap dumps; `groovyscope checkup --fix` removes them."""
@@ -209,6 +221,7 @@ def build_report(
         kiro_agent_check(root, kiro_home(environ, home or Path.home()), kiro),
         profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
+        client_check(root, environ),
         cache_check(environ, config),
     ]
 

@@ -303,7 +303,7 @@ deliberately loose so shared runners do not fail the build.
 | `benchmark.py` | the bundled CodeNarc corpus (`_benchmark/`), unpacked into the user's home with a version stamp |
 | `changes.py` | changed files and line ranges from git, the pure review rules (split, bucket, touched declarations, verdict) and the merge request comment drafts |
 | `reports.py` | SARIF logs as findings and JaCoCo XML as coverage gaps, read as data |
-| `graph.py` | the relationship graph as a picture: layered layout (cycle break, longest-path layers, barycentre ordering), A4 fit with a readable minimum font, draw.io XML and Mermaid emitters, an overlap check |
+| `graph.py` | the relationship graph as a picture: layered layout (cycle break, longest-path layers, barycentre ordering), parents centred over their children, orthogonal routes through the gaps between rows and boxes (one shared port and lane per base class, fixed ports and waypoints in the draw.io file), A4 fit with a readable minimum font, draw.io XML and Mermaid emitters, a check for overlapping boxes and lines through boxes |
 | `mcp_understanding.py` | `explain_code`, `relationship_graph` and `check_naming` over `groovyscope/explainCode`, `/graph` and `/check` |
 | `doctor.py` | pure report building for `doctor` |
 | `render.py` | relative paths, pagination with continuation cursors, byte caps for agent output |
@@ -394,7 +394,8 @@ builds the same tools over the daemon socket and prints them.
 `rename` with `apply` is verified: the changed documents are compiled before and after the write (`check`
 with `compile` only), and when the count of compile errors rises the previous texts are written back and the
 answer says why. `relationship_graph` writes a draw.io file only inside the workspace and only with the
-`.drawio` extension; the layout is checked for overlapping or off-page boxes before the file is reported.
+`.drawio` extension; the layout is checked for overlapping or off-page boxes and for lines through boxes before
+the file is reported, and the answer gives the file's absolute path as `writtenTo`.
 
 `find_dynamic_code` has no LSP counterpart either: `DynamicCodeFinder` walks the index for the
 constructs that defeat static analysis (classes with neither `@CompileStatic` nor `@CompileDynamic`, `def`

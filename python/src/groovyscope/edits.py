@@ -3,11 +3,12 @@ inside the workspace, atomically, keeping the file's line endings."""
 
 from __future__ import annotations
 
+import difflib
 import os
 import shutil
 import tempfile
 import urllib.parse
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -71,13 +72,19 @@ def apply_edits(text: str, edits: Sequence[dict[str, Any]]) -> str:
 
 
 def changed_line_count(before: str, after: str) -> int:
-    """Lines that differ between two texts (a cheap summary for ``format`` without ``--apply``)."""
-    old = before.split("\n")
-    new = after.split("\n")
-    longest = max(len(old), len(new))
-    old += [""] * (longest - len(old))
-    new += [""] * (longest - len(new))
-    return sum(1 for a, b in zip(old, new, strict=True) if a != b)
+    """Lines a real diff touches: each inserted, deleted or replaced block counts its longer side. An inserted
+    line counts once instead of shifting (and counting) every line after it."""
+    matcher = difflib.SequenceMatcher(None, before.split("\n"), after.split("\n"), autojunk=False)
+    return sum(
+        max(old_end - old_start, new_end - new_start)
+        for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes()
+        if tag != "equal"
+    )
+
+
+def counts_by_path(raw: Mapping[str, Any]) -> dict[Path, dict[str, int]]:
+    """An engine map of document URI to {code: count}, keyed by path instead."""
+    return {uri_path(uri): {str(k): int(v) for k, v in counts.items()} for uri, counts in raw.items()}
 
 
 def uri_path(uri: str) -> Path:

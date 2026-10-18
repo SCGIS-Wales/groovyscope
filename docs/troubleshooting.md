@@ -5,6 +5,8 @@ hard failures.
 
 | Symptom | Cause and fix |
 |---|---|
+| No groovyscope question before a write, only Kiro's approval | The client declares no MCP elicitation; the answer says `"confirmation": "not offered"` and `groovyscope doctor` shows `mcp client ... can be asked: no`. Try Kiro's terminal UI (drop `--classic`) |
+| `/groovy-impact` gives `unrecognized subcommand` | Classic chat (`--classic`) invokes prompts as `@groovy-impact`; the terminal UI uses `/groovy-impact` |
 | `FAIL jdk no JDK found` | Install JDK 21 (docs/install.md) or set `JAVA_HOME`; on macOS add the `/Library/Java/JavaVirtualMachines` symlink |
 | `FAIL jdk JDK 11 ... below the minimum 17` | Groovy 6 needs 17+; point `jdk.home` or `JAVA_HOME` at a newer JDK |
 | `warn jdk ... JAVA_HOME (...) is JDK 11, below the minimum 17; ignored` | The JDK you named is too old (or not a JDK); another one is used. Point `JAVA_HOME` at a JDK 17+ home, for example `~/Library/Java/JavaVirtualMachines/amazon-corretto-21.jdk` |

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -87,7 +89,9 @@ def test_kiro_init_dry_run_then_write(runner: CliRunner, tmp_path: Path) -> None
     real = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init"])
     assert real.exit_code == 0, real.output
     assert f"{len(KIRO_FILES)} file(s) written" in real.output
-    assert "+++ b/.kiro/settings/lsp.json" in real.output
+    assert "+++ b/.kiro/settings/lsp.json" not in real.output  # a summary by default
+    assert "create    .kiro/settings/lsp.json (+" in real.output and "--diff shows the changes" in real.output
+    assert "+++ b/.kiro/settings/lsp.json" in dry.output  # a dry run shows the diff
     assert "/code status" in real.output
     again = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init"])
     assert "nothing to do" in again.output
@@ -97,8 +101,9 @@ def test_kiro_repair_restores_entry(runner: CliRunner, tmp_path: Path) -> None:
     runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "init"])
     lsp = tmp_path / ".kiro/settings/lsp.json"
     lsp.write_text(json.dumps({"languages": {"rust": {"command": "rust-analyzer"}}}), encoding="utf-8")
-    result = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "repair"])
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "kiro", "repair", "--diff"])
     assert result.exit_code == 0
+    assert "+++ b/.kiro/settings/lsp.json" in result.output
     merged = json.loads(lsp.read_text(encoding="utf-8"))
     assert set(merged["languages"]) == {"rust", "groovy"}
     assert lsp.with_name("lsp.json.bak").exists()
@@ -454,3 +459,11 @@ def test_checkup_agent_mode_never_fails(runner: CliRunner, tmp_path: Path, monke
     assert result.exit_code == 0 and result.output.strip() == "groovyscope checkup could not run: no"
     plain = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup"])
     assert plain.exit_code != 0
+
+
+def test_the_cli_starts_without_the_mcp_sdk() -> None:
+    """Kiro runs `groovyscope hook` after every write and at the end of every turn: the MCP SDK (about a second of
+    imports) must load only for `groovyscope mcp` and the commands that use the tools."""
+    code = "import sys, groovyscope.cli; print(sorted(m for m in ('mcp', 'pydantic', 'anyio') if m in sys.modules))"
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "[]"
