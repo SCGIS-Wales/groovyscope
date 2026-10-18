@@ -343,6 +343,31 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
   `/context show` numbers before and after. Done when: both numbers lower, CI green, merged, released.
 
+- [ ] **Stage 17: engine memory and out-of-memory resilience** — branch `feat/engine-memory`, 2026-10-18, from
+  the reliability review [research/2026-10-18-reliability-and-kiro-features.md](research/2026-10-18-reliability-and-kiro-features.md)
+  (findings E1, E2, E4, E6) and the owner's priority: the JVM must not wedge or grow without bound. Planned:
+  the kept compile's class loader owned by the result and closed when the next snapshot is published; a file
+  that stops parsing keeps its last good text re-parsed into the current generation instead of a tree that
+  pins the previous one; the call graph dropped on every recompile; a phase-aware cascade guard with a
+  wall-clock budget so a syntax error in a base class costs one or two rounds, not 64, for the compile and the
+  type check; one type check per `fix` call; `-XX:+ExitOnOutOfMemoryError` so an out-of-memory daemon exits and
+  is respawned, with `daemon status`, `doctor` and `checkup` naming the cause and the `daemon.heap` fix from the
+  log; `groovyscope/status` reporting heap use so `doctor` warns before the limit. Done when: specs for each
+  change (a base class with a syntax error compiles in bounded rounds, the previous loader is closed, memory is
+  reported), CI green, merged, released.
+- [ ] **Stage 18: front-end resilience** — not started. Findings P1 to P10 of the same review: MCP requests
+  demultiplexed per session with timeouts under the client's budget and a "still running" answer; the LSP
+  relay connects before touching stdin; hooks return before resolving the engine and never cold-start it; the
+  liveness probe tells refused, busy and incompatible apart and `status` becomes O(1); `refresh_classpath` kills
+  the process group, refuses a concurrent build and reads trust live; output caps on every answer; log
+  rotation and a cache sweep reported by `doctor`; user scalars kept in `mcp.json`; the stop gate on a session
+  baseline with `git status -z`. Done when: CI green, merged, released.
+- [ ] **Stage 19: elicitation and progress** — not started, after the owner's Kiro 3 check. `rename`, `fix`,
+  `format` with `apply`, `refresh_classpath` and draw.io writes ask the user through MCP elicitation when the
+  client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
+  long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
+  green, merged, released; the owner's Kiro check of one elicitation prompt recorded here.
+
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 
 Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release notes) and log the result here.
@@ -449,3 +474,7 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   the `groovy-reviewer` agent and the headless CI review recipe; 331 Python tests at 95%.
 - 2026-10-18: Stage 15 second branch `feat/kiro-skills`: twelve skills from the cookbook, MCP prompts, the
   steering halved; 347 Python tests at 95%.
+- 2026-10-18: reliability review written (`docs/research/2026-10-18-reliability-and-kiro-features.md`): two
+  independent reviews of the engine and the Python package, the MCP features Kiro honours (elicitation above
+  all) and the ones it does not. Stages 17 to 19 added; the owner put the JVM's memory behaviour first, so
+  Stage 17 starts on `feat/engine-memory` ahead of the front-end work.
