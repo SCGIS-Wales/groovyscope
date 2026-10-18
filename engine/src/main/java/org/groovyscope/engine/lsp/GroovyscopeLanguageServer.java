@@ -375,6 +375,17 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     }
 
     /** What a diagnostic code means and how to fix it, or {@code null}. Params: {@code code}. */
+    /**
+     * Box positions and edge routes for a diagram, from the layered layout of {@link
+     * org.groovyscope.engine.graph.DiagramLayout}. Params: {@code boxes} ({@code id}, {@code width}, {@code height}),
+     * {@code links} ({@code id}, {@code source}, {@code target}, {@code hierarchy}), {@code options}. Needs no
+     * workspace: it only lays out what it is given.
+     */
+    @JsonRequest("groovyscope/layout")
+    public CompletableFuture<Map<String, Object>> layout(Map<String, Object> params) {
+        return requests.heavy(cancel -> LayoutJson.layout(params == null ? Map.of() : params));
+    }
+
     @JsonRequest("groovyscope/explain")
     public CompletableFuture<Map<String, Object>> explain(Map<String, Object> params) {
         return CompletableFuture.completedFuture(org.groovyscope.engine.practices.Explanations.explain(

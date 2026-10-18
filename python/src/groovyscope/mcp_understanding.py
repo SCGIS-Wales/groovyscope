@@ -4,12 +4,13 @@ needs to judge whether a name says what the thing does)."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from groovyscope import diagram, interaction
 from groovyscope import graph as graphs
-from groovyscope import interaction
 from groovyscope.kiro import write_atomically
 from groovyscope.mcp_server_support import Call, relative_path, to_uri
 
@@ -17,6 +18,8 @@ NAMING_CODES = tuple(f"GS{n:03d}" for n in range(20, 28))
 GRAPH_KINDS = ("extends", "implements", "has", "uses", "calls")
 MAX_MERMAID_CHARS = 12000
 MAX_FACT_LISTS = 8
+
+LOG = logging.getLogger("groovyscope.mcp")
 
 
 def compact_method(method: Mapping[str, Any]) -> dict[str, Any]:
@@ -177,8 +180,10 @@ def understanding_tools(
     others: Mapping[str, Callable[..., Any]],
     *,
     confirm_policy: str = interaction.POLICY_AUTO,
+    shared_callers: int = 5,
 ) -> dict[str, Callable[..., Any]]:
-    """The tools, bound to one workspace and engine session; ``others`` supplies ``check``."""
+    """The tools, bound to one workspace and engine session; ``others`` supplies ``check``. ``shared_callers`` is
+    ``diagram.sharedHelperCallers``."""
 
     def explain_code(symbol: str | None = None, path: str | None = None) -> dict[str, Any]:
         """What a class, method, field or whole file does, as facts from its tree and the call graph: members with
@@ -225,12 +230,32 @@ def understanding_tools(
     return {
         "explain_code": explain_code,
         "check_naming": check_naming,
-        **graph_tools(root, call, cap, confirm_policy=confirm_policy),
+        **graph_tools(root, call, cap, confirm_policy=confirm_policy, shared_callers=shared_callers),
     }
 
 
+def drawing(raw: Mapping[str, Any], call: Call, shared_callers: int) -> tuple[graphs.Layout, str]:
+    """The layout from the engine's layered layout (`groovyscope/layout`), or groovyscope's own when the engine
+    cannot give one (an engine older than the package): the drawing and which layout made it."""
+    try:
+        return diagram.layout(
+            raw, lambda body: call("groovyscope/layout", dict(body)), shared_callers=shared_callers
+        ), "layered"
+    except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
+        LOG.info("engine layout unavailable (%s); using the basic layout", exc)
+        return graphs.layout(raw), "basic"
+
+
 def write_diagram(
-    root: Path, drawio_path: str, raw: Mapping[str, Any], result: dict[str, Any], *, confirm_policy: str, cap: int
+    root: Path,
+    drawio_path: str,
+    raw: Mapping[str, Any],
+    result: dict[str, Any],
+    *,
+    confirm_policy: str,
+    cap: int,
+    call: Call,
+    shared_callers: int,
 ) -> None:
     """Writes the draw.io file after the user's yes (when the client can ask), and says in ``result`` where it went
     (relative and absolute), what was asked, and any layout problem left."""
@@ -249,12 +274,16 @@ def write_diagram(
         result["written"] = None
         result["note"] = "the user said no; no file was written"
         return
-    drawn = graphs.layout(raw)
+    drawn, engine_used = drawing(raw, call, shared_callers)
     target.parent.mkdir(parents=True, exist_ok=True)
     write_atomically(target, graphs.to_drawio(raw, drawn, title=target.stem))
     result["written"] = shown
     result["writtenTo"] = str(target)  # the absolute path: the workspace root may not be where the user looks
     result["page"] = {"paper": drawn["paper"], "orientation": drawn["orientation"], "font": drawn["font"]}
+    result["lines"] = {"layout": engine_used, **diagram.route_quality(drawn, raw)}
+    shared = sum(1 for box in drawn["nodes"] if " · used by " in box["sublabel"])
+    if shared:
+        result["lines"]["sharedHelpers"] = shared
     problems = graphs.check_layout(drawn)
     if problems:
         result["layoutProblems"] = problems[:cap]
@@ -263,7 +292,7 @@ def write_diagram(
 
 
 def graph_tools(
-    root: Path, call: Call, cap: int, *, confirm_policy: str = interaction.POLICY_AUTO
+    root: Path, call: Call, cap: int, *, confirm_policy: str = interaction.POLICY_AUTO, shared_callers: int = 5
 ) -> dict[str, Callable[..., Any]]:
     """relationship_graph, bound to one workspace and engine session."""
 
@@ -305,7 +334,16 @@ def graph_tools(
         if raw.get("note"):
             result["note"] = raw["note"]
         if drawio_path:
-            write_diagram(root, drawio_path, raw, result, confirm_policy=confirm_policy, cap=cap)
+            write_diagram(
+                root,
+                drawio_path,
+                raw,
+                result,
+                confirm_policy=confirm_policy,
+                cap=cap,
+                call=call,
+                shared_callers=shared_callers,
+            )
         if mermaid:
             text = graphs.to_mermaid(raw)
             result["mermaid"] = text if len(text) <= MAX_MERMAID_CHARS else text[:MAX_MERMAID_CHARS] + "\n%% cut\n"

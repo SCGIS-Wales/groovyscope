@@ -431,6 +431,16 @@
         }
       }
     },
+    "diagram": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sharedHelperCallers": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "reports": {
       "type": "object",
       "additionalProperties": false,

@@ -1034,6 +1034,7 @@ def tool_settings(effective: Mapping[str, Any], classpath: Mapping[str, Any] | N
     return {
         **effective["output"],
         "duplicates": effective.get("duplicates", {}),
+        "diagram": effective.get("diagram", {}),
         "reports": reports.reports_settings(effective),
         "classpath": dict(classpath or {}),
         "mcp": dict(effective.get("mcp") or {}),
@@ -1282,6 +1283,17 @@ def graph_command(
             f"{result['nodeCount']} class(es), {result['edgeCount']} relation(s) written to {result['written']} "
             f"({result['page']['orientation']} {result['page']['paper']}, font {result['page']['font']}px)"
         )
+        lines = result.get("lines") or {}
+        if lines:
+            shared = (
+                f", {lines['sharedHelpers']} shared helper(s) named in their callers' boxes"
+                if lines.get("sharedHelpers")
+                else ""
+            )
+            click.echo(
+                f"lines: {lines.get('layout')} layout, {lines.get('crossings', 0)} crossing(s), "
+                f"{lines.get('overlaps', 0)} overlap(s){shared}"
+            )
         for problem in result.get("layoutProblems", []):
             click.echo(f"layout: {problem}", err=True)
         if result.get("layoutNote"):

@@ -994,7 +994,13 @@ def build_tools(
         **practice_tools(root, call, cap, clip_at, report_settings, confirm_policy=policy),
     }
     tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
-    tools.update(mcp_understanding.understanding_tools(root, call, cap, tools, confirm_policy=policy))
+    diagram_settings: Mapping[str, Any] = output.get("diagram") or {}
+    shared_callers = int(diagram_settings.get("sharedHelperCallers", 5))
+    tools.update(
+        mcp_understanding.understanding_tools(
+            root, call, cap, tools, confirm_policy=policy, shared_callers=shared_callers
+        )
+    )
     return tools
 
 
