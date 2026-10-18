@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.19.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.18.0...v0.19.0) (2026-10-18)
+
+
+### Features
+
+* **cli:** groovyscope checks prepare and report for the Kiro checks ([#82](https://github.com/SCGIS-Wales/groovyscope/issues/82)) ([d87c608](https://github.com/SCGIS-Wales/groovyscope/commit/d87c608cad41ab277d23369a0dc161a9d949c776))
+
+
+### Bug Fixes
+
+* **engine:** report hidden compile errors, import fixed types, infer factory results ([#79](https://github.com/SCGIS-Wales/groovyscope/issues/79)) ([f110490](https://github.com/SCGIS-Wales/groovyscope/commit/f110490b4ad1489d52ed4f5ed64be8a0ce7ef3dd))
+* **kiro:** readable diagrams, fast hooks and honest answers from the first Kiro check ([#80](https://github.com/SCGIS-Wales/groovyscope/issues/80)) ([d22061f](https://github.com/SCGIS-Wales/groovyscope/commit/d22061f617bb8e0a8d6b3e39fd97ccaad74cbc39))
+
 ## [0.18.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.17.0...v0.18.0) (2026-10-18)
 
 
