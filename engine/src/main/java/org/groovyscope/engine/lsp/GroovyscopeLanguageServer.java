@@ -340,6 +340,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("edits", edits);
             response.put("applied", result.applied());
+            response.put("appliedCounts", result.appliedCounts());
+            response.put("left", result.left());
             response.put("rejected", result.rejected());
             return response;
         });
@@ -858,7 +860,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                     }
                 }
             }
-            for (String uri : stringList(params.get("uris"))) {
+            // A folder seeds every class of the documents under it, as in check, fix and find_duplicates.
+            for (String uri : targets(current, params)) {
                 org.codehaus.groovy.ast.ModuleNode module = snapshot.result().modules().get(uri);
                 if (module != null) {
                     for (org.codehaus.groovy.ast.ClassNode classNode : module.getClasses()) {
@@ -875,7 +878,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                 empty.put("edges", List.of());
                 empty.put("truncated", false);
                 empty.put("totalClasses", 0);
-                empty.put("note", "no workspace class matches the given symbols or documents");
+                empty.put("note", "no workspace class matches the given symbols or paths (a folder counts the Groovy"
+                        + " files under it); check the spelling, or pass symbols as Class or package.Class");
                 return empty;
             }
             Integer depth = number(params, "depth");

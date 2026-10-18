@@ -378,6 +378,17 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
   long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
   green, merged, released; the owner's Kiro check of one elicitation prompt recorded here.
+- [ ] **Stage 21: fixes from the owner's first Kiro check** — 2026-10-18, approved by the owner. Three PRs.
+  A (engine, `fix/engine-correctness`): an unknown type in one file is reported while another file has an
+  unresolved import (Groovy stopped the first round at the first failing file and the errors of the completion
+  pass were dropped); the `def` fix writes the import of a type from another package and counts applied and left
+  fixes per code; a folder seeds the relationship graph; a `def` local initialised by a method with a declared
+  return type or by a factory closure is inferred, not dynamic; document symbols start on the line of the name.
+  B (front end): real changed-line counts, a draw.io layout with lines that never cross boxes, a hook that starts
+  in well under a second, no fixed tool count in the welcome text, prompt syntax per Kiro engine, the client's
+  capabilities recorded, a plain verdict on implicit catches, absolute paths, a short `kiro repair` summary.
+  C (test kit): `groovyscope checks prepare` and `checks report`, `kiro-checks.md` rewritten for the TUI.
+  Done when: the three PRs merged, released, and the owner's retest of the failed checks recorded here.
 - [x] **Process: merge and release automation** — PRs merge without a human once CI is green (auto-merge
   after the owner enables it in the repository settings; by API until then); `release-please.yml` takes the
   `RELEASE_PLEASE_TOKEN` secret so the release PR's checks run unattended and it marks itself for auto-merge;
@@ -565,3 +576,9 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   has the types without server support and Kiro does not negotiate them. 390 Python tests at 95% coverage.
 - 2026-10-18: [kiro-checks.md](kiro-checks.md) gathers every check the owner still owes (stages 9 to 16 and 20)
   plus a memory drill for stages 17 to 19, as Kiro CLI prompts with what to expect and a report table.
+
+- 2026-10-18: owner's first Kiro check on 0.18.0 (Kiro CLI 2.29.1, classic). Passed: wiring (28 tools, 2.5k
+  tokens; steering 0.1% of context), the `code` tool on `.groovy`, the six navigation prompts, rename, the
+  classpath refresh question, parallel requests. Failed or not run: see Stage 21. Found while reproducing: an
+  unknown type in a method body was not reported in the CodeNarc corpus (any other file with an unresolved
+  import hid it), and the `def` fix wrote `Rule` without its import.

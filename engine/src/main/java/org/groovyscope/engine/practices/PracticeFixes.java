@@ -212,20 +212,21 @@ public final class PracticeFixes {
                     int def = text.indexOf("def ");
                     boolean typable = type != null && !type.isGenericsPlaceHolder() && type.getGenericsTypes() == null;
                     if (typable && def >= 0) {
-                        String name = typeName(type, module);
+                        TypeReference reference = reference(type, module, lines);
                         Range defRange = new Range(new Position(range.start().line(), range.start().column() + def),
                                 new Position(range.start().line(), range.start().column() + def + 3));
-                        actions.add(new CodeAction("Declare as " + name, diagnostic, List.of(new TextEdit(defRange, name))));
+                        actions.add(new CodeAction("Declare as " + reference.name(), diagnostic,
+                                reference.with(new TextEdit(defRange, reference.name()))));
                     } else if (typable) {
                         // `final x = ...`: the modifier stands where a type belongs, so insert the type after it.
                         java.util.regex.Matcher modifier = java.util.regex.Pattern
                                 .compile("\\bfinal\\s+(?=" + java.util.regex.Pattern.quote(variable.getName()) + "\\b)")
                                 .matcher(lines.line(range.start().line()));
                         if (modifier.find()) {
-                            String name = typeName(type, module);
+                            TypeReference reference = reference(type, module, lines);
                             Position at = new Position(range.start().line(), modifier.end());
-                            actions.add(new CodeAction("Declare as " + name, diagnostic,
-                                    List.of(new TextEdit(new Range(at, at), name + " "))));
+                            actions.add(new CodeAction("Declare as " + reference.name(), diagnostic,
+                                    reference.with(new TextEdit(new Range(at, at), reference.name() + " "))));
                         }
                     }
                 }
@@ -233,6 +234,47 @@ public final class PracticeFixes {
             }
         });
         return actions;
+    }
+
+    /** How a fix writes a type into a document: the name to write and the import that makes it resolve, if any. */
+    record TypeReference(String name, TextEdit importEdit) {
+        List<TextEdit> with(TextEdit edit) {
+            return importEdit == null ? List.of(edit) : List.of(edit, importEdit);
+        }
+    }
+
+    /**
+     * The name a fix may write for {@code type} in {@code module}: the simple name when it already resolves there
+     * (same package, imported, or imported by default), else the simple name plus an import, else (another type
+     * there has the same simple name) the qualified name.
+     */
+    static TypeReference reference(ClassNode type, ModuleNode module, TextLines lines) {
+        String simple = type.getNameWithoutPackage();
+        String packageName = type.getPackageName();
+        if (packageName == null || AUTO_IMPORTED.contains(packageName)
+                || packageName.equals(module.getPackageName() == null ? null : stripDot(module.getPackageName()))) {
+            return new TypeReference(simple, null);
+        }
+        for (ImportNode existing : module.getImports()) {
+            if (type.getName().equals(existing.getClassName())) {
+                return new TypeReference(simple, null);
+            }
+        }
+        for (ImportNode star : module.getStarImports()) {
+            if ((packageName + ".").equals(star.getPackageName())) {
+                return new TypeReference(simple, null);
+            }
+        }
+        boolean taken = module.getImports().stream().anyMatch(i -> simple.equals(i.getAlias()))
+                || module.getClasses().stream().anyMatch(c -> simple.equals(c.getNameWithoutPackage()));
+        if (taken || type.getName().contains("$")) {
+            return new TypeReference(type.getName().replace('$', '.'), null);
+        }
+        return new TypeReference(simple, importEdit(module, lines, type.getName()));
+    }
+
+    private static String stripDot(String packageName) {
+        return packageName.endsWith(".") ? packageName.substring(0, packageName.length() - 1) : packageName;
     }
 
     public static String typeName(ClassNode type, ModuleNode module) {
@@ -274,9 +316,12 @@ public final class PracticeFixes {
             }
             boolean clash = false;
             for (int[] span : spans) {
+                // Two inserts at one point clash, unless both insert whole lines (two imports after the last one,
+                // an annotation and an import): those both apply, in list order.
                 if (start < span[1] && span[0] < end || start == end && span[0] < start && start < span[1]
                         || span[0] == span[1] && start < span[0] && span[0] < end
-                        || start == end && span[0] == span[1] && start == span[0]) {
+                        || start == end && span[0] == span[1] && start == span[0]
+                        && !(wholeLine(edit) && wholeLine(accepted.get(spans.indexOf(span))))) {
                     clash = true;
                     break;
                 }
@@ -287,8 +332,10 @@ public final class PracticeFixes {
             }
         }
         List<TextEdit> ordered = new ArrayList<>(accepted);
-        // Latest first; at the same start, the replacement before a zero-width insert, so offsets stay valid.
-        ordered.sort(Comparator.comparing((TextEdit e) -> e.range().start()).thenComparing(e -> e.range().end()).reversed());
+        // Latest first; at the same start, the replacement before a zero-width insert, so offsets stay valid; of
+        // two inserts at one point the later one goes in first, so the text reads in list order.
+        ordered.sort(Comparator.comparing((TextEdit e) -> e.range().start()).thenComparing(e -> e.range().end())
+                .thenComparing(accepted::indexOf).reversed());
         StringBuilder result = new StringBuilder(text);
         for (TextEdit edit : ordered) {
             result.replace(lines.offsetOf(edit.range().start()), lines.offsetOf(edit.range().end()), edit.newText());
@@ -297,6 +344,12 @@ public final class PracticeFixes {
     }
 
     /** The outcome of {@link #apply}. */
+    /** An insert of complete lines at the start of a line: an import or an annotation line. */
+    static boolean wholeLine(TextEdit edit) {
+        return edit.range().start().equals(edit.range().end()) && edit.range().start().column() == 0
+                && edit.newText().endsWith("\n");
+    }
+
     public record Applied(String text, List<TextEdit> edits) {
         public Applied {
             edits = List.copyOf(edits);

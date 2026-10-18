@@ -164,11 +164,20 @@ final class Converters {
         };
     }
 
+    /**
+     * The range starts on the line of the name, not on the annotations above it: clients that print a symbol's
+     * position (Kiro's {@code code} tool prints the range start) then point at the declaration itself, so a
+     * follow-up request at that line lands on the name instead of on {@code @SuppressWarnings}.
+     */
     static DocumentSymbol documentSymbol(Symbol symbol) {
-        Range range = toLsp(symbol.location().range());
-        Range selection = symbol.selectionRange() != null && symbol.location().range().contains(symbol.selectionRange())
-                ? toLsp(symbol.selectionRange())
-                : range;
+        org.groovyscope.engine.model.Range whole = symbol.location().range();
+        boolean selectionInside = symbol.selectionRange() != null && whole.contains(symbol.selectionRange());
+        if (selectionInside && symbol.selectionRange().start().line() > whole.start().line()) {
+            whole = new org.groovyscope.engine.model.Range(
+                    new org.groovyscope.engine.model.Position(symbol.selectionRange().start().line(), 0), whole.end());
+        }
+        Range range = toLsp(whole);
+        Range selection = selectionInside ? toLsp(symbol.selectionRange()) : range;
         List<DocumentSymbol> children = new ArrayList<>();
         for (Symbol child : symbol.children()) {
             if (child.location() != null) {

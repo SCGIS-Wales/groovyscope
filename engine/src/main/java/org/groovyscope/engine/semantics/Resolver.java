@@ -65,7 +65,7 @@ public final class Resolver {
         this.index = index;
         for (NodeEntry entry : index.declarations()) {
             if (entry.node() instanceof VariableExpression variable && entry.parent() instanceof DeclarationExpression declaration) {
-                ClassNode inferred = inferDeclaredType(variable, declaration);
+                ClassNode inferred = inferDeclaredType(variable, declaration, entry.enclosingClass());
                 if (inferred != null) {
                     variableTypes.put(variable, inferred);
                 }
@@ -430,11 +430,21 @@ public final class Resolver {
         return enclosing == null ? Receiver.UNKNOWN : new Receiver(enclosing, true);
     }
 
-    private static ClassNode inferDeclaredType(VariableExpression variable, DeclarationExpression declaration) {
+    /**
+     * The type a {@code def} local holds from its initialiser: a constructor call, a cast, a constant, a call to
+     * a method whose every overload of that arity declares one return type, or a call to a closure property whose
+     * every return yields one constructed type. The answer is an inference (the variable may be reassigned), so
+     * references through it are {@link Confidence#INFERRED}, never {@link Confidence#STATIC}.
+     */
+    static ClassNode inferDeclaredType(VariableExpression variable, DeclarationExpression declaration,
+            ClassNode enclosing) {
         if (!variable.isDynamicTyped()) {
             return null;
         }
-        Expression right = declaration.getRightExpression();
+        return initialiserType(declaration.getRightExpression(), enclosing);
+    }
+
+    private static ClassNode initialiserType(Expression right, ClassNode enclosing) {
         if (right instanceof ConstructorCallExpression constructorCall && !constructorCall.isSpecialCall()) {
             return constructorCall.getType();
         }
@@ -444,7 +454,78 @@ public final class Resolver {
         if (right instanceof ConstantExpression constant && constant.getValue() != null) {
             return ClassHelper.make(constant.getValue().getClass());
         }
+        if (right instanceof StaticMethodCallExpression call) {
+            return declaredReturn(Members.accepting(Members.methodsNamed(call.getOwnerType(), call.getMethod()),
+                    Members.argumentCount(call.getArguments())));
+        }
+        if (right instanceof MethodCallExpression call && call.getMethodAsString() != null) {
+            boolean onThis = call.isImplicitThis()
+                    || call.getObjectExpression() instanceof VariableExpression receiver && receiver.isThisExpression();
+            if (onThis && enclosing != null) {
+                String name = call.getMethodAsString();
+                ClassNode declared = declaredReturn(Members.accepting(Members.methodsNamed(enclosing, name),
+                        Members.argumentCount(call.getArguments())));
+                return declared != null ? declared : closureReturn(Members.membersNamed(enclosing, name));
+            }
+            return nullIfDynamic(org.groovyscope.engine.practices.PracticeFinder.typeOf(call));
+        }
         return null;
+    }
+
+    /** The return type every candidate declares, or {@code null} when there is none or they disagree. */
+    private static ClassNode declaredReturn(List<MethodNode> candidates) {
+        ClassNode type = null;
+        for (MethodNode method : candidates) {
+            ClassNode returned = method.isDynamicReturnType() ? null : nullIfDynamic(method.getReturnType());
+            if (returned == null || type != null && !type.equals(returned)) {
+                return null;
+            }
+            type = returned;
+        }
+        return type;
+    }
+
+    /**
+     * For a closure-valued field or property, the one type its returns construct: {@code return new X()}, a final
+     * {@code new X()}, or a local declared as {@code def x = new X()} and returned. {@code null} otherwise.
+     */
+    private static ClassNode closureReturn(List<ASTNode> members) {
+        if (members.size() != 1) {
+            return null;
+        }
+        Expression initial = members.get(0) instanceof PropertyNode property ? property.getInitialExpression()
+                : members.get(0) instanceof FieldNode field ? field.getInitialExpression() : null;
+        if (!(initial instanceof org.codehaus.groovy.ast.expr.ClosureExpression closure)
+                || !(closure.getCode() instanceof org.codehaus.groovy.ast.stmt.BlockStatement block)) {
+            return null;
+        }
+        List<Expression> returned = new ArrayList<>();
+        Map<String, ClassNode> locals = new java.util.HashMap<>();
+        List<org.codehaus.groovy.ast.stmt.Statement> statements = block.getStatements();
+        for (int i = 0; i < statements.size(); i++) {
+            org.codehaus.groovy.ast.stmt.Statement statement = statements.get(i);
+            if (statement instanceof org.codehaus.groovy.ast.stmt.ExpressionStatement expression
+                    && expression.getExpression() instanceof DeclarationExpression local
+                    && local.getLeftExpression() instanceof VariableExpression name
+                    && local.getRightExpression() instanceof ConstructorCallExpression constructed) {
+                locals.put(name.getName(), constructed.getType());
+            } else if (statement instanceof org.codehaus.groovy.ast.stmt.ReturnStatement result) {
+                returned.add(result.getExpression());
+            } else if (i == statements.size() - 1
+                    && statement instanceof org.codehaus.groovy.ast.stmt.ExpressionStatement last) {
+                returned.add(last.getExpression());
+            }
+        }
+        ClassNode type = null;
+        for (Expression expression : returned) {
+            ClassNode one = expression instanceof ConstructorCallExpression constructed ? constructed.getType()
+                    : expression instanceof VariableExpression local ? locals.get(local.getName()) : null;
+            if (one == null || type != null && !type.equals(one)) {
+                return null;
+            }
+            type = one;
+        }
+        return type;
     }
 
     /** A property's backing field resolves to the property, so one declaration owns all references. */
