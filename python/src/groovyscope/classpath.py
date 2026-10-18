@@ -8,13 +8,17 @@ them; AST transformations from the workspace classpath load only in a trusted wo
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import NotRequired, TypedDict
@@ -50,18 +54,79 @@ class Export(TypedDict):
     missing: list[str]
 
 
-def default_runner(command: Sequence[str], cwd: Path, environ: Mapping[str, str], timeout: int) -> tuple[int, str]:
-    """Run the build tool; stdout and stderr together, a non-zero code on failure or timeout."""
+WAIT_TICK_SECONDS = 5.0
+KILL_GRACE_SECONDS = 5.0
+
+
+def default_runner(
+    command: Sequence[str],
+    cwd: Path,
+    environ: Mapping[str, str],
+    timeout: int,
+    *,
+    on_wait: Callable[[float], None] | None = None,
+    tick: float = WAIT_TICK_SECONDS,
+) -> tuple[int, str]:
+    """Run the build tool in its own process group; stdout and stderr together, a non-zero code on failure or
+    timeout. ``on_wait`` hears the elapsed seconds every ``tick`` while the build runs (for progress notes). On
+    timeout the whole group is stopped (the wrapper script, the build JVM and anything they started), not only
+    the wrapper, so an abandoned build never keeps running in the background."""
     LOG.debug("running %s in %s", " ".join(command), cwd)
     try:
-        done = subprocess.run(
-            list(command), cwd=cwd, env=dict(environ), capture_output=True, text=True, timeout=timeout, check=False
+        process = subprocess.Popen(  # the configured build tool, never a shell
+            list(command),
+            cwd=cwd,
+            env=dict(environ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        return (-1, f"{command[0]} did not finish within {timeout} s")
     except OSError as exc:
         return (-1, str(exc))
-    return (done.returncode, done.stdout + "\n" + done.stderr)
+    started = time.monotonic()
+    while True:
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            stop_group(process)
+            return (-1, f"{command[0]} did not finish within {timeout} s; the build was stopped")
+        try:
+            output, _ = process.communicate(timeout=min(tick, remaining))
+        except subprocess.TimeoutExpired:
+            if on_wait is not None:
+                on_wait(time.monotonic() - started)
+            continue
+        return (process.returncode, output or "")
+
+
+def stop_group(process: subprocess.Popen[str]) -> None:
+    """Stops the process group the build runs in: TERM, then KILL after a grace period."""
+    for sig, wait in ((signal.SIGTERM, KILL_GRACE_SECONDS), (signal.SIGKILL, KILL_GRACE_SECONDS)):
+        with contextlib.suppress(OSError):
+            os.killpg(process.pid, sig)
+        try:
+            process.communicate(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+@contextlib.contextmanager
+def exclusive(target: Path) -> Iterator[None]:
+    """Holds the export lock for ``target`` (the classpath file): a second export of the same workspace, from the
+    CLI or the MCP tool, is refused at once instead of running a second build alongside the first."""
+    lock = target.with_name(target.name + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            msg = "a classpath export is already running for this workspace; wait for it to finish"
+            raise ValueError(msg) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def detect_tool(root: Path) -> str | None:

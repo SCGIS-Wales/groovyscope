@@ -218,7 +218,9 @@ def test_refresh_classpath_runs_the_export_only_in_a_trusted_workspace(
         "file": ".groovyscope/classpath.txt",
         "note": "the engine reloads the classpath on its next request",
     }
+    runner = seen[0].pop("runner")
     assert seen == [{"root": tmp_path, "java": "/jdk", "timeout": 5}]
+    assert runner.func is classpath.default_runner and callable(runner.keywords["on_wait"])
     assert classpath.status(tmp_path, tmp_path / ".groovyscope/classpath.txt")["state"] == "fresh"
 
     def failing(*_a: Any, **_k: Any) -> classpath.Export:

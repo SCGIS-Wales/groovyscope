@@ -995,6 +995,15 @@ def tool_settings(effective: Mapping[str, Any], classpath: Mapping[str, Any] | N
     }
 
 
+def trusted_now(obj: dict[str, Any]) -> bool:
+    """Whether the workspace is trusted at this moment (the configuration read again, so a revoke counts)."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (OSError, ValueError):
+        return False
+    return bool(effective["workspace"].get("trust"))
+
+
 def classpath_settings(obj: dict[str, Any], effective: Mapping[str, Any]) -> dict[str, Any]:
     """Where the exported classpath lives, whether jars are listed by hand, whether the workspace is trusted
     (so `refresh_classpath` may run the build) and which JDK the build should use."""
@@ -1004,6 +1013,7 @@ def classpath_settings(obj: dict[str, Any], effective: Mapping[str, Any]) -> dic
         "file": str(obj["root"] / Path(listed).expanduser()),
         "configured": bool(workspace.get("classpath")),
         "trusted": bool(workspace.get("trust")),
+        "isTrusted": lambda: trusted_now(obj),
         "javaHome": obj.get("jdk_home"),
     }
 
@@ -1587,13 +1597,14 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int) -> No
         if jdk is not None:
             environ["JAVA_HOME"] = jdk["home"]
     click.echo("running the build tool to resolve the classpath (this can take a while)…", err=True)
+    target = obj["root"] / Path(effective["workspace"].get("classpathFile") or classpath_export.DEFAULT_FILE)
     try:
-        result = classpath_export.export(obj["root"], environ, tool=tool, timeout=timeout)
+        with classpath_export.exclusive(target):
+            result = classpath_export.export(obj["root"], environ, tool=tool, timeout=timeout)
+            classpath_export.write_file(target, result, fingerprint=classpath_export.build_fingerprint(obj["root"]))
     except ValueError as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
-    target = obj["root"] / Path(effective["workspace"].get("classpathFile") or classpath_export.DEFAULT_FILE)
-    classpath_export.write_file(target, result, fingerprint=classpath_export.build_fingerprint(obj["root"]))
     click.echo(
         f"{len(result['paths'])} classpath entries from {result['tool']} written to {shown_path(target, obj['root'])}"
     )

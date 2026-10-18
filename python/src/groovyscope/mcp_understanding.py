@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from groovyscope import graph as graphs
+from groovyscope import interaction
 from groovyscope.kiro import write_atomically
 from groovyscope.mcp_server_support import Call, relative_path, to_uri
 
@@ -170,7 +171,12 @@ def drawio_target(root: Path, path: str) -> Path:
 
 
 def understanding_tools(
-    root: Path, call: Call, cap: int, others: Mapping[str, Callable[..., Any]]
+    root: Path,
+    call: Call,
+    cap: int,
+    others: Mapping[str, Callable[..., Any]],
+    *,
+    confirm_policy: str = interaction.POLICY_AUTO,
 ) -> dict[str, Callable[..., Any]]:
     """The tools, bound to one workspace and engine session; ``others`` supplies ``check``."""
 
@@ -216,10 +222,16 @@ def understanding_tools(
             result["note"] = "pass paths to get the declaration facts for the files you are judging"
         return result
 
-    return {"explain_code": explain_code, "check_naming": check_naming, **graph_tools(root, call, cap)}
+    return {
+        "explain_code": explain_code,
+        "check_naming": check_naming,
+        **graph_tools(root, call, cap, confirm_policy=confirm_policy),
+    }
 
 
-def graph_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+def graph_tools(
+    root: Path, call: Call, cap: int, *, confirm_policy: str = interaction.POLICY_AUTO
+) -> dict[str, Callable[..., Any]]:
     """relationship_graph, bound to one workspace and engine session."""
 
     def relationship_graph(
@@ -264,10 +276,18 @@ def graph_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any
             except ValueError as exc:
                 result["error"] = str(exc)
                 return result
+            shown = relative_path(target.as_uri(), root)
+            decision = interaction.confirm(f"Write the class diagram to {shown}?", policy=confirm_policy)
+            if decision != interaction.UNSUPPORTED:
+                result["confirmation"] = decision
+            if decision in {interaction.DECLINED, interaction.CANCELLED}:
+                result["written"] = None
+                result["note"] = "the user said no; no file was written"
+                return result
             drawn = graphs.layout(raw)
             target.parent.mkdir(parents=True, exist_ok=True)
             write_atomically(target, graphs.to_drawio(raw, drawn, title=target.stem))
-            result["written"] = relative_path(target.as_uri(), root)
+            result["written"] = shown
             result["page"] = {"orientation": drawn["orientation"], "font": drawn["font"]}
             problems = graphs.check_layout(drawn)
             if problems:

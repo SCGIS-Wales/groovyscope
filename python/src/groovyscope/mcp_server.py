@@ -6,18 +6,32 @@ Every tool returns compact JSON (relative paths, line:col, kinds, pagination) an
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
+from concurrent import futures
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from groovyscope import changes, daemon, diagnostics, mcp_search, mcp_understanding, practices, reports, rpc, skills
+from groovyscope import (
+    changes,
+    daemon,
+    diagnostics,
+    interaction,
+    mcp_search,
+    mcp_understanding,
+    practices,
+    reports,
+    rpc,
+    skills,
+)
 from groovyscope import classpath as classpath_export
 from groovyscope.edits import FileChangedError, FileEdit, changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
@@ -388,6 +402,7 @@ def quality_tools(
     clip_at: int = MESSAGE_CHARS,
     report_settings: Mapping[str, Any] | None = None,
     classpath_settings: Mapping[str, Any] | None = None,
+    confirm_policy: str = interaction.POLICY_AUTO,
 ) -> dict[str, Callable[..., Any]]:
     """check, format, find_dynamic_code, coverage_gaps, refresh_classpath and workspace_status."""
     settings = report_settings or {}
@@ -435,6 +450,10 @@ def quality_tools(
         """Formatting edits for PATHS (whole workspace when empty). APPLY writes the files; otherwise only counts."""
         raw = call("groovyscope/format", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
         changed, refused = file_edits(raw.get("edits", {}), root)
+        decision = interaction.UNSUPPORTED
+        if apply and changed:
+            decision = confirm_edits(confirm_policy, f"Format {len(changed)} file(s)", changed, root)
+            apply = not declined(decision)
         files = []
         for edit in changed:
             if apply and not write_if_unchanged(edit, refused):
@@ -449,7 +468,7 @@ def quality_tools(
         result: dict[str, Any] = {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
         if refused:
             result["refused"] = [relative_path(uri, root) for uri in refused]
-        return result
+        return with_decision(result, decision)
 
     def find_dynamic_code(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
         """Constructs that defeat static analysis: untyped classes, def on public API, methodMissing, metaClass."""
@@ -488,7 +507,7 @@ def quality_tools(
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
         **coverage_tools(root, paged, settings),
-        **classpath_tools(root, environ, classpath, clip_at=clip_at),
+        **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy),
     }
 
 
@@ -511,7 +530,12 @@ def classpath_state(root: Path, settings: Mapping[str, Any]) -> dict[str, Any] |
 
 
 def classpath_tools(
-    root: Path, environ: Mapping[str, str], settings: Mapping[str, Any], *, clip_at: int = MESSAGE_CHARS
+    root: Path,
+    environ: Mapping[str, str],
+    settings: Mapping[str, Any],
+    *,
+    clip_at: int = MESSAGE_CHARS,
+    confirm_policy: str = interaction.POLICY_AUTO,
 ) -> dict[str, Callable[..., Any]]:
     """refresh_classpath: the build's classpath exported again after dependencies changed."""
 
@@ -523,30 +547,54 @@ def classpath_tools(
         `groovyscope trust` and `groovyscope classpath`."""
         if not settings.get("file"):
             return {"error": "no classpath settings in this session; run `groovyscope classpath` in a terminal"}
-        if not settings.get("trusted"):
+        # Read now, not when the session started: `groovyscope trust --revoke` takes effect at once.
+        check_trust = settings.get("isTrusted")
+        trusted = bool(check_trust()) if callable(check_trust) else bool(settings.get("trusted"))
+        if not trusted:
             return {
                 "error": "refused: the export runs the project's build scripts, which only a trusted workspace "
                 "may do; ask the user to run `groovyscope trust` and then `groovyscope classpath`"
             }
+        build = classpath_export.detect_tool(root) or "build"
+        decision = interaction.confirm(
+            f"Run the {build} build of {root.name} to export its classpath? It runs the project's build scripts "
+            "and can take minutes.",
+            policy=confirm_policy,
+        )
+        if declined(decision):
+            return {"refreshed": False, "confirmation": decision, "reason": "nothing was run: the user said no"}
         env = dict(environ)
         if not env.get("JAVA_HOME") and settings.get("javaHome"):
             env["JAVA_HOME"] = str(settings["javaHome"])
+        target = Path(str(settings["file"]))
+
+        def waiting(elapsed: float) -> None:
+            interaction.progress(elapsed, None, f"{build} build running ({elapsed:.0f}s)")
+
+        interaction.progress(0, None, f"starting the {build} build")
         try:
-            export = classpath_export.export(root, env, timeout=max(1, int(timeout)))
+            with classpath_export.exclusive(target):
+                export = classpath_export.export(
+                    root,
+                    env,
+                    timeout=max(1, int(timeout)),
+                    runner=functools.partial(classpath_export.default_runner, on_wait=waiting),
+                )
+                classpath_export.write_file(target, export, fingerprint=classpath_export.build_fingerprint(root))
         except ValueError as exc:
             return {"error": clip(str(exc), clip_at)}
-        target = Path(str(settings["file"]))
-        try:
-            classpath_export.write_file(target, export, fingerprint=classpath_export.build_fingerprint(root))
         except OSError as exc:
-            return {"error": f"classpath exported but {target} could not be written: {exc}"}
-        return {
-            "tool": export["tool"],
-            "entries": len(export["paths"]),
-            "missing": len(export["missing"]),
-            "file": relative_path(target.resolve().as_uri(), root),
-            "note": "the engine reloads the classpath on its next request",
-        }
+            return {"error": f"the classpath could not be written to {target}: {exc}"}
+        return with_decision(
+            {
+                "tool": export["tool"],
+                "entries": len(export["paths"]),
+                "missing": len(export["missing"]),
+                "file": relative_path(target.resolve().as_uri(), root),
+                "note": "the engine reloads the classpath on its next request",
+            },
+            decision,
+        )
 
     return {"refresh_classpath": refresh_classpath}
 
@@ -583,6 +631,8 @@ def practice_tools(
     cap: int,
     clip_at: int = MESSAGE_CHARS,
     report_settings: Mapping[str, Any] | None = None,
+    *,
+    confirm_policy: str = interaction.POLICY_AUTO,
 ) -> dict[str, Callable[..., Any]]:
     """explain, review, fix and profile_status."""
     settings = report_settings or {}
@@ -641,6 +691,10 @@ def practice_tools(
             {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "codes": codes or []},
         )
         changed, refused = file_edits(raw.get("edits", {}), root)
+        decision = interaction.UNSUPPORTED
+        if apply and changed:
+            decision = confirm_edits(confirm_policy, f"Apply safe fixes to {len(changed)} file(s)", changed, root)
+            apply = not declined(decision)
         files: list[dict[str, Any]] = []
         for edit in changed:
             if apply and not write_if_unchanged(edit, refused):
@@ -656,18 +710,20 @@ def practice_tools(
             )
         rejected = {relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()}
         rejected.update({relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused})
-        return {"changed": len(files), "files": files[:cap], "rejected": rejected}
+        return with_decision({"changed": len(files), "files": files[:cap], "rejected": rejected}, decision)
 
     return {
         "explain": explain,
         "review": review,
         "fix": fix,
         "profile_status": profile_status,
-        **rename_tools(root, call, cap),
+        **rename_tools(root, call, cap, confirm_policy=confirm_policy),
     }
 
 
-def rename_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., Any]]:
+def rename_tools(
+    root: Path, call: Call, cap: int, *, confirm_policy: str = interaction.POLICY_AUTO
+) -> dict[str, Callable[..., Any]]:
     """rename: refused on name-only matches, applied atomically, verified by a recompile, rolled back on new errors."""
 
     def rename(path: str, line: int, col: int, new_name: str, apply: bool = False) -> dict[str, Any]:
@@ -685,12 +741,16 @@ def rename_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., An
             }
             for edit in changed
         ]
+        decision = interaction.UNSUPPORTED
+        if apply and changed:
+            decision = confirm_edits(confirm_policy, f"Rename to {new_name} in {len(changed)} file(s)", changed, root)
+            apply = not declined(decision)
         result: dict[str, Any] = {"renamed": apply, "files": files[:cap], "fileCount": len(files)}
         if refused:
             result["skipped"] = [relative_path(uri, root) for uri in refused][:cap]
         if apply and changed:
             result.update(apply_verified(changed))
-        return result
+        return with_decision(result, decision)
 
     def apply_verified(changed: list[FileEdit]) -> dict[str, Any]:
         """Write the edits, recompile the changed files, and restore every file when a write fails, the engine
@@ -895,6 +955,8 @@ def build_tools(
     clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
     report_settings = output.get("reports") if isinstance(output.get("reports"), Mapping) else {}
     classpath_settings = output.get("classpath") if isinstance(output.get("classpath"), Mapping) else {}
+    mcp_settings: Mapping[str, Any] = output.get("mcp") or {}
+    policy = str(mcp_settings.get("confirmWrites", interaction.POLICY_AUTO))
     tools: dict[str, Callable[..., Any]] = {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, paged, cap),
@@ -910,11 +972,12 @@ def build_tools(
             clip_at=clip_at,
             report_settings=report_settings,
             classpath_settings=classpath_settings,
+            confirm_policy=policy,
         ),
-        **practice_tools(root, call, cap, clip_at, report_settings),
+        **practice_tools(root, call, cap, clip_at, report_settings, confirm_policy=policy),
     }
     tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
-    tools.update(mcp_understanding.understanding_tools(root, call, cap, tools))
+    tools.update(mcp_understanding.understanding_tools(root, call, cap, tools, confirm_policy=policy))
     return tools
 
 
@@ -931,13 +994,26 @@ def respond(function: Callable[..., Any], *, structured: bool, max_bytes: int = 
 
     @functools.wraps(function)
     def wrapper(*args: Any, **kwargs: Any) -> CallToolResult:
-        result = fit(function(*args, **kwargs), max_bytes)
+        # The SDK passes the request context as `ctx` (declared below); the tool itself never sees it, the
+        # confirmations and progress notes in `interaction` read it from this worker thread.
+        context = kwargs.pop(CONTEXT_PARAMETER, None)
+        with interaction.bound(context):
+            result = fit(function(*args, **kwargs), max_bytes)
         return CallToolResult(
             content=[TextContent(type="text", text=compact_json(result))],
             structured_content=result if structured and isinstance(result, dict) else None,
         )
 
+    signature = inspect.signature(function)
+    context_parameter = inspect.Parameter(CONTEXT_PARAMETER, inspect.Parameter.KEYWORD_ONLY, annotation=Context)
+    wrapper.__signature__ = signature.replace(  # type: ignore[attr-defined]
+        parameters=[*signature.parameters.values(), context_parameter]
+    )
+    wrapper.__annotations__ = {**getattr(function, "__annotations__", {}), CONTEXT_PARAMETER: Context}
     return wrapper
+
+
+CONTEXT_PARAMETER = "ctx"
 
 
 FIT_ROUNDS = 64
@@ -1011,6 +1087,62 @@ def clip_longest_string(value: Any) -> bool:
     return True
 
 
+PRACTICES_URI = "groovyscope://practices"
+
+
+def register_resources(server: MCPServer) -> None:
+    """The practices catalogue as a knowledge base: an index of every groovyscope code, and one page per code.
+    Kiro lists resources under `#`; a client reads them only when the user or the agent asks, so they cost no
+    context until then."""
+    server.resource(
+        PRACTICES_URI,
+        name="practices",
+        title="Groovy practices catalogue",
+        description="Every GS and RP code with its group, severity and title; read a code's page for the fix",
+        mime_type="text/markdown",
+    )(practices_index)
+    server.resource(
+        PRACTICES_URI + "/{code}",
+        name="practice",
+        title="One practice",
+        description="Why a groovyscope code matters, a bad and a good example, and the fix",
+        mime_type="text/markdown",
+    )(practice_page)
+
+
+def practices_index() -> str:
+    """The catalogue as Markdown: the review checklist groups, then one row per code."""
+    catalog = practices.catalog()
+    lines = ["# Groovy practices", "", "## Review checklist", ""]
+    lines.extend(f"- **{group['title']}** ({group['id']}): {group['check']}" for group in catalog["groups"])
+    lines += ["", "## Codes", "", "| Code | Group | Severity | Title |", "|---|---|---|---|"]
+    lines.extend(
+        f"| {item['code']} | {item.get('group', '')} | {item.get('severity', '')} | {item.get('title', '')} |"
+        for item in catalog["entries"]
+    )
+    lines += ["", f"Read `{PRACTICES_URI}/<code>` for one code; the full guide is {catalog['docs']}."]
+    return "\n".join(lines) + "\n"
+
+
+def practice_page(code: str) -> str:
+    """One code as Markdown: why it matters, the bad and good forms, the fix and the guide section."""
+    found = practices.entry(code.strip().upper())
+    if found is None:
+        return f"# {code}\n\nNot a groovyscope practice code; `explain` covers CodeNarc rules and Groovy checkers.\n"
+    parts = [f"# {found['code']}: {found.get('title', '')}", ""]
+    group, severity, groovy = (found.get(key, "") for key in ("group", "severity", "groovy"))
+    parts.append(f"Group {group}, severity {severity}, Groovy {groovy}.")
+    for label, key in (("Why", "why"), ("Instead of", "bad"), ("Write", "good"), ("Fix", "fix")):
+        value = found.get(key)
+        if value:
+            body = f"`{value}`" if key in {"bad", "good"} else str(value)
+            parts += ["", f"**{label}:** {body}"]
+    link = practices.link(found["code"])
+    if link:
+        parts += ["", f"Guide: {link}"]
+    return "\n".join(parts) + "\n"
+
+
 def register_prompts(server: MCPServer) -> None:
     """Each shipped skill as an MCP prompt (Kiro lists them under `/`), with one optional `arguments` string."""
     for skill in skills.load_skills():
@@ -1033,6 +1165,7 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     results."""
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
     register_prompts(server)
+    register_resources(server)
     structured = bool(output.get("structured", False))
     max_bytes = int(output.get("maxBytes", 16000))
     for name, function in build_tools(root, call, output, environ).items():
@@ -1104,6 +1237,29 @@ RELOAD_TIMEOUT_SECONDS = 60.0
 Opener = Callable[[Path], Any]
 EngineCall = Callable[..., Any]
 Dispatch = Callable[[str, dict[str, Any]], Any]
+
+
+def confirm_edits(policy: str, action: str, changed: Sequence[FileEdit], root: Path) -> str:
+    """Asks before ``changed`` are written (see :mod:`groovyscope.interaction`); the decision."""
+    files = [
+        (relative_path(edit["path"].as_uri(), root), changed_line_count(edit["before"], edit["after"]))
+        for edit in changed
+    ]
+    return interaction.confirm(interaction.write_question(action, files), policy=policy)
+
+
+def declined(decision: str) -> bool:
+    return decision in {interaction.DECLINED, interaction.CANCELLED}
+
+
+def with_decision(result: dict[str, Any], decision: str) -> dict[str, Any]:
+    """The answer with the user's decision when one was asked for; a decline also says that nothing changed."""
+    if decision == interaction.UNSUPPORTED:
+        return result
+    result["confirmation"] = decision
+    if declined(decision):
+        result["note"] = "the user said no; nothing was written"
+    return result
 
 
 def write_if_unchanged(edit: FileEdit, refused: list[str]) -> bool:
@@ -1187,7 +1343,12 @@ def engine_dispatcher(
     return (dispatch, lambda: closer(state["session"]))
 
 
-def single_flight(dispatch: Dispatch, budget: float, max_in_flight: int) -> Call:
+DEFAULT_PROGRESS_SECONDS = 5.0
+
+
+def single_flight(
+    dispatch: Dispatch, budget: float, max_in_flight: int, progress_every: float = DEFAULT_PROGRESS_SECONDS
+) -> Call:
     """``dispatch`` behind two guardrails: at most ``max_in_flight`` calls reach the engine at a time (the rest
     wait within ``budget``), and a call identical to one still running joins it instead of doubling the work. A
     leader over its budget has already told the engine to stop (``channel_call`` cancels); it and its followers
@@ -1222,12 +1383,34 @@ def single_flight(dispatch: Dispatch, budget: float, max_in_flight: int) -> Call
             future = in_flight.setdefault(key, own)
         leader = future is own
         if leader:
-            lead(key, method, params, future)
+            # The request runs on its own thread so this one stays free to tell the client it is still waiting.
+            threading.Thread(
+                target=lead, args=(key, method, params, future), name=f"groovyscope-call-{method}", daemon=True
+            ).start()
+        # The leader's request is bounded (a slot within the budget, then the engine within the budget); a
+        # follower waits one budget for someone else's work.
+        deadline = None if leader else time.monotonic() + budget
+        started = time.monotonic()
+        while True:
+            left = None if deadline is None else deadline - time.monotonic()
+            if left is not None and left <= 0:
+                msg = (
+                    f"{method} did not answer within {budget:.0f}s; another call is still running it. "
+                    "Narrow the paths or retry in a moment"
+                )
+                raise RuntimeError(msg)
+            done, _ = futures.wait([future], timeout=progress_every if left is None else min(progress_every, left))
+            if done:
+                break
+            waited = time.monotonic() - started
+            interaction.progress(waited, None, f"{method}: the engine is still working ({waited:.0f}s)")
         try:
-            return future.result(timeout=budget)
+            return future.result()
         except TimeoutError as exc:
-            tail = "the engine was told to stop it" if leader else "another call is still running it"
-            msg = f"{method} did not answer within {budget:.0f}s; {tail}. Narrow the paths or retry in a moment"
+            msg = (
+                f"{method} did not answer within {budget:.0f}s; the engine was told to stop it. "
+                "Narrow the paths or retry in a moment"
+            )
             raise RuntimeError(msg) from exc
 
     return call
@@ -1250,6 +1433,7 @@ def session_caller(
     request retried once. Also returns a closer. ``configuration`` returns the current effective configuration as
     ``(hash, json)``; a hash the engine has not seen yet is sent as ``groovyscope/reloadConfig`` first."""
     budget, max_in_flight = request_limits(limits)
+    every = float((limits or {}).get("progressSeconds", DEFAULT_PROGRESS_SECONDS))
     dispatch, close = engine_dispatcher(
         socket_file,
         reconnect,
@@ -1259,7 +1443,7 @@ def session_caller(
         configuration=configuration,
         budget=budget,
     )
-    return (single_flight(dispatch, budget, max_in_flight), close)
+    return (single_flight(dispatch, budget, max_in_flight, max(0.5, every)), close)
 
 
 def serve(
