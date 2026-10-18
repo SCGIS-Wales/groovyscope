@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.15.0...v0.16.0) (2026-10-18)
+
+
+### Features
+
+* asynchronous guardrails in the engine and the front end ([#70](https://github.com/SCGIS-Wales/groovyscope/issues/70)) ([9150385](https://github.com/SCGIS-Wales/groovyscope/commit/9150385f7bdd50869b3e3efc434ee072d28cddf0))
+* out-of-memory self-healing in the engine and the front end ([#71](https://github.com/SCGIS-Wales/groovyscope/issues/71)) ([c0777c0](https://github.com/SCGIS-Wales/groovyscope/commit/c0777c01c33550ab5db69ec717c98d1b62dde765))
+
+
+### Documentation
+
+* revised plan for asynchronous calls and out-of-memory guardrails ([#67](https://github.com/SCGIS-Wales/groovyscope/issues/67)) ([55615ca](https://github.com/SCGIS-Wales/groovyscope/commit/55615cabde1309905faaaca58906e826282db208))
+
 ## [0.15.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.14.0...v0.15.0) (2026-10-18)
 
 
