@@ -1,5 +1,6 @@
-"""Relationship graphs as pictures: a layered layout (base classes and callers above, what they use below) sized
-to an A4 page, a calm palette, no overlapping boxes or text, written as a draw.io file or a Mermaid diagram.
+"""Relationship graphs as pictures: a layered layout (base classes and callers above, what they use below) on the
+smallest paper that keeps the text readable (A4, then A3, then A2), a calm palette, no overlapping boxes or text,
+written as a draw.io file or a Mermaid diagram.
 
 The graph comes from the engine (``groovyscope/graph``): nodes are classes (or one class's methods), edges are
 ``extends``, ``implements``, ``has``, ``uses`` and ``calls`` with a confidence. Everything here is pure: the same
@@ -12,9 +13,9 @@ import html
 from collections.abc import Mapping, Sequence
 from typing import Any, TypedDict
 
-# A4 at 96 dpi, as draw.io prints it; margins keep the drawing off the page edge.
-A4_PORTRAIT = (827, 1169)
-A4_LANDSCAPE = (1169, 827)
+# Paper at 96 dpi, as draw.io prints it (short side, long side), smallest first: a drawing moves to the next size
+# instead of shrinking its text below MIN_FONT. Margins keep the drawing off the page edge.
+PAPERS = (("A4", (827, 1169)), ("A3", (1169, 1654)), ("A2", (1654, 2339)))
 MARGIN = 40
 LEGEND_HEIGHT = 70
 NODE_HEIGHT = 46
@@ -71,6 +72,7 @@ class Layout(TypedDict):
     """The whole drawing."""
 
     page: tuple[int, int]
+    paper: str  # A4, A3 or A2 (a drawing larger than A2 at a readable size extends the A2 page)
     orientation: str
     font: int
     scale: float
@@ -147,7 +149,9 @@ def order_layers(ids: Sequence[str], layers: Mapping[str, int], kept: Sequence[t
     for source, target in kept:
         neighbours[source].append(target)
         neighbours[target].append(source)
-    for sweep in range(SWEEPS):
+    # An odd number of sweeps, so the last one runs downwards: each row ends ordered by the row above it, which keeps
+    # the callees or subclasses of one node together under it.
+    for sweep in range(SWEEPS + 1 - SWEEPS % 2):
         sequence = range(1, depth) if sweep % 2 == 0 else range(depth - 2, -1, -1)
         for index in sequence:
             reference = rows[index - 1] if sweep % 2 == 0 else rows[index + 1]
@@ -238,9 +242,88 @@ def assign_x(
     return {node: x - shift for node, x in left.items()}
 
 
+READABLE_SCALE = MIN_FONT / BASE_FONT
+OVERSIZED = "larger than A2"
+
+
+def fit_scale(page: tuple[int, int], width: float, height: float) -> float:
+    """How far a drawing of ``width`` by ``height`` must shrink to fit ``page`` (1.0 when it fits as it is)."""
+    usable_width = page[0] - 2 * MARGIN
+    usable_height = page[1] - 2 * MARGIN - LEGEND_HEIGHT
+    return min(1.0, usable_width / width if width else 1.0, usable_height / height if height else 1.0)
+
+
+def wrap_rows(rows: Sequence[Sequence[str]], widths: Mapping[str, float], limit: float) -> list[list[str]]:
+    """Each row split, in its order, into lines no wider than ``limit``: a layer of a hundred methods becomes several
+    stacked lines instead of one line ten sheets wide."""
+    wrapped: list[list[str]] = []
+    for row in rows:
+        line: list[str] = []
+        used = 0.0
+        for node in row:
+            needed = widths[node] + (H_GAP if line else 0.0)
+            if line and used + needed > limit:
+                wrapped.append(line)
+                line, used, needed = [], 0.0, widths[node]
+            line.append(node)
+            used += needed
+        if line:
+            wrapped.append(line)
+    return wrapped
+
+
+def packed_size(rows: Sequence[Sequence[str]], widths: Mapping[str, float]) -> tuple[float, float]:
+    """Width and height of the rows packed left to right, one gap more than the rows need below the last (edges
+    between boxes of the last row run there)."""
+    width = max((sum(widths[n] for n in row) + H_GAP * (len(row) - 1) for row in rows), default=0.0)
+    return width, len(rows) * (NODE_HEIGHT + V_GAP)
+
+
+WRAP_SCALES = (1.0, 0.9, 0.8, MIN_FONT / BASE_FONT)
+REWRAP_TRIES = 3
+REWRAP_FACTOR = 0.85
+
+
+def choose_paper(
+    rows: Sequence[Sequence[str]], widths: Mapping[str, float]
+) -> tuple[str, tuple[int, int], float, list[list[str]]]:
+    """The smallest paper (A4, then A3, then A2; portrait or landscape) on which the drawing keeps a readable font:
+    the paper name, the page size, the scale and the rows to draw. Rows stay as they are when any of the three holds
+    them; only a drawing too wide even for A2 has its wide rows wrapped onto several lines (again A4 first). Past
+    that the rows wrap to the A2 width at the readable scale and the page grows downwards."""
+    unwrapped = [list(row) for row in rows]
+    for name, (short, long) in PAPERS:
+        page = max(((long, short), (short, long)), key=lambda c: fit_scale(c, *packed_size(unwrapped, widths)))
+        scale = fit_scale(page, *packed_size(unwrapped, widths))
+        if scale >= READABLE_SCALE:
+            return name, page, scale, unwrapped
+    for name, (short, long) in PAPERS:
+        best: tuple[float, tuple[int, int], list[list[str]]] | None = None
+        for page in ((long, short), (short, long)):
+            usable = page[0] - 2 * MARGIN
+            for target in WRAP_SCALES:
+                candidate = wrap_rows(rows, widths, usable / target)
+                scale = fit_scale(page, *packed_size(candidate, widths))
+                if scale >= READABLE_SCALE and (best is None or scale > best[0]):
+                    best = (scale, page, candidate)
+        if best is not None:
+            return name, best[1], best[0], best[2]
+    short, long = PAPERS[-1][1]
+    page = (long, short)
+    wrapped = wrap_rows(rows, widths, (page[0] - 2 * MARGIN) / READABLE_SCALE)
+    return OVERSIZED, grown_page(page, *packed_size(wrapped, widths)), READABLE_SCALE, wrapped
+
+
+def grown_page(page: tuple[int, int], width: float, height: float) -> tuple[int, int]:
+    """``page``, enlarged where a drawing of ``width`` by ``height`` at the readable scale does not fit on it."""
+    needed_width = width * READABLE_SCALE + 2 * MARGIN
+    needed_height = height * READABLE_SCALE + 2 * MARGIN + LEGEND_HEIGHT
+    return (max(page[0], round(needed_width + 0.5)), max(page[1], round(needed_height + 0.5)))
+
+
 def layout(graph: Mapping[str, Any]) -> Layout:
-    """Place every node on an A4 page (portrait or landscape, whichever fits the shape better) and route every edge
-    through the gaps between rows and boxes, so no line crosses a box."""
+    """Place every node on the smallest paper that keeps the text readable (A4, A3 or A2, portrait or landscape) and
+    route every edge through the gaps between rows and boxes, so no line crosses a box."""
     nodes = list(graph.get("nodes", []))
     ids = [str(n["id"]) for n in nodes]
     by_id = {str(n["id"]): n for n in nodes}
@@ -254,21 +337,32 @@ def layout(graph: Mapping[str, Any]) -> Layout:
             packages[package] = FILLS[len(packages) % len(FILLS)]
     labels = {node_id: label_of(by_id[node_id]) for node_id in ids}
     widths = {node_id: box_width(*labels[node_id]) for node_id in ids}
-    up, down = adjacent_neighbours(rows, layers, kept)
-    left = assign_x(rows, widths, up, down)
-    total_width = max((left[n] + widths[n] for n in ids), default=0.0)
-    # One gap more than the rows need: edges between boxes of the last row run below it.
-    total_height = max(0.0, len(rows) * (NODE_HEIGHT + V_GAP))
-    page = A4_LANDSCAPE if total_width > total_height * 1.15 else A4_PORTRAIT
+    layered = rows
+    paper, page, scale, rows = choose_paper(layered, widths)
+    # Centring parents over children can widen a line past its packed width: wrap tighter (a few tries) before the
+    # text would have to shrink, and only then grow the page.
+    limit = (page[0] - 2 * MARGIN) / scale
+    for _ in range(REWRAP_TRIES + 1):
+        placed_rows = {node: index for index, row in enumerate(rows) for node in row}
+        up, down = adjacent_neighbours(rows, placed_rows, kept)
+        left = assign_x(rows, widths, up, down)
+        total_width = max((left[n] + widths[n] for n in ids), default=0.0)
+        total_height = max(0.0, len(rows) * (NODE_HEIGHT + V_GAP))
+        if fit_scale(page, total_width, total_height) >= READABLE_SCALE:
+            scale = min(scale, fit_scale(page, total_width, total_height))
+            break
+        limit *= REWRAP_FACTOR
+        rows = wrap_rows(layered, widths, limit)
+    else:
+        paper, page, scale = OVERSIZED, grown_page(page, total_width, total_height), READABLE_SCALE
     usable_width = page[0] - 2 * MARGIN
-    usable_height = page[1] - 2 * MARGIN - LEGEND_HEIGHT
-    scale = min(
-        1.0, usable_width / total_width if total_width else 1.0, usable_height / total_height if total_height else 1.0
-    )
     font = max(MIN_FONT, round(BASE_FONT * scale))
     note = ""
-    if scale < MIN_FONT / BASE_FONT:
-        note = "too many nodes for one readable page: narrow the scope (fewer seeds, lower depth) or print on A3"
+    if paper == OVERSIZED:
+        note = (
+            "larger than A2 at a readable size: the page was extended past A2; print it tiled, or narrow the scope "
+            "(fewer seeds, lower depth, a lower max_nodes)"
+        )
     offset = (usable_width - total_width * scale) / 2
     placed: list[Placed] = []
     for index, row in enumerate(rows):
@@ -292,7 +386,8 @@ def layout(graph: Mapping[str, Any]) -> Layout:
             )
     return {
         "page": page,
-        "orientation": "landscape" if page == A4_LANDSCAPE else "portrait",
+        "paper": "A2" if paper == OVERSIZED else paper,
+        "orientation": "landscape" if page[0] > page[1] else "portrait",
         "font": font,
         "scale": scale,
         "nodes": placed,
@@ -350,7 +445,10 @@ def plan_edges(
         a, b = boxes[source], boxes[target]
         same = a["row"] == b["row"]
         upper, lower = (a, b) if same or a["row"] < b["row"] else (b, a)
-        shared = str(edge.get("kind")) in HIERARCHY and upper["id"] == target
+        # One port and one lane per base class for its subclasses, and per caller for its calls (a fan-out bus);
+        # an edge pointing upwards (a call back to a caller) keeps its own.
+        hierarchy = str(edge.get("kind")) in HIERARCHY
+        shared = upper["id"] == (target if hierarchy else source)
         span = lower["row"] - upper["row"]
         plans.append(
             {
@@ -358,7 +456,7 @@ def plan_edges(
                 "upper": upper,
                 "lower": lower,
                 "same": same,
-                "upper_key": (upper["id"], "bottom", str(edge.get("kind")) if shared else f"e{index}"),
+                "upper_key": (upper["id"], "bottom", f"k:{edge.get('kind')}" if shared else f"e{index}"),
                 "lower_key": (lower["id"], "bottom" if same else "top", f"e{index}"),
                 "corridors": [
                     corridor(rows[k], middle(upper) + (middle(lower) - middle(upper)) * (k - upper["row"]) / span)
@@ -397,7 +495,7 @@ def lane_positions(
         row = plan["upper"]["row"]
         owners.setdefault(row, {}).setdefault(first_owner(plan), ports[plan["upper_key"]])
         for offset, x in enumerate(plan["corridors"], start=1):
-            owners.setdefault(row + offset, {}).setdefault(f"run{plan['index']}", x)
+            owners.setdefault(row + offset, {}).setdefault(run_owner(plan), x)
     lanes: dict[tuple[int, str], float] = {}
     for row_index, row_owners in owners.items():
         bottom = rows[row_index][0]["y"] + rows[row_index][0]["height"]
@@ -405,6 +503,12 @@ def lane_positions(
         for position, owner in enumerate(ordered):
             lanes[(row_index, owner)] = bottom + gap * (position + 1) / (len(ordered) + 1)
     return lanes
+
+
+def run_owner(plan: Plan) -> str:
+    """The lane owner of an edge's runs below the first gap: shared by the edges of one shared port, else its own."""
+    shared = plan["upper_key"][2].startswith("k:")
+    return "run|" + "|".join(plan["upper_key"]) if shared else f"run{plan['index']}"
 
 
 def first_owner(plan: Plan) -> str:
@@ -417,7 +521,7 @@ def polyline(plan: Plan, ports: Mapping[PortKey, float], lanes: Mapping[tuple[in
     points = [(start_x, upper["y"] + upper["height"])]
     x = start_x
     for step, row_index in enumerate(range(upper["row"], max(lower["row"], upper["row"] + 1))):
-        lane = lanes[(row_index, first_owner(plan) if step == 0 else f"run{plan['index']}")]
+        lane = lanes[(row_index, first_owner(plan) if step == 0 else run_owner(plan))]
         following = plan["corridors"][step] if step < len(plan["corridors"]) else end_x
         points += [(x, lane), (following, lane)]
         x = following
@@ -485,13 +589,19 @@ def check_layout(drawn: Layout) -> list[str]:
         for other in nodes[index + 1 :]:
             if overlaps(box, other):
                 problems.append(f"{box['id']} overlaps {other['id']}")
+    # Boxes by row band, so each segment is tested only against the rows it spans (a thousand edges over two
+    # hundred boxes stays well under a second).
+    bands: dict[tuple[float, float], list[Placed]] = {}
+    for box in nodes:
+        bands.setdefault((box["y"], box["y"] + box["height"]), []).append(box)
     for route in drawn.get("routes", []):
-        segments = list(zip(route["points"], route["points"][1:], strict=False))
-        for box in nodes:
-            for start, end in segments:
-                if crosses(start, end, box):
-                    problems.append(f"edge {route['edge']} crosses {box['id']}")
-                    break
+        crossed: list[str] = []
+        for start, end in zip(route["points"], route["points"][1:], strict=False):
+            low, high = sorted((start[1], end[1]))
+            for (top, bottom), boxes in bands.items():
+                if low < bottom and high > top:
+                    crossed += [box["id"] for box in boxes if box["id"] not in crossed and crosses(start, end, box)]
+        problems += [f"edge {route['edge']} crosses {box_id}" for box_id in crossed]
     return problems
 
 

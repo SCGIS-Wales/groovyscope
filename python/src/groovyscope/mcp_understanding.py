@@ -254,7 +254,7 @@ def write_diagram(
     write_atomically(target, graphs.to_drawio(raw, drawn, title=target.stem))
     result["written"] = shown
     result["writtenTo"] = str(target)  # the absolute path: the workspace root may not be where the user looks
-    result["page"] = {"orientation": drawn["orientation"], "font": drawn["font"]}
+    result["page"] = {"paper": drawn["paper"], "orientation": drawn["orientation"], "font": drawn["font"]}
     problems = graphs.check_layout(drawn)
     if problems:
         result["layoutProblems"] = problems[:cap]
@@ -282,8 +282,9 @@ def graph_tools(
         public method takes or returns another class) and calls (aggregated call graph edges with the weakest
         confidence). SYMBOLS or PATHS seed the graph and DEPTH is how many hops to show around them (none given:
         the whole workspace, capped at MAX_NODES, best connected first); LEVEL `method` shows one class's methods.
-        DRAWIO_PATH writes a draw.io file laid out on an A4 page (open it in diagrams.net); MERMAID adds a class
-        diagram for the answer. The graph itself is returned compact: nodes and edges, no file bodies."""
+        DRAWIO_PATH writes a draw.io file on A4, A3 or A2, whichever keeps the text readable (open it in
+        diagrams.net); MERMAID adds a class diagram for the answer. The graph itself is returned compact: nodes
+        and edges, no file bodies."""
         for kind in kinds or []:
             if kind not in GRAPH_KINDS:
                 return {"error": f"unknown edge kind {kind!r}", "kinds": list(GRAPH_KINDS)}

@@ -260,7 +260,7 @@ sharing the workspace daemon with the LSP side) adds 28 tools; the README lists 
 - "Explain what `ResourceExecutionPlugin` does" → `explain_code(symbol=...)`: members, calls, callers, field
   writes, exceptions and the external world it touches, as facts the agent turns into prose
 - "Draw the class diagram around `OrderService` for draw.io" → `relationship_graph(symbols=[...], depth=2,
-  drawio_path="docs/order-service.drawio")`, an A4 page to open in diagrams.net
+  drawio_path="docs/order-service.drawio")`, on A4, A3 or A2 (the smallest that keeps the text readable) to open in diagrams.net
 - "Are things named well in this package?" → `check_naming(paths=[...])`, then `rename` for each agreed change
 
 - "What is in this repository?" → `workspace_overview()`, then `document_symbols(path)` for a file's outline
