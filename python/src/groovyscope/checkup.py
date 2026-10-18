@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from groovyscope import __version__, benchmark, daemon, doctor, kiro, kiro_agent, profiles
+from groovyscope import __version__, benchmark, daemon, doctor, kiro, kiro_agent, profiles, sweep
 from groovyscope import classpath as classpath_state
 from groovyscope.classpath import DEFAULT_FILE
 from groovyscope.config import load_config
@@ -222,7 +222,30 @@ def daemon_item(root: Path, environ: Mapping[str, str], config_hash: str | None)
             "name": "daemon",
             "message": "running with an older configuration; the next request reloads it in place",
         }
+    grown = info.get("heap")
+    if grown:
+        return {
+            "level": "info",
+            "name": "daemon",
+            "message": f"running (engine {status.get('engineVersion', '?')}) with a {grown} heap, grown after an "
+            "out-of-memory exit; raise daemon.heap to keep it",
+        }
     return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engineVersion', '?')})"}
+
+
+def cache_item(environ: Mapping[str, str], logs_kept: int, *, fix: bool) -> tuple[Item, list[str]]:
+    """Rotated logs beyond the kept count, stale CDS archives and old heap dumps; removed with ``fix``."""
+    items = sweep.inventory(daemon.cache_dir(environ), logs_kept=logs_kept)
+    if not items:
+        return ({"level": "ok", "name": "cache", "message": "nothing to sweep"}, [])
+    if fix:
+        failed = sweep.remove(items)
+        done = [f"removed {item['path']}" for item in items if item["path"] not in failed]
+        if failed:
+            return ({"level": "warn", "name": "cache", "message": f"{len(failed)} file(s) could not be removed"}, done)
+        return ({"level": "ok", "name": "cache", "message": f"swept {sweep.summary(items)}"}, done)
+    item: Item = {"level": "info", "name": "cache", "message": sweep.summary(items), "fix": "groovyscope checkup --fix"}
+    return (item, [])
 
 
 def guarded(name: str, check: Check) -> tuple[Item, list[str]]:
@@ -262,10 +285,20 @@ def build(
     add(*guarded("jdk", lambda: (jdk_item(root, config_path, environ), [])))
     add(*guarded("engine jar", lambda: (jar_item(environ), [])))
     add(*guarded("daemon", lambda: (daemon_item(root, environ, config_hash), [])))
+    add(*guarded("cache", lambda: cache_item(environ, logs_kept(root, config_path, environ), fix=fix)))
     todo = [f"{item['message']}. Fix: `{item['fix']}`" for item in items if item.get("fix") and not item.get("safe")]
     todo += [f"{item['message']}. Fix: `{item['fix']}`" for item in items if item.get("fix") and item.get("safe")]
     todo += [f"{item['name']}: {item['message']}" for item in items if item["level"] == "fail" and not item.get("fix")]
     return {"version": __version__, "root": str(root), "items": items, "repaired": repaired, "todo": todo}
+
+
+def logs_kept(root: Path, config_path: Path | None, environ: Mapping[str, str]) -> int:
+    """``daemon.logsKept`` from the effective configuration, 3 when it cannot be read."""
+    try:
+        effective = load_config(root, config_path, environ)
+    except Exception:
+        return 3
+    return int((effective.get("daemon") or {}).get("logsKept", 3))
 
 
 def agent_item(root: Path, environ: Mapping[str, str], home: Path, run: kiro_agent.KiroRunner | None) -> Item:

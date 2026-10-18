@@ -597,18 +597,53 @@ public final class LanguageServices {
      */
     public Map<String, List<Diagnostic>> diagnostics() {
         Snapshot current = snapshot();
-        if (!workspace.classpath().isEmpty()) {
-            return current.result().diagnostics();
+        Map<String, List<Diagnostic>> base = current.result().diagnostics();
+        if (workspace.classpath().isEmpty()) {
+            FoldedDiagnostics cached = folded;
+            if (cached == null || cached.version() != current.version()) {
+                cached = new FoldedDiagnostics(current.version(), Map.copyOf(
+                        org.groovyscope.engine.compile.MissingDependencies.fold(current.result().diagnostics(),
+                                current.result().sources(), org.groovyscope.engine.practices.PracticeFinder.severity(
+                                        org.groovyscope.engine.compile.MissingDependencies.CODE, workspace.config()))));
+                folded = cached;
+            }
+            base = cached.diagnostics();
         }
-        FoldedDiagnostics cached = folded;
-        if (cached == null || cached.version() != current.version()) {
-            cached = new FoldedDiagnostics(current.version(), Map.copyOf(
-                    org.groovyscope.engine.compile.MissingDependencies.fold(current.result().diagnostics(),
-                            current.result().sources(), org.groovyscope.engine.practices.PracticeFinder.severity(
-                                    org.groovyscope.engine.compile.MissingDependencies.CODE, workspace.config()))));
-            folded = cached;
+        return withBudgetWarning(base, current.result().sources().keySet());
+    }
+
+    /** The code of the warning that names what the workspace budget left out of the analysis. */
+    public static final String BUDGET_CODE = "GS101";
+
+    /** Adds one {@code GS101} warning on the first document when the budget left files out; else {@code base}. */
+    Map<String, List<Diagnostic>> withBudgetWarning(Map<String, List<Diagnostic>> base, java.util.Set<String> uris) {
+        List<java.nio.file.Path> omitted = workspace.omitted();
+        if (omitted.isEmpty() || uris.isEmpty()) {
+            return base;
         }
-        return cached.diagnostics();
+        String first = uris.stream().sorted().findFirst().orElseThrow();
+        EngineConfig.Budget budget = workspace.config().budget();
+        String example = workspace.root().relativize(omitted.get(0)).toString();
+        Diagnostic warning = new Diagnostic(first, Range.of(0, 0, 0, 1), Diagnostic.Severity.WARNING, "groovyscope",
+                BUDGET_CODE, omitted.size() + " file(s) left out of the analysis (first: " + example
+                + "): the workspace is over workspace.maxFiles (" + budget.maxFiles() + ") or workspace.maxTotalBytes ("
+                + budget.maxTotalBytes() + "); raise them in .groovyscope.yaml or narrow workspace.sourceRoots");
+        Map<String, List<Diagnostic>> copy = new HashMap<>(base);
+        List<Diagnostic> list = new ArrayList<>(copy.getOrDefault(first, List.of()));
+        list.add(warning);
+        copy.put(first, list);
+        return copy;
+    }
+
+    /** Drops every cache that can be rebuilt from the snapshot: what memory pressure asks for. */
+    public void shed() {
+        synchronized (lock) {
+            graph = null;
+            graphVersion = -1;
+            quality = null;
+            folded = null;
+        }
+        cachedSymbols = null;
     }
 
     public Optional<Definition> definition(String uri, Position position) {

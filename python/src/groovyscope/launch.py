@@ -29,10 +29,13 @@ def build_engine_command(
     engine_args: Sequence[str],
     *,
     cds_archive: Path | None = None,
+    dump_dir: Path | None = None,
 ) -> list[str]:
     """``java <jvm flags> -jar <jar> <engine args>`` with the heap taken from ``daemon.heap``.
 
-    The JVM exits on ``OutOfMemoryError`` (``OOM_FLAG``) rather than serving requests with a full heap.
+    The JVM exits on ``OutOfMemoryError`` (``OOM_FLAG``) rather than serving requests with a full heap. With
+    ``daemon.heapDumpOnOutOfMemory`` and a ``dump_dir`` it writes a heap dump there first (opt in: a dump is the
+    size of the heap).
 
     With ``cds_archive`` the JVM creates (first run) and then reuses a Class Data Sharing archive, which
     shortens daemon start-up. Pass it only for JDK 19 or newer.
@@ -42,11 +45,15 @@ def build_engine_command(
     sharing = ["-Xshare:auto"]
     if cds_archive is not None:
         sharing = ["-XX:+AutoCreateSharedArchive", f"-XX:SharedArchiveFile={cds_archive}"]
+    dumps: list[str] = []
+    if dump_dir is not None and bool(daemon.get("heapDumpOnOutOfMemory", False)):
+        dumps = ["-XX:+HeapDumpOnOutOfMemoryError", f"-XX:HeapDumpPath={dump_dir}"]
     return [
         str(java_executable(java_home)),
         f"-Xmx{heap}",
         "-XX:+UseSerialGC",
         OOM_FLAG,
+        *dumps,
         *sharing,
         *SAFETY_FLAGS,
         "-jar",

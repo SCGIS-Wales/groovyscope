@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
+from groovyscope import edits as edits_module
 from groovyscope.edits import apply_edits, changed_line_count, line_starts, offset_of
 
 
@@ -28,3 +33,16 @@ def test_changed_line_count() -> None:
     assert changed_line_count("a\nb\nc\n", "a\nB\nc\n") == 1
     assert changed_line_count("a\nb\n", "a\nb\nc\nd\n") == 2
     assert changed_line_count("same", "same") == 0
+
+
+def test_write_document_refuses_a_file_that_changed_since_it_was_read(tmp_path: Path) -> None:
+    target = tmp_path / "A.groovy"
+    target.write_text("class A {}\n")
+    edits_module.write_document(target, "class A { }\n", expected="class A {}\n")
+    assert target.read_text() == "class A { }\n"
+    target.write_text("class A { int x }\n")  # somebody saved in between
+    with pytest.raises(edits_module.FileChangedError, match="changed on disk"):
+        edits_module.write_document(target, "class B {}\n", expected="class A { }\n")
+    assert target.read_text() == "class A { int x }\n"
+    edits_module.write_document(target, "class C {}\n")  # without an expectation the write is unconditional
+    assert target.read_text() == "class C {}\n"

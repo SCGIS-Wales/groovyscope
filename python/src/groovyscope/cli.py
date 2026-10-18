@@ -39,7 +39,7 @@ from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
 from groovyscope.config import dump_yaml, load_config, load_config_with_notes
 from groovyscope.doctor import build_report, has_failures
-from groovyscope.edits import changed_line_count, file_edits, write_document
+from groovyscope.edits import FileChangedError, FileEdit, changed_line_count, file_edits, write_document
 from groovyscope.jar import locate_jar, read_manifest
 from groovyscope.java import JdkInfo, discover
 from groovyscope.kiro import (
@@ -498,7 +498,10 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     archive = cds_archive_for(effective, jdk, jar["actual_sha256"], dict(os.environ))
     if archive is not None:
         archive.parent.mkdir(parents=True, exist_ok=True)
-    command = build_engine_command(Path(jdk["home"]), Path(jar["path"]), effective, [], cds_archive=archive)
+    dumps = daemon_lifecycle.cache_dir(dict(os.environ)) / "dumps"
+    command = build_engine_command(
+        Path(jdk["home"]), Path(jar["path"]), effective, [], cds_archive=archive, dump_dir=dumps
+    )
     obj["engine_version"] = jar["version"]
     obj["jdk_home"] = jdk["home"]
     LOG.debug("engine command: %s", " ".join(command))
@@ -643,7 +646,12 @@ def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, 
         command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
     )
     status = daemon_lifecycle.ensure_running(
-        daemon_command, socket_file, log_file, dict(os.environ), expected_engine=obj.get("engine_version")
+        daemon_command,
+        socket_file,
+        log_file,
+        dict(os.environ),
+        expected_engine=obj.get("engine_version"),
+        settings=effective.get("daemon", {}),
     )
     reload_if_stale(socket_file, status)
     return (socket_file, status)
@@ -667,6 +675,17 @@ def run_through_daemon(obj: dict[str, Any], command: list[str], effective: dict[
             click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
             return None
     return None
+
+
+def write_if_unchanged(edit: FileEdit, refused: list[str]) -> bool:
+    """Writes the edit unless the file changed on disk since it was read, in which case the file joins ``refused``
+    with the reason and nothing is written. True when written."""
+    try:
+        write_document(edit["path"], edit["after"], expected=edit["before"])
+    except FileChangedError as exc:
+        refused.append(f"{edit['path'].as_uri()} ({exc})")
+        return False
+    return True
 
 
 def exec_process(path: str, argv: Sequence[str]) -> None:
@@ -1269,8 +1288,8 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
     rows: list[dict[str, Any]] = []
     changed, refused = file_edits(result.get("edits", {}), obj["root"])
     for edit in changed:
-        if apply_changes:
-            write_document(edit["path"], edit["after"])
+        if apply_changes and not write_if_unchanged(edit, refused):
+            continue
         rows.append(
             {
                 "path": shown_path(edit["path"], obj["root"]),
@@ -1308,8 +1327,8 @@ def fix(
     changed, refused = file_edits(result.get("edits", {}), obj["root"])
     applied_codes = {uri_to_path(uri): codes for uri, codes in result.get("applied", {}).items()}
     for edit in changed:
-        if apply_changes:
-            write_document(edit["path"], edit["after"])
+        if apply_changes and not write_if_unchanged(edit, refused):
+            continue
         rows.append(
             {
                 "path": shown_path(edit["path"], obj["root"]),
@@ -1828,6 +1847,10 @@ def daemon_status(obj: dict[str, Any]) -> None:
         click.echo(f"warning: {warning}")
     if details["outOfMemory"]:
         click.echo(f"warning: {daemon_lifecycle.out_of_memory_advice(details['log'])}")
+    if details["heap"]:
+        click.echo(f"note: the last start used a {details['heap']} heap (grown after an out-of-memory exit)")
+    if details["restarts"] > 1:
+        click.echo(f"note: the daemon was started {details['restarts']} times in the last ten minutes")
     if not details["running"]:
         sys.exit(3)
 

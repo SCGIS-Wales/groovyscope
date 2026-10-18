@@ -101,8 +101,17 @@ def read_document(path: Path) -> str:
         return handle.read()
 
 
-def write_document(path: Path, text: str) -> None:
-    """Replace the file atomically (temporary file, then rename), keeping its mode and line endings."""
+class FileChangedError(OSError):
+    """The file is not what the edit was computed from: somebody saved it in between."""
+
+
+def write_document(path: Path, text: str, *, expected: str | None = None) -> None:
+    """Replace the file atomically (temporary file, then rename), keeping its mode and line endings. With
+    ``expected`` (the text the edit was computed from), a file that reads differently now is left alone and
+    :class:`FileChangedError` is raised: an edit never overwrites a save it did not see."""
+    if expected is not None and read_document(path) != expected:
+        msg = "changed on disk since it was read; not written"
+        raise FileChangedError(msg)
     with tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",

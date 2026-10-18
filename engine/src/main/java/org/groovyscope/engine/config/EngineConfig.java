@@ -46,11 +46,12 @@ import java.util.Set;
  * @param configHash SHA-256 (hex) of the raw configuration JSON handed over in the environment, or empty; lets the
  *     front end detect a daemon started with an older configuration
  * @param daemon the request executors and workspace eviction of the daemon ({@code daemon.*})
+ * @param budget how much of a workspace the compile takes on ({@code workspace.maxFiles}, {@code workspace.maxTotalBytes})
  */
 public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
         Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
         List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, Diagnostics diagnostics,
-        String configHash, Daemon daemon) {
+        String configHash, Daemon daemon, Budget budget) {
 
     /** Default of {@code workspace.maxFileBytes}. */
     public static final long DEFAULT_MAX_FILE_BYTES = 2_000_000L;
@@ -77,19 +78,40 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * requests (hover, definition, outline, status) have their own small pool. A workspace nobody has used for
      * {@code workspaceIdleMinutes} is released from memory.
      */
-    public record Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes) {
+    public record Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes, int heapPressurePercent) {
 
-        public static final Daemon DEFAULTS = new Daemon(0, 64, 30);
+        public static final Daemon DEFAULTS = new Daemon(0, 64, 30, 85);
 
         public Daemon {
             workerThreads = Math.max(0, workerThreads);
             requestQueue = Math.max(1, requestQueue);
             workspaceIdleMinutes = Math.max(1, workspaceIdleMinutes);
+            heapPressurePercent = Math.max(1, Math.min(99, heapPressurePercent));
+        }
+
+        /** The lanes and eviction settings with the default pressure threshold. */
+        public Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes) {
+            this(workerThreads, requestQueue, workspaceIdleMinutes, DEFAULTS == null ? 85 : DEFAULTS.heapPressurePercent());
         }
 
         /** The heavy pool size this setting means on this machine. */
         public int effectiveWorkerThreads() {
             return workerThreads > 0 ? workerThreads : Math.max(2, Runtime.getRuntime().availableProcessors());
+        }
+    }
+
+    /**
+     * How much of a workspace the compile takes on before it stops reading: at most {@code maxFiles} files and
+     * {@code maxTotalBytes} of source (0 means no limit). Past the budget the remaining files are left out and
+     * reported once ({@code GS101}) rather than loaded until the heap runs out.
+     */
+    public record Budget(int maxFiles, long maxTotalBytes) {
+
+        public static final Budget DEFAULTS = new Budget(20_000, 256_000_000L);
+
+        public Budget {
+            maxFiles = Math.max(0, maxFiles);
+            maxTotalBytes = Math.max(0, maxTotalBytes);
         }
     }
 
@@ -307,6 +329,16 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         maxFileBytes = Math.max(0, maxFileBytes);
         configHash = configHash == null ? "" : configHash;
         daemon = daemon == null ? Daemon.DEFAULTS : daemon;
+        budget = budget == null ? Budget.DEFAULTS : budget;
+    }
+
+    /** Every setting except the workspace budget, which keeps its defaults. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
+            List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, Diagnostics diagnostics,
+            String configHash, Daemon daemon) {
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
+                maxFileBytes, diagnostics, configHash, daemon, Budget.DEFAULTS);
     }
 
     /** Every setting except the daemon's, which keep their defaults. */
@@ -337,19 +369,19 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
     /** This configuration with another Groovy target (used for files a runtime profile governs). */
     public EngineConfig withGroovy(Groovy target) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, target,
-                practices, profiles, maxFileBytes, diagnostics, configHash, daemon);
+                practices, profiles, maxFileBytes, diagnostics, configHash, daemon, budget);
     }
 
     /** This configuration with the hash of the raw JSON it was read from. */
     public EngineConfig withConfigHash(String hash) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, maxFileBytes, diagnostics, hash, daemon);
+                practices, profiles, maxFileBytes, diagnostics, hash, daemon, budget);
     }
 
     /** This configuration with another file size limit (0 means no limit). */
     public EngineConfig withMaxFileBytes(long limit) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, limit, diagnostics, configHash, daemon);
+                practices, profiles, limit, diagnostics, configHash, daemon, budget);
     }
 
     /** SHA-256 (hex) of a raw configuration document, or empty when there is none. */
@@ -457,7 +489,10 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 "",
                 new Daemon(integer(daemon.get("workerThreads"), Daemon.DEFAULTS.workerThreads()),
                         integer(daemon.get("requestQueue"), Daemon.DEFAULTS.requestQueue()),
-                        integer(daemon.get("workspaceIdleMinutes"), Daemon.DEFAULTS.workspaceIdleMinutes())));
+                        integer(daemon.get("workspaceIdleMinutes"), Daemon.DEFAULTS.workspaceIdleMinutes()),
+                        integer(daemon.get("heapPressurePercent"), Daemon.DEFAULTS.heapPressurePercent())),
+                new Budget(integer(workspace.get("maxFiles"), Budget.DEFAULTS.maxFiles()),
+                        longValue(workspace.get("maxTotalBytes"), Budget.DEFAULTS.maxTotalBytes())));
     }
 
     private static long longValue(JsonElement element, long fallback) {

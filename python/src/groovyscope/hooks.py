@@ -135,15 +135,15 @@ def render_after_write(rows: Sequence[Mapping[str, Any]], paths: Sequence[Path],
 def changed_groovy_files(root: Path, runner: Runner) -> list[Path]:
     """Groovy files added or modified in the working tree (staged or not, untracked included), from git; empty
     when git is unavailable or the root is not a repository."""
-    code, output = runner(["git", "status", "--porcelain", "--untracked-files=all", "--no-renames"], root)
+    code, output = runner(["git", "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"], root)
     if code != 0:
         return []
     found: list[Path] = []
-    for line in output.splitlines():
-        _status, _, name = line.partition(" ") if len(line) > PORCELAIN_PATH_OFFSET else ("", "", "")
-        if not name or "D" in line[:2]:
+    # -z: entries end with NUL and paths are never quoted or escaped, so a non-ASCII name is read as it is.
+    for entry in output.split("\0"):
+        if len(entry) <= PORCELAIN_PATH_OFFSET or "D" in entry[:2]:
             continue
-        path = root / line[PORCELAIN_PATH_OFFSET:].strip().strip('"')
+        path = root / entry[PORCELAIN_PATH_OFFSET:]
         if is_groovy_source(path) and path.is_file():
             found.append(path)
     return found

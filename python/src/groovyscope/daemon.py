@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import rpc
+from groovyscope import rpc, selfheal
 
 SOCKET_DIR_ENV = "GROOVYSCOPE_SOCKET_DIR"
 CACHE_DIR_ENV = "GROOVYSCOPE_CACHE_DIR"
@@ -49,6 +49,8 @@ class DaemonInfo(TypedDict):
     status: dict[str, Any] | None
     log: str
     outOfMemory: bool  # the daemon is not running and its log ends with an OutOfMemoryError
+    heap: str | None  # the heap the last start used, when the self-healing grew it past daemon.heap
+    restarts: int  # daemon starts in the last ten minutes
 
 
 def workspace_key(root: Path) -> str:
@@ -255,15 +257,24 @@ def ensure_running(
     stop_fn: Callable[[Path], bool] | None = None,
     expected_engine: str | None = None,
     state_fn: State | None = None,
+    settings: Mapping[str, Any] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = selfheal.clock,
 ) -> dict[str, Any]:
     """Probe first; start only when nothing answers. A daemon running another engine version (left over from
     before an upgrade) is stopped and replaced. A daemon that is alive but too busy to answer the probe is left
     alone: the caller gets ``{"busy": True}`` and connects to it anyway. Probe and start run under a lock, so
-    concurrent clients share one daemon."""
+    concurrent clients share one daemon.
+
+    Before a start, ``settings`` (the ``daemon`` section) drive the self-healing: the log is rotated at
+    ``logMaxBytes``, a start is refused after ``maxRestartsPerTenMinutes`` starts in ten minutes, each start in that
+    window waits a jittered backoff, and after an out-of-memory exit the heap grows by ``heapGrowthFactor`` up to
+    ``maxHeap`` (see :mod:`groovyscope.selfheal`)."""
     check = _probe(probe_fn)
     state = probe_state if state_fn is None else state_fn
     launch = start if start_fn is None else start_fn
     halt = stop if stop_fn is None else stop_fn
+    section: Mapping[str, Any] = settings or {}
     check_socket_path(socket_file)
     secure_dir(socket_file.parent)
     with start_lock(socket_file):
@@ -277,7 +288,41 @@ def ensure_running(
             status = None
         if status is not None:
             return status
+        command = prepare_start(list(command), log_file, section, sleep=sleep, now=now)
         return launch(command, socket_file, log_file, environ, probe_fn=check)
+
+
+def prepare_start(
+    command: list[str],
+    log_file: Path,
+    settings: Mapping[str, Any],
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = selfheal.clock,
+) -> list[str]:
+    """The self-healing step before a daemon start: judge the last exit from the log, refuse a crash loop, wait the
+    backoff, rotate the log and grow the heap after an out-of-memory exit. Returns the command to run."""
+    state_file = selfheal.state_path(log_file)
+    previous = selfheal.load_state(state_file)
+    cause = selfheal.exit_cause(log_file, previous)
+    configured = selfheal.configured_heap(command, str(settings.get("heap", "1g")))
+    moment = now()
+    plan = selfheal.plan_restart(previous, cause, settings, configured, moment, physical=selfheal.physical_memory())
+    if not plan["allowed"]:
+        raise RuntimeError(plan["reason"])
+    if plan["reason"]:
+        LOG.warning("%s", plan["reason"])
+    if plan["delay"] > 0:
+        LOG.info("waiting %.1fs before starting the daemon again", plan["delay"])
+        sleep(plan["delay"])
+    if selfheal.rotate_log(log_file, int(settings.get("logMaxBytes", 5_000_000)), int(settings.get("logsKept", 3))):
+        LOG.info("rotated the daemon log %s", log_file)
+    heap = plan["heap"] or configured
+    if plan["heap"]:
+        command = selfheal.with_heap(command, plan["heap"])
+    log_size = log_file.stat().st_size if log_file.exists() else 0
+    selfheal.save_state(state_file, selfheal.started(previous, heap, cause, log_size, moment, configured=configured))
+    return command
 
 
 def stop(
@@ -306,12 +351,16 @@ def info(root: Path, environ: Mapping[str, str], *, probe_fn: Probe | None = Non
     socket_file = socket_path(root, environ)
     status = _probe(probe_fn)(socket_file)
     log_file = log_path(root, environ)
+    saved = selfheal.load_state(selfheal.state_path(log_file))
+    recent = [t for t in saved["restarts"] if 0 <= selfheal.clock() - t < selfheal.WINDOW_SECONDS]
     return {
         "socket": str(socket_file),
         "running": status is not None,
         "status": status,
         "log": str(log_file),
         "outOfMemory": status is None and out_of_memory(log_file),
+        "heap": selfheal.grown_heap(saved),
+        "restarts": len(recent),
     }
 
 

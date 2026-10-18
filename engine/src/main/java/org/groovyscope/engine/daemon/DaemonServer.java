@@ -113,6 +113,7 @@ public final class DaemonServer implements Closeable {
         this.idleTimeout = Objects.requireNonNull(idleTimeout, "idleTimeout");
         this.onExit = Objects.requireNonNull(onExit, "onExit");
         this.executors = org.groovyscope.engine.lsp.RequestExecutors.forConfig(config);
+        org.groovyscope.engine.concurrent.MemoryGuard.install(config.daemon().heapPressurePercent(), registry::shedAll);
     }
 
     /** Binds the socket and starts accepting connections. */
@@ -313,6 +314,8 @@ public final class DaemonServer implements Closeable {
     }
 
     private void checkIdle() {
+        org.groovyscope.engine.concurrent.MemoryGuard.installed()
+                .ifPresent(org.groovyscope.engine.concurrent.MemoryGuard::refresh);
         if (connections.get() > 0) {
             return;
         }

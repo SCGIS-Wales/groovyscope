@@ -157,6 +157,7 @@ def test_info(tmp_path: Path) -> None:
         daemon.info(tmp_path, {"GROOVYSCOPE_SOCKET_DIR": str(tmp_path)}, probe_fn=lambda _p: None)["running"] is False
     )
     assert details["outOfMemory"] is False
+    assert details["heap"] is None and details["restarts"] == 0
 
 
 def test_info_reads_an_out_of_memory_exit_from_the_log(tmp_path: Path) -> None:

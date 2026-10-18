@@ -18,6 +18,8 @@ workspace:
   trust: false            # only honoured after `groovyscope trust` (or GROOVYSCOPE_WORKSPACE__TRUST=true): allows
                           # global AST transforms from the workspace classpath, jdk.home and rule sets from this file
   maxFileBytes: 2000000   # source files larger than this are skipped (0 = no limit)
+  maxFiles: 20000         # files the compile takes on; the rest is left out and reported once as GS101 (0 = no limit)
+  maxTotalBytes: 256000000  # source bytes the compile takes on; the rest is left out and reported once (0 = no limit)
 daemon:
   enabled: true           # Stage 2: warm JVM per workspace; until then the engine runs per session
   idleTimeoutMinutes: 60
@@ -26,6 +28,15 @@ daemon:
   workerThreads: 0        # heavy requests (check, format, type check) served at a time; 0 = processor count, at least 2
   requestQueue: 64        # heavy requests allowed to wait; beyond that a request is answered "busy" at once
   workspaceIdleMinutes: 30  # a workspace nobody asked about for this long is released from memory while no client is connected
+  heapPressurePercent: 85 # past this share of the heap still in use after a collection the engine sheds its caches and
+                          # refuses whole-workspace requests until memory frees
+  maxHeap: "auto"         # ceiling for the heap the self-healing grows to after an out-of-memory exit: auto = a quarter of
+                          # physical memory, at most 4g; or a size such as 3g
+  heapGrowthFactor: 1.5   # how much the heap grows after an out-of-memory exit (once per exit, up to maxHeap)
+  maxRestartsPerTenMinutes: 3  # daemon starts allowed in ten minutes; beyond that the front end stops restarting it
+  heapDumpOnOutOfMemory: false # write a heap dump (the size of the heap) under the cache before exiting on OutOfMemoryError
+  logMaxBytes: 5000000    # the daemon log is rotated past this size
+  logsKept: 3             # rotated daemon logs kept; `groovyscope checkup --fix` removes the rest
 mcp:
   requestTimeoutSeconds: 100  # budget per tool call, under Kiro's 120 s; over it the tool says "still running" and cancels
   maxInFlight: 4          # tool calls the server runs on the engine at a time; the rest wait within the same budget

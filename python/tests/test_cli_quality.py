@@ -549,7 +549,7 @@ def test_hook_command_checks_written_files_and_gates_stop(
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop).output == ""  # gate off
     assert len(probes) == 1  # none of those three events touched the engine
     (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  stopGate: true\n")
-    monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, " M src/main/groovy/A.groovy\n"))
+    monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, " M src/main/groovy/A.groovy\0"))
     blocked = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop)
     assert json.loads(blocked.output)["decision"] == "block" and seen[-1]["params"]["include"] == ["compile"]
 

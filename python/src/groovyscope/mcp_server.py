@@ -19,7 +19,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from groovyscope import changes, daemon, diagnostics, mcp_search, mcp_understanding, practices, reports, rpc, skills
 from groovyscope import classpath as classpath_export
-from groovyscope.edits import FileEdit, changed_line_count, file_edits, uri_path, write_document
+from groovyscope.edits import FileChangedError, FileEdit, changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
 from groovyscope.tools_catalog import TOOL_INFO
@@ -423,8 +423,8 @@ def quality_tools(
         changed, refused = file_edits(raw.get("edits", {}), root)
         files = []
         for edit in changed:
-            if apply:
-                write_document(edit["path"], edit["after"])
+            if apply and not write_if_unchanged(edit, refused):
+                continue
             files.append(
                 {
                     "path": relative_path(edit["path"].as_uri(), root),
@@ -629,8 +629,8 @@ def practice_tools(
         changed, refused = file_edits(raw.get("edits", {}), root)
         files: list[dict[str, Any]] = []
         for edit in changed:
-            if apply:
-                write_document(edit["path"], edit["after"])
+            if apply and not write_if_unchanged(edit, refused):
+                continue
             uri = edit["path"].as_uri()
             files.append(
                 {
@@ -689,7 +689,7 @@ def rename_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., An
         written: list[FileEdit] = []
         try:
             for edit in changed:
-                write_document(edit["path"], edit["after"])
+                write_document(edit["path"], edit["after"], expected=edit["before"])
                 written.append(edit)
             errors_after = compile_errors(uris)
         except (OSError, RuntimeError) as exc:
@@ -714,7 +714,7 @@ def rename_tools(root: Path, call: Call, cap: int) -> dict[str, Callable[..., An
         failed: list[str] = []
         for edit in written:
             try:
-                write_document(edit["path"], edit["before"])
+                write_document(edit["path"], edit["before"], expected=edit["after"])
             except OSError:
                 failed.append(relative_path(edit["path"].as_uri(), root))
         return failed
@@ -972,6 +972,17 @@ RELOAD_TIMEOUT_SECONDS = 60.0
 Opener = Callable[[Path], Any]
 EngineCall = Callable[..., Any]
 Dispatch = Callable[[str, dict[str, Any]], Any]
+
+
+def write_if_unchanged(edit: FileEdit, refused: list[str]) -> bool:
+    """Writes the edit unless the file changed on disk since it was read; then it joins ``refused`` with the
+    reason and nothing is written. True when written."""
+    try:
+        write_document(edit["path"], edit["after"], expected=edit["before"])
+    except FileChangedError as exc:
+        refused.append(f"{edit['path'].as_uri()} ({exc})")
+        return False
+    return True
 
 
 def request_limits(settings: Mapping[str, Any] | None) -> tuple[float, int]:

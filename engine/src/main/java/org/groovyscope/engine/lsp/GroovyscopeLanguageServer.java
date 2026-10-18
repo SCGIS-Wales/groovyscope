@@ -233,6 +233,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         Map<String, Object> memory = new LinkedHashMap<>();
         memory.put("usedMb", (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024));
         memory.put("maxMb", runtime.maxMemory() / (1024 * 1024));
+        memory.put("pressure", org.groovyscope.engine.concurrent.MemoryGuard.pressure());
         status.put("memory", memory);
         Map<String, Object> load = new LinkedHashMap<>();
         load.put("heavy", requests.heavyLoad());
@@ -288,6 +289,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             List<String> uris = targets(current, params);
+            if (uris.isEmpty()) {
+                requireHeadroom(); // a whole-workspace walk is what memory pressure refuses
+            }
             Object profile = params.get("profile");
             java.util.Set<String> include = new java.util.LinkedHashSet<>(stringList(params.get("include")));
             org.groovyscope.engine.model.CheckResult result = noneInside(params, uris)
@@ -381,6 +385,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             List<String> uris = targets(current, params);
+            if (uris.isEmpty()) {
+                requireHeadroom(); // a whole-workspace walk is what memory pressure refuses
+            }
             if (uris.isEmpty() && !noneInside(params, uris)) {
                 uris = new java.util.ArrayList<>(current.workspace().sources().keySet());
                 uris.removeIf(uri -> !current.workspace().contains(uri));
@@ -666,6 +673,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             List<Map<String, Object>> findings = new java.util.ArrayList<>();
             Map<String, Integer> counts = new LinkedHashMap<>();
             List<String> uris = targets(current, params);
+            if (uris.isEmpty()) {
+                requireHeadroom(); // a whole-workspace walk is what memory pressure refuses
+            }
             List<org.groovyscope.engine.semantics.DynamicCodeFinder.Finding> found = noneInside(params, uris)
                     ? List.of() : current.dynamicCode(uris);
             for (org.groovyscope.engine.semantics.DynamicCodeFinder.Finding finding : found) {
@@ -743,6 +753,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> duplicates(Map<String, Object> params) {
         return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
+            requireHeadroom();
             List<String> uris = targets(current, params);
             Integer minLines = number(params, "minLines");
             Integer minStatements = number(params, "minStatements");
@@ -758,6 +769,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> overview(Map<String, Object> params) {
         return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
+            requireHeadroom();
             Map<String, String> sources = new LinkedHashMap<>(current.workspace().sources());
             sources.keySet().removeIf(uri -> !current.workspace().contains(uri));
             return SearchJson.overview(org.groovyscope.engine.search.WorkspaceOverview.of(current.workspace().root(),
@@ -834,6 +846,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> graph(Map<String, Object> params) {
         return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
+            requireHeadroom();
             org.groovyscope.engine.services.Snapshot snapshot = current.snapshot();
             List<org.codehaus.groovy.ast.ClassNode> seeds = new ArrayList<>();
             for (String symbol : stringList(params.get("symbols"))) {
@@ -942,6 +955,15 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      * The {@code uris} parameter with every directory replaced by the workspace sources under it. URIs whose real
      * path lies outside the workspace root are dropped: requests never read files the workspace does not hold.
      */
+    /** Refuses a whole-workspace request while the heap is under pressure; cheap requests are unaffected. */
+    static void requireHeadroom() {
+        org.groovyscope.engine.concurrent.MemoryGuard.installed().filter(
+                org.groovyscope.engine.concurrent.MemoryGuard::underPressure).ifPresent(guard -> {
+                    throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                            org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed, guard.advice(), null));
+                });
+    }
+
     static List<String> targets(LanguageServices current, Map<String, Object> params) {
         List<String> inside = new java.util.ArrayList<>();
         for (String uri : stringList(params.get("uris"))) {
