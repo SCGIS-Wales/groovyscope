@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.16.1...v0.17.0) (2026-10-18)
+
+
+### Features
+
+* **mcp:** smaller tool surface, symbol_context and an answer-wide byte cap ([#74](https://github.com/SCGIS-Wales/groovyscope/issues/74)) ([6a4b159](https://github.com/SCGIS-Wales/groovyscope/commit/6a4b1591f57c64aa9b7b59ebbe5f93b8f271ab77))
+
 ## [0.16.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.16.0...v0.16.1) (2026-10-18)
 
 
