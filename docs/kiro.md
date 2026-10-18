@@ -79,6 +79,34 @@ it, so it works in both engines; otherwise V2. `--agent-format v2|universal|v3` 
 stamped by a newer Kiro (an unknown `kiroUpgrade` revision) or managed outside the project is left untouched
 and reported. `groovyscope doctor` shows the Kiro CLI version and the agent's format.
 
+## Kiro CLI 3.0
+
+Kiro CLI 3.0 (end of October 2026) makes the V3 engine the default and retires the Classic engine that read
+V2 agent files. What that means for groovyscope:
+
+- A V2 `groovy.json` is skipped by the V3 engine. `groovyscope doctor` and `checkup` warn when Kiro CLI 3.x
+  is installed and the agent is still V2; the fix is `groovyscope kiro repair --agent-format universal` (Kiro
+  CLI converts the file) or `--agent-format v3`.
+- Approvals come from `permissions.rules`. groovyscope writes an `allow` rule for the read-only MCP tools and
+  an `ask` rule for the mutating ones, derived from the same tool catalogue the MCP server uses.
+- Hooks: V3 names the start hook `SessionStart`; the 2.x name `agentSpawn` in the universal file is reported
+  to keep working. The check below confirms it.
+- Steering: V3 honours `inclusion: fileMatch`, so a later release can load the Groovy steering only when
+  Groovy files are in play.
+
+Checklist to run once on Kiro CLI 2.31 and again on 3.0, with the results pasted into `docs/roadmap.md`:
+
+```text
+kiro-cli --version
+kiro-cli --agent groovy
+> /code status                    # groovyscope (groovy) - initialized
+> find references of <a Groovy method>      # through the code tool: did it open the .groovy file, or report
+                                           # "unsupported file extension" (kirodotdev/Kiro#6322)?
+> what does the checkup say?      # proves hooks.agentSpawn (SessionStart on V3) ran
+> /tools                          # token cost of the 27 groovyscope schemas
+> /context show                   # size of steering/groovyscope.md
+```
+
 ## Verify
 
 ```text
@@ -107,7 +135,7 @@ the `GROOVYSCOPE_CONFIG_JSON` variable that `groovyscope lsp` sets, so `workspac
 ## What the MCP tools add
 
 The `code` tool stops at what LSP can express. The `groovyscope` MCP server (one process per Kiro session,
-sharing the workspace daemon with the LSP side) adds twenty-six tools; the README lists their arguments and
+sharing the workspace daemon with the LSP side) adds 27 tools; the README lists their arguments and
 [docs/prompts.md](prompts.md) the prompts. Typical turns in the `groovy` agent:
 
 - "Review this branch as a merge request reviewer" → `review_changes(base="main")`: verdict, blocking and
@@ -167,8 +195,11 @@ for the prompt and a server entry for `mcp.json`.
   a copy of the agent; the shipped agent keeps `write` and `shell` behind a prompt.
 - Kiro CLI releases weekly. `agents/groovy.json` uses the agent format Kiro CLI 2.x loads (`tools`,
   `allowedTools`, `toolsSettings`): every tool and MCP server is available (`tools: ["*"]`); read, search,
-  `code` and the groovyscope MCP tools run without asking, `write`, `shell` and other servers' tools ask,
-  except `./gradlew`, `groovyscope`, `git status` and `git diff`. Releases up to
+  `code` and the read-only groovyscope MCP tools run without asking; the tools that change the workspace
+  (`fix`, `rename` and `format` with `apply`, `refresh_classpath`, `relationship_graph` writing a draw.io
+  file), `write`, `shell` and other servers' tools ask, except `./gradlew`, `groovyscope`, `git status` and
+  `git diff`. Kiro ignores MCP's `readOnlyHint`, so the split is written into `allowedTools` (one
+  `@groovyscope/<tool>` per read-only tool) and into the V3 `permissions.rules`. Releases up to
   0.6.x also wrote a `permissions` block, which makes Kiro CLI 2.32 treat the agent as V3-only and fall back
   to `kiro_default` ("agent groovy not found"); `groovyscope kiro repair` removes it. `kiro-cli agent list`
   must show `groovy` without "(v3 format)", and `kiro-cli agent upgrade .kiro/agents` converts the file to

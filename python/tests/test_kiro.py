@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from groovyscope import __version__, kiro_agent
+from groovyscope import __version__, kiro_agent, tools_catalog
 from groovyscope.kiro import (
     GLOBAL_FILES,
     KIRO_FILES,
@@ -128,13 +128,15 @@ def test_agent_permissions_from_older_releases_are_retired(tmp_path: Path) -> No
     after = json.loads(planned["after"])
     assert "permissions" not in after
     assert after["mine"] == 1
-    assert "@groovyscope" in after["allowedTools"] and "shell" in after["toolsSettings"]
+    assert "@groovyscope/find_symbol" in after["allowedTools"] and "shell" in after["toolsSettings"]
+    assert "@groovyscope" not in after["allowedTools"]  # the bare entry allowed the mutating tools too
 
     custom = {"rules": [{"capability": "shell", "match": ["make *"], "effect": "allow"}]}
     agent.write_text(json.dumps({"name": "groovy", "permissions": custom}), encoding="utf-8")
     kept = json.loads({c["path"]: c for c in plan_changes(tmp_path)}[".kiro/agents/groovy.json"]["after"])
     assert kept["permissions"]["rules"][0] == custom["rules"][0]
-    assert {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"} in kept["permissions"]["rules"]
+    assert kiro_agent.v3_rules()[0] in kept["permissions"]["rules"]
+    assert {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"} not in kept["permissions"]["rules"]
     assert "tools" not in kept  # a V3-only agent stays V3-only
 
 
@@ -237,7 +239,7 @@ def test_existing_formats_are_kept(tmp_path: Path) -> None:
     agent_file.write_text(json.dumps({**stamped, "allowedTools": ["read"]}))
     change = {c["path"]: c for c in plan_changes(tmp_path, run=fake_kiro([], verdict="would upgrade"))}
     agent = json.loads(change[".kiro/agents/groovy.json"]["after"])
-    assert agent["kiroUpgrade"]["fingerprint"] == "sha256:x" and "@groovyscope" in agent["allowedTools"]
+    assert agent["kiroUpgrade"]["fingerprint"] == "sha256:x" and "@groovyscope/check" in agent["allowedTools"]
 
     # a newer stamp groovyscope does not know: untouched, with a note
     future = json.dumps({**ours, "kiroUpgrade": {"revision": 9}})
@@ -334,3 +336,40 @@ def test_agent_hooks_merge_as_a_union_and_reach_v3_agents() -> None:
     assert merged_v3["hooks"]["agentSpawn"][0]["command"] == "groovyscope checkup --agent"
     assert merged_v3["welcomeMessage"].startswith("Groovy agent ready")
     assert "tools" not in merged_v3
+
+
+def test_approval_rules_follow_the_tool_catalogue() -> None:
+    """Kiro ignores readOnlyHint, so the agent files carry the split: read-only tools allowed, mutating ones ask."""
+    allow, ask, reads, shell = kiro_agent.v3_rules()
+    assert allow["effect"] == "allow" and allow["match"] == [
+        f"groovyscope/{n}" for n in tools_catalog.read_only_tools()
+    ]
+    assert ask["effect"] == "ask" and set(ask["match"]) == {
+        "groovyscope/fix",
+        "groovyscope/rename",
+        "groovyscope/format",
+        "groovyscope/refresh_classpath",
+        "groovyscope/relationship_graph",
+    }
+    assert reads == {"capability": "fs_read", "effect": "allow"} and shell["capability"] == "shell"
+    assert set(tools_catalog.read_only_tools()) | set(tools_catalog.mutating_tools()) == set(tools_catalog.TOOL_INFO)
+    template = json.loads(load_template("agents/groovy.json"))
+    assert template["allowedTools"] == ["read", "grep", "glob", "code", *tools_catalog.v2_allowed_entries()]
+    assert kiro_agent.major_version("3.0.1") == 3 and kiro_agent.major_version("2.32.0") == 2
+    assert kiro_agent.major_version(None) is None and kiro_agent.major_version("beta") is None
+
+
+def test_bare_groovyscope_entry_and_blanket_rule_are_replaced() -> None:
+    """Files written by earlier releases allowed every groovyscope tool; the merge narrows them, keeping the
+    user's own entries."""
+    template = load_template("agents/groovy.json")
+    mine = {"name": "groovy", "tools": ["*"], "allowedTools": ["read", "@groovyscope", "@jira/search"]}
+    merged = json.loads(kiro_agent.merge_agent(json.dumps(mine), template, requested="v2", run=None)["text"])
+    assert "@groovyscope" not in merged["allowedTools"]
+    assert merged["allowedTools"][:3] == ["read", "@jira/search", "grep"]
+    assert "@groovyscope/fix" not in merged["allowedTools"] and "@groovyscope/find_code" in merged["allowedTools"]
+    blanket = {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"}
+    custom = {"capability": "shell", "match": ["make *"], "effect": "allow"}
+    v3 = kiro_agent.merge_v3({"permissions": {"rules": [blanket, custom]}})
+    rules = v3["permissions"]["rules"]
+    assert blanket not in rules and rules[0] == custom and kiro_agent.v3_rules()[1] in rules
