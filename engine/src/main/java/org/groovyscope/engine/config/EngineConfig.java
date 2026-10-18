@@ -48,7 +48,8 @@ import java.util.Set;
  */
 public record EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
         Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
-        List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, String configHash) {
+        List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, Diagnostics diagnostics,
+        String configHash) {
 
     /** Default of {@code workspace.maxFileBytes}. */
     public static final long DEFAULT_MAX_FILE_BYTES = 2_000_000L;
@@ -59,6 +60,30 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
     public static final Set<String> FILE_NAMES = Set.of("Jenkinsfile");
     /** Extension of Java sources compiled alongside Groovy in joint projects. */
     public static final String JAVA_EXTENSION = "java";
+
+    /**
+     * How diagnostics reach an LSP client ({@code diagnostics.*}).
+     *
+     * @param push which documents get pushed diagnostics after an edit: {@link #PUSH_OPEN} (the documents the
+     *     connection has open, the default: an agent or editor works on a few files and the pull request serves
+     *     the rest), {@link #PUSH_WORKSPACE} (every compiled document, the pre-0.13 behaviour) or
+     *     {@link #PUSH_NONE} (nothing is pushed; clients pull)
+     * @param debounceMillis the quiet window after the last edit before a push, in milliseconds
+     */
+    public record Diagnostics(String push, int debounceMillis) {
+        public static final String PUSH_OPEN = "open";
+        public static final String PUSH_WORKSPACE = "workspace";
+        public static final String PUSH_NONE = "none";
+        public static final Set<String> PUSH_MODES = Set.of(PUSH_OPEN, PUSH_WORKSPACE, PUSH_NONE);
+        public static final int DEFAULT_DEBOUNCE_MILLIS = 300;
+        public static final Diagnostics DEFAULTS = new Diagnostics(PUSH_OPEN, DEFAULT_DEBOUNCE_MILLIS);
+
+        public Diagnostics {
+            push = push == null || !PUSH_MODES.contains(push.toLowerCase(java.util.Locale.ROOT))
+                    ? PUSH_OPEN : push.toLowerCase(java.util.Locale.ROOT);
+            debounceMillis = Math.max(0, debounceMillis);
+        }
+    }
 
     /**
      * CodeNarc settings.
@@ -268,22 +293,30 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 DEFAULT_MAX_FILE_BYTES, "");
     }
 
+    /** Every setting except the diagnostics delivery, which keeps its defaults. */
+    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
+            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
+            List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, String configHash) {
+        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
+                maxFileBytes, Diagnostics.DEFAULTS, configHash);
+    }
+
     /** This configuration with another Groovy target (used for files a runtime profile governs). */
     public EngineConfig withGroovy(Groovy target) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, target,
-                practices, profiles, maxFileBytes, configHash);
+                practices, profiles, maxFileBytes, diagnostics, configHash);
     }
 
     /** This configuration with the hash of the raw JSON it was read from. */
     public EngineConfig withConfigHash(String hash) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, maxFileBytes, hash);
+                practices, profiles, maxFileBytes, diagnostics, hash);
     }
 
     /** This configuration with another file size limit (0 means no limit). */
     public EngineConfig withMaxFileBytes(long limit) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, limit, configHash);
+                practices, profiles, limit, diagnostics, configHash);
     }
 
     /** SHA-256 (hex) of a raw configuration document, or empty when there is none. */
@@ -350,6 +383,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject groovy = objectOrEmpty(document.get("groovy"));
         JsonObject practices = objectOrEmpty(document.get("practices"));
         JsonObject naming = objectOrEmpty(document.get("naming"));
+        JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
         return new EngineConfig(
                 strings(workspace.get("sourceRoots"), DEFAULTS.sourceRoots()),
                 strings(workspace.get("classpath"), DEFAULTS.classpath()),
@@ -384,6 +418,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                                 stringMap(naming.get("vocabulary")))),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
+                new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),
+                        integer(diagnostics.get("debounceMillis"), Diagnostics.DEFAULTS.debounceMillis())),
                 "");
     }
 

@@ -42,6 +42,14 @@ class TypeCheckAnalyzerSpec extends Specification {
         result[messy].empty
     }
 
+    def 'only sources that mention static typing can need the type check'() {
+        expect:
+        TypeCheckAnalyzer.mayNeedTypeCheck('@CompileStatic\nclass A {}')
+        TypeCheckAnalyzer.mayNeedTypeCheck('import groovy.transform.TypeChecked\n@TypeChecked class B {}')
+        !TypeCheckAnalyzer.mayNeedTypeCheck('class C { def run() { 1 } }')
+        !TypeCheckAnalyzer.mayNeedTypeCheck(null)
+    }
+
     def 'an empty workspace yields nothing'() {
         expect:
         new TypeCheckAnalyzer().analyze([:], [], false, EngineConfig.TypeCheck.DEFAULTS).isEmpty()

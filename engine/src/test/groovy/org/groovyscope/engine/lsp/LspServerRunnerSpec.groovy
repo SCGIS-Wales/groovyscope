@@ -106,6 +106,8 @@ class LspServerRunnerSpec extends Specification {
         remote.initialized(new InitializedParams())
         remote.textDocumentService.didOpen(new DidOpenTextDocumentParams(
             new TextDocumentItem(main, 'groovy', 1, Fixtures.text('basic-app', 'src/main/groovy/app/Main.groovy'))))
+        remote.textDocumentService.didOpen(new DidOpenTextDocumentParams(
+            new TextDocumentItem(spec, 'groovy', 1, Fixtures.text('basic-app', 'src/test/groovy/app/GreeterSpec.groovy'))))
         def definition = remote.textDocumentService.definition(new DefinitionParams(
             new TextDocumentIdentifier(main), new Position(callPosition.line(), callPosition.column()))).get(30, TimeUnit.SECONDS)
         def references = remote.textDocumentService.references(new ReferenceParams(

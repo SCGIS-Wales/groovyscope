@@ -61,6 +61,16 @@ public final class TypeCheckAnalyzer {
     static final String FORMAT_STRING_CHECKER = "groovy.typecheckers.FormatStringChecker";
     static final String COMBINER_CHECKER = "groovy.typecheckers.CombinerChecker";
 
+    /**
+     * Whether a source can produce type-check findings at all: the checker and the Groovy 6 extensions apply only
+     * where {@code @CompileStatic} or {@code @TypeChecked} is written, so a workspace, or a set of requested files,
+     * without either word never needs the type-check compile. Textual on purpose: cheaper than walking the tree,
+     * and a false positive only costs the compile that used to run every time.
+     */
+    public static boolean mayNeedTypeCheck(String source) {
+        return source != null && (source.contains("CompileStatic") || source.contains("TypeChecked"));
+    }
+
     /** The extension class names the settings ask for, in a stable order. */
     public static List<String> extensionsFor(EngineConfig.TypeCheck settings) {
         List<String> extensions = new ArrayList<>();

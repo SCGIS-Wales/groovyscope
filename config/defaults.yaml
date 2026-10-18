@@ -30,6 +30,11 @@ lint:
   publish: true           # push lint findings to the editor/agent as diagnostics
   publishMaxPriority: 2   # only priority 1-2 findings are pushed; priority 3 stays available through check/review
   rules: {}               # per-rule overrides on top of the profile, e.g. {CompileStatic: off, LineLength: {priority: 3}}
+diagnostics:
+  push: "open"            # which documents get pushed diagnostics after an edit: open (the documents the editor or
+                          # agent has open; the rest stays available through check and pull diagnostics) |
+                          # workspace (every compiled document, the pre-0.13 behaviour) | none (clients pull)
+  debounceMillis: 300     # quiet window after the last edit before diagnostics are pushed
 typecheck:
   nullChecker: "strict"   # off | lenient | strict (Groovy 6 NullChecker, on @CompileStatic/@TypeChecked code)
   sqlInjection: true      # Groovy 6 SqlInjectionChecker

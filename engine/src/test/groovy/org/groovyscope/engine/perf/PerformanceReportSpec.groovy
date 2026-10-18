@@ -75,10 +75,26 @@ ${previous}        value${i} + n
         services.snapshot()
         long recheckMillis = (System.nanoTime() - recheckStart) / 1_000_000
 
+        and: 'after another edit, the diagnostics of the one open document are pushed (what an agent session pays)'
+        services.workspace().change(target, Files.readString(root.resolve('Class0.groovy')) + '\n// edited again\n')
+        services.markDirty()
+        long openStart = System.nanoTime()
+        def openOnly = services.quality().publishedDiagnostics([target])
+        long openMillis = (System.nanoTime() - openStart) / 1_000_000
+
+        and: 'the same for every document (the pre-0.13 push)'
+        long allStart = System.nanoTime()
+        def everything = services.quality().publishedDiagnostics()
+        long allMillis = (System.nanoTime() - allStart) / 1_000_000
+
         then:
         references.size() == 1
-        println "perf: files=${FILES} cold-compile=${coldMillis}ms warm-references=${warmMillis}ms single-file-recheck=${recheckMillis}ms"
+        openOnly.keySet() == [target] as Set
+        everything.size() == FILES
+        println "perf: files=${FILES} cold-compile=${coldMillis}ms warm-references=${warmMillis}ms " +
+                "single-file-recheck=${recheckMillis}ms publish-open-document=${openMillis}ms publish-all=${allMillis}ms"
         warmMillis < 5_000
         recheckMillis < 60_000
+        openMillis < 60_000
     }
 }

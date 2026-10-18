@@ -28,6 +28,13 @@ import spock.lang.Specification
 
 class QualityServicesSpec extends Specification {
 
+    def 'the type check is skipped for requested files that cannot have static typing'() {
+        expect:
+        !QualityServices.anyMayNeedTypeCheck(['a', 'b'], [a: 'class A {}', b: 'def x = 1'])
+        QualityServices.anyMayNeedTypeCheck(['a', 'b'], [a: 'class A {}', b: '@CompileStatic class B {}'])
+        !QualityServices.anyMayNeedTypeCheck(['missing'], [a: '@CompileStatic class A {}'])
+    }
+
     static final String MESSY = 'src/main/groovy/sample/Messy.groovy'
     static final String TYPED = 'src/main/groovy/sample/Typed.groovy'
     static final String DEPLOY = 'vars/deploy.groovy'

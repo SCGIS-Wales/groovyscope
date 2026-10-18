@@ -176,6 +176,24 @@
         }
       }
     },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "push": {
+          "type": "string",
+          "enum": [
+            "open",
+            "workspace",
+            "none"
+          ]
+        },
+        "debounceMillis": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "typecheck": {
       "type": "object",
       "additionalProperties": false,
