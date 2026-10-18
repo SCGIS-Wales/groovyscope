@@ -372,8 +372,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   crash-loop guard with backoff and heap escalation up to `daemon.maxHeap` recorded in a state file (G11),
   bounded logs and a cache sweep (G13), stop gate and write fixes (G14). Done when: the specs and tests named
   in section 5.3 pass, CI green, merged, released.
-- [ ] **Stage 20: elicitation and progress** — branch `feat/elicitation-progress`, 2026-10-18, implemented
-  locally, PR open; started at the owner's "proceed with any open stages" ahead of the Kiro 3 check. `rename`, `fix`,
+- [ ] **Stage 20: elicitation and progress** — branch `feat/elicitation-progress`, 2026-10-18, merged as PR #77,
+  waiting for the owner's Kiro check; started at the owner's "proceed with any open stages" ahead of the Kiro 3 check. `rename`, `fix`,
   `format` with `apply`, `refresh_classpath` and draw.io writes ask the user through MCP elicitation when the
   client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
   long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
@@ -543,6 +543,15 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   `kiro repair` keeps a user's `timeout`, `requestTimeout`, `disabledTools`, `autoApprove`, `disabled` and log
   level on the groovyscope `mcp.json` entry (P8). `docs/kiro.md` has the numbers and the `disabledTools`
   guidance. Left for the owner: `/tools` and `/context show` in Kiro before and after.
+- 2026-10-18: incident. The auto-merge step added to `release-please.yml` in PR #69 called
+  `gh pr merge --auto`, which merges at once when the repository allows no auto-merge and nothing is required
+  yet. Release PRs #73 (0.16.1, documentation only) and #75 (0.17.0, Stage 16) were merged by the bot seconds
+  after they opened, before any check ran; being merged by the built-in token, neither started the tagging run,
+  so v0.16.1 was tagged only by the next push and v0.17.0 not at all. The code in both had passed CI on its own
+  PR and the publish workflow builds and tests again. Fixed on `fix/release-pr-merge`: only GitHub's auto-merge
+  is requested (the GraphQL mutation, which fails rather than merges), and only with `RELEASE_PLEASE_TOKEN`;
+  `AGENTS.md` says never to merge before checks run and how to tag a release PR merged by the bot.
+  Merged as PR #76; the run its merge started tagged v0.17.0 and dispatched the publish.
 - 2026-10-18: Stage 16 merged (PR #74, CI green; merged by API, auto-merge still off). Stage 20 implemented
   locally on `feat/elicitation-progress`: `interaction` binds the SDK's request context to the tool's worker
   thread (the response wrapper declares a `ctx` parameter the schema never shows); `fix`, `format` and `rename`
