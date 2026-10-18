@@ -2,7 +2,7 @@
 [versions]
 groovy = "6.0.0"
 lsp4j = "1.0.0"
-codenarc = "4.0.0"
+codenarc = "4.0.0"  # floor and offline fallback only: settings.gradle.kts resolves the latest stable release
 spotless = "4.10.4"
 sqlite-jdbc = "3.53.4.0"
 spock = "2.5-groovy-6.0"

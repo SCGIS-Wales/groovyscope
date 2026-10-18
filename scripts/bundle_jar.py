@@ -13,12 +13,14 @@ import json
 import re
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ENGINE_LIBS = REPO / "engine" / "build" / "libs"
 JAR_DIR = REPO / "python" / "src" / "groovyscope" / "_jar"
 NAME_RE = re.compile(r"groovyscope-engine-(?P<version>.+)-all\.jar$")
+VERSION_RESOURCE = "org/groovyscope/engine/engine-version.properties"
 
 
 def newest_jar(libs: Path) -> Path | None:
@@ -41,6 +43,21 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def embedded_versions(jar: Path) -> dict[str, str]:
+    """The versions Gradle expanded into the JAR, notably the CodeNarc release it resolved and embedded."""
+    try:
+        with zipfile.ZipFile(jar) as archive:
+            text = archive.read(VERSION_RESOURCE).decode("utf-8")
+    except (OSError, KeyError, zipfile.BadZipFile, UnicodeDecodeError):
+        return {}
+    versions: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and value.strip() and not value.strip().startswith("${"):
+            versions[key.strip()] = value.strip()
+    return versions
+
+
 def bundle(jar: Path, version: str, jar_dir: Path) -> Path:
     jar_dir.mkdir(parents=True, exist_ok=True)
     target = jar_dir / jar.name
@@ -51,6 +68,9 @@ def bundle(jar: Path, version: str, jar_dir: Path) -> Path:
         shutil.copy2(jar, target)
     manifest = jar_dir / "_manifest.json"
     payload = {"version": version, "jar": target.name, "sha256": sha256_of(target)}
+    codenarc = embedded_versions(target).get("codenarc")
+    if codenarc:
+        payload["codenarc"] = codenarc
     manifest.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -80,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     manifest = bundle(jar, version, args.jar_dir)
-    print(f"bundled {jar.name} (version {version}) -> {manifest.parent}")
+    codenarc = json.loads(manifest.read_text(encoding="utf-8")).get("codenarc", "unknown")
+    print(f"bundled {jar.name} (version {version}, CodeNarc {codenarc}) -> {manifest.parent}")
     return 0
 
 

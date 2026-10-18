@@ -63,7 +63,12 @@ def jar_check(environ: Mapping[str, str]) -> Check:
     if info["error"]:
         return ("fail", "engine jar", info["error"])
     if info["source"] in {"bundled", "fetched"}:
-        return ("ok", "engine jar", f"{info['path']} (version {info['version']}, {info['source']}, checksum verified)")
+        codenarc = f", CodeNarc {info['codenarc']}" if info.get("codenarc") else ""
+        return (
+            "ok",
+            "engine jar",
+            f"{info['path']} (version {info['version']}{codenarc}, {info['source']}, checksum verified)",
+        )
     return ("warn", "engine jar", f"{info['path']} from GROOVYSCOPE_JAR (not checksum verified)")
 
 

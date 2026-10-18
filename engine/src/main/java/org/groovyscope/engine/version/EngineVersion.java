@@ -19,31 +19,49 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
-/** Reads the engine version that Gradle expands into {@code engine-version.properties}. */
+/**
+ * Reads the versions that Gradle expands into {@code engine-version.properties}: the engine's own and the
+ * CodeNarc release the build resolved from Maven Central and embedded (see {@code settings.gradle.kts}).
+ */
 public final class EngineVersion {
 
     private static final String RESOURCE = "/org/groovyscope/engine/engine-version.properties";
     private static final String UNKNOWN = "unknown";
+    static final String ENGINE_KEY = "version";
+    static final String CODENARC_KEY = "codenarc";
 
     private EngineVersion() {
     }
 
     /** Returns the engine version, or {@code "unknown"} when the resource is missing or unexpanded. */
     public static String current() {
+        return value(ENGINE_KEY);
+    }
+
+    /** Returns the embedded CodeNarc version, or {@code "unknown"} when the resource is missing or unexpanded. */
+    public static String codenarc() {
+        return value(CODENARC_KEY);
+    }
+
+    private static String value(String key) {
         try (InputStream in = EngineVersion.class.getResourceAsStream(RESOURCE)) {
-            return read(in);
+            return read(in, key);
         } catch (IOException e) {
             return UNKNOWN;
         }
     }
 
     static String read(InputStream in) throws IOException {
+        return read(in, ENGINE_KEY);
+    }
+
+    static String read(InputStream in, String key) throws IOException {
         if (in == null) {
             return UNKNOWN;
         }
         Properties properties = new Properties();
         properties.load(in);
-        String value = properties.getProperty("version", UNKNOWN).trim();
+        String value = properties.getProperty(key, UNKNOWN).trim();
         if (value.isEmpty() || value.startsWith("${")) {
             return UNKNOWN;
         }

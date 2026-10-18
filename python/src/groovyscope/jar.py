@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TypedDict
@@ -13,6 +14,7 @@ from groovyscope import daemon
 
 JAR_DIR = Path(__file__).resolve().parent / "_jar"
 MANIFEST_NAME = "_manifest.json"
+VERSION_RESOURCE = "org/groovyscope/engine/engine-version.properties"
 JAR_ENV = "GROOVYSCOPE_JAR"
 _CHUNK = 1 << 20
 
@@ -23,6 +25,7 @@ class JarInfo(TypedDict):
     path: str | None
     source: str
     version: str | None
+    codenarc: str | None
     expected_sha256: str | None
     actual_sha256: str | None
     verified: bool | None
@@ -46,11 +49,33 @@ def read_manifest(jar_dir: Path = JAR_DIR) -> dict[str, Any] | None:
     return loaded
 
 
-def write_manifest(jar_dir: Path, *, version: str, jar_name: str, sha256: str) -> Path:
+def write_manifest(jar_dir: Path, *, version: str, jar_name: str, sha256: str, codenarc: str | None = None) -> Path:
+    """Write the bundle manifest; ``codenarc`` is the CodeNarc release the engine build embedded, when known."""
     manifest_path = jar_dir / MANIFEST_NAME
-    payload = {"version": version, "jar": jar_name, "sha256": sha256}
+    payload: dict[str, str] = {"version": version, "jar": jar_name, "sha256": sha256}
+    if codenarc:
+        payload["codenarc"] = codenarc
     manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest_path
+
+
+def embedded_versions(jar_path: Path) -> dict[str, str]:
+    """The versions the engine build expanded into the JAR (``version``, ``codenarc``); empty when unreadable.
+
+    The CodeNarc version is resolved at build time (the latest stable release on Maven Central, see
+    ``engine/settings.gradle.kts``), so it is read from the JAR instead of being written anywhere by hand.
+    """
+    try:
+        with zipfile.ZipFile(jar_path) as archive:
+            text = archive.read(VERSION_RESOURCE).decode("utf-8")
+    except (OSError, KeyError, zipfile.BadZipFile, UnicodeDecodeError):
+        return {}
+    versions: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and value.strip() and not value.strip().startswith("${"):
+            versions[key.strip()] = value.strip()
+    return versions
 
 
 def locate_jar(
@@ -70,6 +95,7 @@ def locate_jar(
             "path": str(path),
             "source": JAR_ENV,
             "version": None,
+            "codenarc": embedded_versions(path).get("codenarc"),
             "expected_sha256": None,
             "actual_sha256": sha256_of(path),
             "verified": None,
@@ -99,6 +125,7 @@ def _verified(jar_dir: Path, manifest: Mapping[str, Any], *, source: str) -> Jar
         "path": str(jar_path),
         "source": source,
         "version": manifest.get("version"),
+        "codenarc": manifest.get("codenarc"),
         "expected_sha256": expected,
         "actual_sha256": actual,
         "verified": verified,
@@ -111,6 +138,7 @@ def _missing(error: str, *, source: str) -> JarInfo:
         "path": None,
         "source": source,
         "version": None,
+        "codenarc": None,
         "expected_sha256": None,
         "actual_sha256": None,
         "verified": None,

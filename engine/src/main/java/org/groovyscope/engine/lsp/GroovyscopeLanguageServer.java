@@ -207,6 +207,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     public CompletableFuture<Map<String, Object>> status() {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("engine", EngineVersion.current());
+        status.put("codenarc", EngineVersion.codenarc());
         status.put("root", workspaceRoot.get() == null ? null : workspaceRoot.get().toString());
         status.put("daemon", daemonShutdown != null);
         status.put("configHash", liveConfig.get().configHash());

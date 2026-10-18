@@ -153,9 +153,10 @@ public final class Main {
             }
         }
         org.groovyscope.engine.log.EngineLog.configure(level, file);
-        org.groovyscope.engine.log.EngineLog.info("engine %s, Java %s (%s) at %s, log level %s",
-                EngineVersion.current(), System.getProperty("java.version"), System.getProperty("java.vendor"),
-                System.getProperty("java.home"), org.groovyscope.engine.log.EngineLog.threshold());
+        org.groovyscope.engine.log.EngineLog.info("engine %s, CodeNarc %s, Java %s (%s) at %s, log level %s",
+                EngineVersion.current(), EngineVersion.codenarc(), System.getProperty("java.version"),
+                System.getProperty("java.vendor"), System.getProperty("java.home"),
+                org.groovyscope.engine.log.EngineLog.threshold());
     }
 
     private static String value(List<String> remaining, String option) {

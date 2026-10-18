@@ -40,4 +40,20 @@ class EngineVersionSpec extends Specification {
         expect:
         EngineVersion.read(new ByteArrayInputStream('version=  1.2.3  \n'.bytes)) == '1.2.3'
     }
+
+    def 'codenarc() returns the CodeNarc release the build embedded'() {
+        expect:
+        EngineVersion.codenarc() ==~ /\d+\.\d+(\.\d+)?/
+    }
+
+    def 'read() reads the codenarc key and falls back to unknown for #label'() {
+        expect:
+        EngineVersion.read(new ByteArrayInputStream(content.bytes), EngineVersion.CODENARC_KEY) == expected
+
+        where:
+        label                       | content                                   | expected
+        'an expanded value'         | 'version=1.0.0\ncodenarc= 4.0.0 \n'       | '4.0.0'
+        'an unexpanded placeholder' | 'version=1.0.0\ncodenarc=${codenarc}\n'   | 'unknown'
+        'a missing key'             | 'version=1.0.0\n'                         | 'unknown'
+    }
 }

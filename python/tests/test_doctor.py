@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,14 @@ def test_jar_check_variants(fake_jar_dir: Path, tmp_path: Path, monkeypatch) -> 
     override = tmp_path / "o.jar"
     override.write_bytes(b"x")
     assert jar_check({JAR_ENV: str(override)})[0] == "warn"
+
+
+def test_jar_check_names_the_embedded_codenarc(fake_jar_dir: Path, monkeypatch) -> None:
+    manifest = json.loads((fake_jar_dir / "_manifest.json").read_text(encoding="utf-8"))
+    (fake_jar_dir / "_manifest.json").write_text(json.dumps({**manifest, "codenarc": "4.0.0"}), encoding="utf-8")
+    monkeypatch.setattr("groovyscope.doctor.locate_jar", lambda env: locate_jar(env, fake_jar_dir))
+    level, _, message = jar_check({})
+    assert level == "ok" and "CodeNarc 4.0.0" in message
 
 
 def test_kiro_check_states(tmp_path: Path) -> None:
