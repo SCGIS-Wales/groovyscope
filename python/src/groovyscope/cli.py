@@ -1799,8 +1799,16 @@ def daemon_status(obj: dict[str, Any]) -> None:
     details = daemon_lifecycle.info(obj["root"], dict(os.environ))
     rows = [("socket", details["socket"]), ("running", "yes" if details["running"] else "no"), ("log", details["log"])]
     for key, value in (details["status"] or {}).items():
-        rows.append((key, str(value)))
+        if key == "memory":
+            rows.append((key, daemon_lifecycle.memory_summary(details["status"]) or str(value)))
+        else:
+            rows.append((key, str(value)))
     click.echo(table(rows))
+    warning = daemon_lifecycle.memory_warning(details["status"])
+    if warning:
+        click.echo(f"warning: {warning}")
+    if details["outOfMemory"]:
+        click.echo(f"warning: {daemon_lifecycle.out_of_memory_advice(details['log'])}")
     if not details["running"]:
         sys.exit(3)
 

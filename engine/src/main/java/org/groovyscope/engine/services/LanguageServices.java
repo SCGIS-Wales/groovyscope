@@ -34,6 +34,7 @@ import org.groovyscope.engine.callgraph.CallGraph;
 import org.groovyscope.engine.callgraph.ImpactAnalyzer;
 import org.groovyscope.engine.compile.CompilationResult;
 import org.groovyscope.engine.compile.GroovyCompiler;
+import org.groovyscope.engine.compile.LoaderHandle;
 import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.index.AstIndex;
 import org.groovyscope.engine.index.AstRanges;
@@ -111,6 +112,10 @@ public final class LanguageServices {
     private volatile QualityServices quality;
     private volatile CallGraph graph;
     private volatile long graphVersion = -1;
+    // The text each file had when it last parsed (shared with the sources map while unchanged), and the loader
+    // of the last successful compile, closed when the next one is published. Both guarded by lock.
+    private final Map<String, String> lastGood = new HashMap<>();
+    private LoaderHandle openLoader;
 
     /** The call graph of the current snapshot, built on first use and kept until the next compile. */
     public CallGraph callGraph() {
@@ -317,16 +322,32 @@ public final class LanguageServices {
                         sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,
                         result.diagnostics().values().stream().filter(list -> !list.isEmpty()).count());
                 Map<String, ModuleNode> modules = new HashMap<>(result.modules());
-                // A file that no longer parses keeps its last good AST so navigation degrades instead of vanishing.
-                for (Map.Entry<String, ModuleNode> previous : snapshot.result().modules().entrySet()) {
-                    if (!modules.containsKey(previous.getKey()) && sources.containsKey(previous.getKey())) {
-                        modules.put(previous.getKey(), previous.getValue());
+                // A file that no longer parses keeps a tree of its last good text, parsed again into this
+                // generation: a tree carried over from the previous compile would pin that whole generation
+                // (every file's AST and the loader with its jars) in memory for as long as the error lasts.
+                for (Map.Entry<String, String> source : sources.entrySet()) {
+                    String uri = source.getKey();
+                    if (modules.containsKey(uri)) {
+                        lastGood.put(uri, source.getValue());
+                    } else {
+                        String text = lastGood.get(uri);
+                        if (text != null) {
+                            compiler.parseOnly(uri, text).ifPresent(module -> modules.put(uri, module));
+                        }
                     }
                 }
+                lastGood.keySet().retainAll(sources.keySet());
                 AstIndex index = AstIndex.build(modules, sources);
                 Resolver resolver = new Resolver(index);
                 version++;
                 snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
+                graph = null;
+                graphVersion = -1;
+                // Nothing references the previous generation now: release the jars its loader held open.
+                if (openLoader != null) {
+                    openLoader.close();
+                }
+                openLoader = result.loader();
                 persistSymbols(snapshot, sources);
             } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
                 org.groovyscope.engine.log.EngineLog.error(e, "compile of %s failed", workspace.root());

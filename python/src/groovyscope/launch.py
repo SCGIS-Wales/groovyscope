@@ -9,6 +9,9 @@ from typing import Any
 from groovyscope.java import java_executable
 
 # Compile-time code execution paths in Groovy stay off regardless of configuration.
+# An out-of-memory daemon exits instead of limping on with a full heap and wedged threads; the relay and the MCP
+# server start a fresh one, and `daemon status`, `doctor` and `checkup` read the cause from the log.
+OOM_FLAG = "-XX:+ExitOnOutOfMemoryError"
 SAFETY_FLAGS: tuple[str, ...] = (
     "-Dgroovy.grape.enable=false",
     "-Dgroovy.asttest.enable=false",
@@ -29,6 +32,8 @@ def build_engine_command(
 ) -> list[str]:
     """``java <jvm flags> -jar <jar> <engine args>`` with the heap taken from ``daemon.heap``.
 
+    The JVM exits on ``OutOfMemoryError`` (``OOM_FLAG``) rather than serving requests with a full heap.
+
     With ``cds_archive`` the JVM creates (first run) and then reuses a Class Data Sharing archive, which
     shortens daemon start-up. Pass it only for JDK 19 or newer.
     """
@@ -41,6 +46,7 @@ def build_engine_command(
         str(java_executable(java_home)),
         f"-Xmx{heap}",
         "-XX:+UseSerialGC",
+        OOM_FLAG,
         *sharing,
         *SAFETY_FLAGS,
         "-jar",

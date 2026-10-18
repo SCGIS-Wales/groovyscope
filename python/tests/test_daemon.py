@@ -156,6 +156,37 @@ def test_info(tmp_path: Path) -> None:
     assert (
         daemon.info(tmp_path, {"GROOVYSCOPE_SOCKET_DIR": str(tmp_path)}, probe_fn=lambda _p: None)["running"] is False
     )
+    assert details["outOfMemory"] is False
+
+
+def test_info_reads_an_out_of_memory_exit_from_the_log(tmp_path: Path) -> None:
+    environ = {"GROOVYSCOPE_SOCKET_DIR": str(tmp_path), "GROOVYSCOPE_CACHE_DIR": str(tmp_path)}
+    log_file = daemon.log_path(tmp_path, environ)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text("x" * 5000 + "\nTerminating due to java.lang.OutOfMemoryError: Java heap space\n")
+    dead = daemon.info(tmp_path, environ, probe_fn=lambda _p: None)
+    assert dead["running"] is False and dead["outOfMemory"] is True
+    assert "daemon.heap" in daemon.out_of_memory_advice(dead["log"])
+    # A running daemon is never reported as out of memory, whatever an old log says.
+    assert daemon.info(tmp_path, environ, probe_fn=lambda _p: {"engine": "x"})["outOfMemory"] is False
+    log_file.write_text("x" * 5000 + "\nOutOfMemoryError long ago\n" + "y" * 3000)
+    assert daemon.info(tmp_path, environ, probe_fn=lambda _p: None)["outOfMemory"] is False
+
+
+def test_memory_helpers() -> None:
+    assert daemon.memory_use(None) is None
+    assert daemon.memory_use({"memory": "odd"}) is None
+    assert daemon.memory_use({"memory": {"usedMb": 1}}) is None
+    assert daemon.memory_use({"memory": {"usedMb": "a", "maxMb": 2}}) is None
+    assert daemon.memory_use({"memory": {"usedMb": 1, "maxMb": 0}}) is None
+    assert daemon.memory_use({"memory": {"usedMb": 100, "maxMb": 1024}}) == (100, 1024)
+    assert daemon.memory_summary({"memory": {"usedMb": 100, "maxMb": 1024}}) == "100 of 1024 MB (9%)"
+    assert daemon.memory_summary({}) is None
+    assert daemon.memory_warning({"memory": {"usedMb": 100, "maxMb": 1024}}) is None
+    assert daemon.memory_warning({"memory": {"usedMb": 849, "maxMb": 1000}}) is None
+    hot = daemon.memory_warning({"memory": {"usedMb": 850, "maxMb": 1000}})
+    assert hot is not None and "850 of 1000 MB (85%)" in hot and "daemon.heap" in hot
+    assert daemon.memory_warning({"memory": {"usedMb": 500, "maxMb": 1000}}, ratio=0.5) is not None
 
 
 def test_socket_path_limit_and_private_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

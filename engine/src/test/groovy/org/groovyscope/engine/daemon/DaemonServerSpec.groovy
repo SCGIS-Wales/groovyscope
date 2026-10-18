@@ -166,6 +166,8 @@ class DaemonServerSpec extends Specification {
         then:
         status.engine ==~ /\d+\.\d+\.\d+.*/
         status.root == null
+        status.memory.usedMb instanceof Number
+        status.memory.maxMb >= status.memory.usedMb
 
         cleanup:
         server.close()

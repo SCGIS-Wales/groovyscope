@@ -12,7 +12,7 @@ from click.testing import CliRunner
 from groovyscope import __version__, cli
 from groovyscope.jar import locate_jar
 from groovyscope.kiro import GLOBAL_FILES, KIRO_FILES
-from groovyscope.launch import SAFETY_FLAGS
+from groovyscope.launch import OOM_FLAG, SAFETY_FLAGS
 
 
 def test_version_without_bundle(runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,6 +146,7 @@ def test_lsp_execs_the_engine(
     assert argv[0] == path
     assert "-Xmx2g" in argv
     assert all(flag in argv for flag in SAFETY_FLAGS)
+    assert OOM_FLAG in argv
     assert argv[-6:-2] == ["-jar", str(jar), "lsp", "--stdio"]
     assert argv[-2] == "--cache-dir"
     assert "-Xshare:auto" in argv
@@ -283,8 +284,23 @@ def test_daemon_commands(
     status = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"])
     assert status.exit_code == 0 and "files    3" in status.output
 
+    monkeypatch.setattr(
+        cli.daemon_lifecycle,
+        "probe",
+        lambda _s, _timeout=5.0: {"engine": "9.9", "memory": {"usedMb": 900, "maxMb": 1000}},
+    )
+    hot = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"])
+    assert "memory   900 of 1000 MB (90%)" in hot.output
+    assert "warning: heap" in hot.output and "daemon.heap" in hot.output
+
     monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: None)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"]).exit_code == 3
+    log_file = Path(cli.daemon_lifecycle.log_path(tmp_path, dict(os.environ)))
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text("Terminating due to java.lang.OutOfMemoryError: Java heap space\n")
+    dead = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"])
+    assert dead.exit_code == 3 and "exited with OutOfMemoryError" in dead.output and "daemon.heap" in dead.output
+    log_file.unlink()
     monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: False)
     assert "was not running" in runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "stop"]).output
 

@@ -27,7 +27,8 @@ import org.groovyscope.engine.model.Diagnostic;
  * clients can clear stale problems), and the URIs whose module is parsed but not resolved.
  */
 public record CompilationResult(Map<String, ModuleNode> modules, Map<String, String> sources,
-        Map<String, List<Diagnostic>> diagnostics, int phaseReached, Set<String> unresolvedUris) {
+        Map<String, List<Diagnostic>> diagnostics, int phaseReached, Set<String> unresolvedUris,
+        LoaderHandle loader, int attempts) {
 
     public CompilationResult {
         modules = Map.copyOf(modules);
@@ -36,8 +37,24 @@ public record CompilationResult(Map<String, ModuleNode> modules, Map<String, Str
         unresolvedUris = Set.copyOf(unresolvedUris);
     }
 
+    /** A result without a loader of its own (nothing to release) from a single attempt. */
+    public CompilationResult(Map<String, ModuleNode> modules, Map<String, String> sources,
+            Map<String, List<Diagnostic>> diagnostics, int phaseReached, Set<String> unresolvedUris) {
+        this(modules, sources, diagnostics, phaseReached, unresolvedUris, null, 1);
+    }
+
     public static CompilationResult empty() {
         return new CompilationResult(Map.of(), Map.of(), Map.of(), 0, Set.of());
+    }
+
+    /**
+     * Releases the class loader these trees were compiled with (the jars it holds open). Called by the owner of
+     * the result once no tree of this generation is referenced any more; safe to call twice.
+     */
+    public void close() {
+        if (loader != null) {
+            loader.close();
+        }
     }
 
     public boolean hasErrors() {

@@ -26,6 +26,12 @@ STOP_TIMEOUT_SECONDS = 15.0
 # sun_path is 104 bytes on macOS and the BSDs, 108 on Linux (including the terminating NUL).
 MAX_SOCKET_PATH = {"darwin": 103}.get(sys.platform, 107)
 LOG = logging.getLogger("groovyscope.daemon")
+# What the JVM prints when `-XX:+ExitOnOutOfMemoryError` ends the daemon (`Terminating due to
+# java.lang.OutOfMemoryError: Java heap space`); any other OutOfMemoryError in the log tail counts too.
+OOM_MARKER = "OutOfMemoryError"
+# `doctor` and `checkup` warn once the heap in use passes this share of the maximum.
+HEAP_WARN_RATIO = 0.85
+HEAP_FIX = "raise `daemon.heap` in `.groovyscope.yaml` (then `groovyscope daemon restart`)"
 
 Spawn = Callable[..., Any]
 Probe = Callable[[Path], "dict[str, Any] | None"]
@@ -42,6 +48,7 @@ class DaemonInfo(TypedDict):
     running: bool
     status: dict[str, Any] | None
     log: str
+    outOfMemory: bool  # the daemon is not running and its log ends with an OutOfMemoryError
 
 
 def workspace_key(root: Path) -> str:
@@ -269,9 +276,50 @@ def stop(
 def info(root: Path, environ: Mapping[str, str], *, probe_fn: Probe | None = None) -> DaemonInfo:
     socket_file = socket_path(root, environ)
     status = _probe(probe_fn)(socket_file)
+    log_file = log_path(root, environ)
     return {
         "socket": str(socket_file),
         "running": status is not None,
         "status": status,
-        "log": str(log_path(root, environ)),
+        "log": str(log_file),
+        "outOfMemory": status is None and out_of_memory(log_file),
     }
+
+
+def out_of_memory(log_file: Path) -> bool:
+    """Whether the daemon's log ends with an ``OutOfMemoryError``: the JVM exited for lack of heap."""
+    return OOM_MARKER in log_tail(log_file)
+
+
+def memory_use(status: Mapping[str, Any] | None) -> tuple[int, int] | None:
+    """``(usedMb, maxMb)`` from a ``groovyscope/status`` answer, or nothing when the engine did not report it."""
+    memory = (status or {}).get("memory")
+    if not isinstance(memory, Mapping):
+        return None
+    try:
+        used, maximum = int(memory["usedMb"]), int(memory["maxMb"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (used, maximum) if maximum > 0 else None
+
+
+def memory_summary(status: Mapping[str, Any] | None) -> str | None:
+    """``<used> of <max> MB (<share>%)`` for ``daemon status``."""
+    use = memory_use(status)
+    if use is None:
+        return None
+    used, maximum = use
+    return f"{used} of {maximum} MB ({100 * used // maximum}%)"
+
+
+def memory_warning(status: Mapping[str, Any] | None, ratio: float = HEAP_WARN_RATIO) -> str | None:
+    """A warning once the heap in use passes ``ratio`` of the maximum, naming the fix; else nothing."""
+    use = memory_use(status)
+    if use is None or use[0] < ratio * use[1]:
+        return None
+    return f"heap {memory_summary(status)} in use; {HEAP_FIX} before the daemon runs out"
+
+
+def out_of_memory_advice(log: str) -> str:
+    """What to do when the last daemon died of an ``OutOfMemoryError``."""
+    return f"the last daemon exited with OutOfMemoryError (log: {log}); {HEAP_FIX}"

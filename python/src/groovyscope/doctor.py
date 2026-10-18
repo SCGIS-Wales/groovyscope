@@ -158,7 +158,12 @@ def daemon_check(root: Path, environ: Mapping[str, str]) -> Check:
     details = daemon.info(root, environ)
     if details["running"]:
         engine = (details["status"] or {}).get("engine", "?")
+        warning = daemon.memory_warning(details["status"])
+        if warning:
+            return ("warn", "daemon", f"running on {details['socket']} (engine {engine}); {warning}")
         return ("ok", "daemon", f"running on {details['socket']} (engine {engine})")
+    if details["outOfMemory"]:
+        return ("warn", "daemon", daemon.out_of_memory_advice(details["log"]))
     return ("info", "daemon", f"not running; starts with the first `groovyscope lsp` session (log: {details['log']})")
 
 

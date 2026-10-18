@@ -115,6 +115,44 @@ class GroovyCompilerSpec extends Specification {
         call.objectExpression.type.name == 'Util'
     }
 
+    def 'a syntax error in a base class costs a bounded number of rounds and the subclasses stay resolved'() {
+        given: 'Base does not parse; a chain of subclasses extends it; other files are unrelated'
+        Map<String, String> sources = [
+            'file:///w/Base.groovy'  : 'class Base { String name() { "base" ',
+            'file:///w/Sub1.groovy'  : 'class Sub1 extends Base { }',
+            'file:///w/Sub2.groovy'  : 'class Sub2 extends Sub1 { }',
+            'file:///w/Sub3.groovy'  : 'class Sub3 extends Sub2 { String twice() { name() + name() } }',
+            'file:///w/User.groovy'  : 'class User { String run(Sub3 s) { def local = s.twice(); local } }',
+            'file:///w/Util.groovy'  : 'class Util { static String shout(String s) { s.toUpperCase() } }',
+            'file:///w/Caller.groovy': 'class Caller { String go(String s) { def x = Util.shout(s); x } }',
+        ]
+
+        when:
+        def result = compiler.compile(sources, [], false)
+
+        then: 'one round fails on syntax, the next resolves everything else, one more shows the cascade'
+        result.attempts() <= 3
+        result.unresolvedUris().contains('file:///w/Base.groovy')
+        !result.diagnostics()['file:///w/Base.groovy'].empty
+        result.diagnostics()['file:///w/Util.groovy'].empty
+        result.diagnostics()['file:///w/Caller.groovy'].empty
+
+        and: 'the subclass chain and its users keep resolved trees'
+        result.modules().keySet().containsAll(['file:///w/Sub2.groovy', 'file:///w/Sub3.groovy', 'file:///w/User.groovy'])
+        result.modules()['file:///w/Sub3.groovy'].classes[0].superClass.name == 'Sub2'
+        result.modules()['file:///w/User.groovy'].classes[0].methods.find { it.name == 'run' }.parameters[0].type.name == 'Sub3'
+
+        cleanup:
+        result?.close()
+    }
+
+    def 'the retry budget is a few first rounds, never below the floor'() {
+        expect:
+        RetryBudget.of(0) == RetryBudget.MINIMUM_NANOS
+        RetryBudget.of(-5) == RetryBudget.MINIMUM_NANOS
+        RetryBudget.of(10_000_000_000L) == RetryBudget.FACTOR * 10_000_000_000L
+    }
+
     def 'trees stay usable after compiling: classpath types are decompiled lazily'() {
         given:
         def jar = Paths.get(spock.lang.Specification.protectionDomain.codeSource.location.toURI())

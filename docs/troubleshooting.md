@@ -53,6 +53,8 @@ hard failures.
 | Kiro shows `1 MCP failure` | `groovyscope mcp` could not start or reach the daemon; run `groovyscope doctor`, then `groovyscope daemon status` and read its log |
 | An MCP tool answers `... failed: ...` | The engine refused the request (unknown symbol, bad position, unknown change kind); the message names the cause |
 | `daemon unavailable (...); running the engine directly` on stderr | The daemon could not start; `groovyscope daemon status` shows the log path, read it, then `groovyscope daemon start` |
+| `daemon status` or `doctor` says `exited with OutOfMemoryError` | The workspace needs more heap than `daemon.heap` (default 1g) allows; raise it in `.groovyscope.yaml`, then `groovyscope daemon restart` |
+| `doctor` warns `heap ... in use` | The daemon is near its limit; raise `daemon.heap` before it runs out, or lower `workspace.javaSources` and the source roots to what the agent needs |
 | Stale answers after switching branches | Every CLI and MCP request re-checks the files on disk; if an editor session still looks stale, `groovyscope daemon restart` |
 | `check` exits 1 | A finding at or above `lint.failOnPriority` (1 = error, 2 = warning, 3 = info); lower the bar or fix the code; `--json` lists every finding |
 | `format` exits 1 | Files would change; rerun with `--apply`, or treat the exit code as "needs formatting" in CI |

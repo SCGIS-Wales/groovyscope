@@ -34,6 +34,7 @@ import org.codehaus.groovy.control.Phases;
 import org.codehaus.groovy.control.SourceUnit;
 import org.codehaus.groovy.control.messages.Message;
 import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
+import org.groovyscope.engine.compile.RetryBudget;
 import org.codehaus.groovy.syntax.SyntaxException;
 import org.groovyscope.engine.compile.GroovyCompiler;
 import org.groovyscope.engine.compile.WorkspaceParentClassLoader;
@@ -123,8 +124,20 @@ public final class TypeCheckAnalyzer {
         Map<String, String> remaining = new LinkedHashMap<>(sources);
         remaining.keySet().removeAll(skip);
         List<String> extensions = extensionsFor(settings, groovy);
+        long started = System.nanoTime();
+        long deadline = Long.MAX_VALUE;
         for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
+            if (System.nanoTime() > deadline) {
+                // Each retry is a whole-workspace compile to bytecode generation; past the budget the files still
+                // unresolved go without a type check rather than holding every request for minutes.
+                org.groovyscope.engine.log.EngineLog.warn("type check stopped after %d round(s): %d file(s) unchecked",
+                        attempt, remaining.size());
+                return diagnostics;
+            }
             Pass pass = compileOnce(remaining, classpath, trust, extensions);
+            if (attempt == 0) {
+                deadline = started + RetryBudget.of(System.nanoTime() - started);
+            }
             if (pass.crash != null) {
                 String first = remaining.keySet().iterator().next();
                 diagnostics.get(first).add(new Diagnostic(first, org.groovyscope.engine.model.Range.of(0, 0, 0, 1),

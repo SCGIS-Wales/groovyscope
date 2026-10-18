@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from groovyscope import daemon
 from groovyscope.doctor import (
     build_report,
     config_check,
@@ -122,6 +123,18 @@ def test_daemon_check(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("groovyscope.daemon.probe", lambda _s, _timeout=5.0: {"engine": "1.2.3"})
     level, _, message = daemon_check(tmp_path, environ)
     assert level == "ok" and "engine 1.2.3" in message
+    monkeypatch.setattr(
+        "groovyscope.daemon.probe",
+        lambda _s, _timeout=5.0: {"engine": "1.2.3", "memory": {"usedMb": 950, "maxMb": 1000}},
+    )
+    level, _, message = daemon_check(tmp_path, environ)
+    assert level == "warn" and "950 of 1000 MB" in message and "daemon.heap" in message
+    monkeypatch.setattr("groovyscope.daemon.probe", lambda _s, _timeout=5.0: None)
+    log_file = daemon.log_path(tmp_path, environ)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text("Terminating due to java.lang.OutOfMemoryError: Java heap space\n")
+    level, _, message = daemon_check(tmp_path, environ)
+    assert level == "warn" and "OutOfMemoryError" in message and "daemon.heap" in message
 
 
 def test_kiro_agent_check_names_version_and_format(tmp_path: Path) -> None:

@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ModuleNode;
@@ -98,22 +99,43 @@ public class GroovyCompiler {
         }
         Map<String, ModuleNode> modules = new HashMap<>();
         Set<String> dropped = new LinkedHashSet<>();
-        Attempt first = null;
+        // The first attempt that got past parsing: its trees are the ones kept when later rounds only cascade.
+        // Rounds before it failed on syntax, and their drops are genuine; rounds after it drop the users of what
+        // it could not resolve.
+        Attempt resolvedOnce = null;
+        Set<String> droppedSinceResolved = new LinkedHashSet<>();
         Attempt previous = null;
         Attempt kept = null;
         int phase = 0;
+        int attempts = 0;
+        long started = System.nanoTime();
+        long deadline = Long.MAX_VALUE;
+        boolean overBudget = false;
         for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
-            Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION);
-            if (first == null) {
-                first = result;
+            if (System.nanoTime() > deadline) {
+                overBudget = true;
+                break;
             }
-            if (previous != null && previous != first) {
+            Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION);
+            attempts++;
+            if (attempt == 0) {
+                deadline = started + RetryBudget.of(System.nanoTime() - started);
+            }
+            if (previous != null && previous != resolvedOnce) {
                 release(previous);
             }
             previous = result;
             phase = Math.max(phase, result.phaseReached);
-            mergeDiagnostics(diagnostics, result.diagnostics);
             boolean resolved = !result.failed || result.phaseReached >= Phases.CANONICALIZATION;
+            if (resolvedOnce == null) {
+                // Up to and including the first resolved round every error is real; later rounds only report
+                // the classes that earlier drops removed.
+                mergeDiagnostics(diagnostics, result.diagnostics);
+            }
+            if (resolvedOnce == null && result.failed && !result.crashed
+                    && result.phaseReached >= Phases.SEMANTIC_ANALYSIS) {
+                resolvedOnce = result;
+            }
             if (resolved || result.brokenUris.isEmpty() || attempt == MAX_RETRIES) {
                 if (resolved) {
                     modules.putAll(result.modules);
@@ -127,37 +149,72 @@ public class GroovyCompiler {
             for (String broken : result.brokenUris) {
                 remaining.remove(broken);
                 dropped.add(broken);
+                if (resolvedOnce != null) {
+                    droppedSinceResolved.add(broken);
+                }
             }
-            if (cascaded(first, dropped)) {
-                // Every further round would only drop the users of the files already dropped; the first
-                // attempt's trees are kept below, so the remaining compiles would be thrown away.
+            if (resolvedOnce != null && cascaded(resolvedOnce, droppedSinceResolved)) {
+                // Every further round would only drop the users of the files already dropped; the resolved
+                // round's trees are kept below, so the remaining compiles would be thrown away.
                 break;
             }
         }
-        if (first != null && cascaded(first, dropped)) {
-            if (previous != first) {
+        boolean keepResolved = resolvedOnce != null && kept == null
+                && (cascaded(resolvedOnce, droppedSinceResolved) || overBudget);
+        if (overBudget) {
+            org.groovyscope.engine.log.EngineLog.warn("compile stopped retrying after %d round(s): %d file(s) %s",
+                    attempts, remaining.size(), keepResolved ? "kept from the resolved round" : "parsed only");
+            if (!keepResolved) {
+                dropped.addAll(remaining.keySet());
+            }
+            remaining.clear();
+        }
+        if (keepResolved) {
+            if (previous != resolvedOnce) {
                 release(previous);
             }
-            return keepFirstAttempt(sources, first);
+            // Only the files dropped before the resolved round (syntax errors) have no tree in it; the files
+            // dropped after it are the cascade, and the resolved round's trees for them are kept.
+            Set<String> syntaxDrops = new LinkedHashSet<>(dropped);
+            syntaxDrops.removeAll(droppedSinceResolved);
+            return keepResolvedAttempt(sources, diagnostics, resolvedOnce, syntaxDrops, classpath, trust, attempts);
         }
-        if (previous != kept && previous != first) {
+        if (previous != kept && previous != resolvedOnce) {
             release(previous);
         }
-        if (first != kept) {
-            release(first);
+        if (resolvedOnce != kept) {
+            release(resolvedOnce);
         }
         for (String uri : dropped) {
-            Attempt parsed = compileOnce(Map.of(uri, sources.get(uri)), classpath, trust, Phases.CONVERSION);
-            ModuleNode module = parsed.modules.get(uri);
-            if (module != null) {
-                modules.put(uri, module);
-            }
-            release(parsed); // a CONVERSION tree never decompiles classpath types
+            parseInto(modules, uri, sources.get(uri), classpath, trust);
         }
         // Java files are compiled only so Groovy code can resolve them; Groovy's view of Java code is not
         // something to report on (javac and the IDE own that), so their diagnostics are dropped.
         diagnostics.keySet().removeIf(GroovyCompiler::isJava);
-        return new CompilationResult(modules, sources, diagnostics, phase, dropped);
+        LoaderHandle loader = kept == null || kept.loader == null ? null : new LoaderHandle(kept.loader);
+        return new CompilationResult(modules, sources, diagnostics, phase, dropped, loader, attempts);
+    }
+
+    /** Parses one file alone to CONVERSION (its loader is released at once) and adds its tree when it has one. */
+    private void parseInto(Map<String, ModuleNode> modules, String uri, String text, List<Path> classpath,
+            boolean trust) {
+        Attempt parsed = compileOnce(Map.of(uri, text), classpath, trust, Phases.CONVERSION);
+        ModuleNode module = parsed.modules.get(uri);
+        if (module != null) {
+            modules.put(uri, module);
+        }
+        release(parsed); // a CONVERSION tree never decompiles classpath types
+    }
+
+    /**
+     * The syntax tree of one file on its own, resolved against nothing: what a file that stopped parsing keeps
+     * from its last good text, in the current generation rather than a tree pinned to a previous compile.
+     */
+    public Optional<ModuleNode> parseOnly(String uri, String text) {
+        Attempt parsed = compileOnce(Map.of(uri, text), List.of(), false, Phases.CONVERSION);
+        ModuleNode module = parsed.modules.get(uri);
+        release(parsed);
+        return Optional.ofNullable(module);
     }
 
     /** True when retrying dropped files that the first attempt did not report: the drops cascaded. */
@@ -166,23 +223,31 @@ public class GroovyCompiler {
                 && !first.brokenUris.containsAll(dropped);
     }
 
-    private CompilationResult keepFirstAttempt(Map<String, String> sources, Attempt first) {
-        Map<String, ModuleNode> modules = new HashMap<>(first.modules);
-        for (Map.Entry<String, SourceUnit> unit : first.units.entrySet()) {
+    private CompilationResult keepResolvedAttempt(Map<String, String> sources, Map<String, List<Diagnostic>> genuine,
+            Attempt resolved, Set<String> dropped, List<Path> classpath, boolean trust, int attempts) {
+        Map<String, ModuleNode> modules = new HashMap<>(resolved.modules);
+        for (Map.Entry<String, SourceUnit> unit : resolved.units.entrySet()) {
             ModuleNode module = modules.get(unit.getKey());
             if (module != null) {
-                finishSemanticAnalysis(first.unit, unit.getValue(), module);
+                finishSemanticAnalysis(resolved.unit, unit.getValue(), module);
             }
         }
-        // Only the first attempt's errors are real: later attempts report the classes their drops removed.
+        // Files dropped for syntax errors before the resolved round have no tree in it: parse them alone.
+        for (String uri : dropped) {
+            if (!modules.containsKey(uri) && sources.containsKey(uri)) {
+                parseInto(modules, uri, sources.get(uri), classpath, trust);
+            }
+        }
         Map<String, List<Diagnostic>> diagnostics = new HashMap<>();
         for (String uri : sources.keySet()) {
             diagnostics.put(uri, new ArrayList<>());
         }
-        mergeDiagnostics(diagnostics, first.diagnostics);
+        mergeDiagnostics(diagnostics, genuine);
         diagnostics.keySet().removeIf(GroovyCompiler::isJava);
-        Set<String> partial = new LinkedHashSet<>(first.brokenUris);
-        return new CompilationResult(modules, sources, diagnostics, first.phaseReached, partial);
+        Set<String> partial = new LinkedHashSet<>(dropped);
+        partial.addAll(resolved.brokenUris);
+        LoaderHandle loader = resolved.loader == null ? null : new LoaderHandle(resolved.loader);
+        return new CompilationResult(modules, sources, diagnostics, resolved.phaseReached, partial, loader, attempts);
     }
 
     /** True when {@code text} parses as Groovy (syntax only; used to vet automatic fixes). */

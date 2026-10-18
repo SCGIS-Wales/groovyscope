@@ -212,6 +212,11 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         status.put("root", workspaceRoot.get() == null ? null : workspaceRoot.get().toString());
         status.put("daemon", daemonShutdown != null);
         status.put("configHash", liveConfig.get().configHash());
+        Runtime runtime = Runtime.getRuntime();
+        Map<String, Object> memory = new LinkedHashMap<>();
+        memory.put("usedMb", (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024));
+        memory.put("maxMb", runtime.maxMemory() / (1024 * 1024));
+        status.put("memory", memory);
         LanguageServices current = services.get();
         if (current != null) {
             status.put("dirty", current.isDirty());
