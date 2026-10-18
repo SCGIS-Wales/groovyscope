@@ -21,6 +21,7 @@ KIRO_FILES: tuple[tuple[str, str], ...] = (
     ("lsp.json", ".kiro/settings/lsp.json"),
     ("mcp.json", ".kiro/settings/mcp.json"),
     ("agents/groovy.json", ".kiro/agents/groovy.json"),
+    ("agents/groovy-reviewer.json", ".kiro/agents/groovy-reviewer.json"),
     ("steering/groovyscope.md", ".kiro/steering/groovyscope.md"),
 )
 # Files relative to the Kiro home (~/.kiro, or $KIRO_HOME) for `kiro init --global`. Kiro CLI 2.x reads LSP servers

@@ -101,6 +101,7 @@ and sends back answers the agent can act on. Package by package: [docs/architect
 
 | Command | What it does |
 |---|---|
+| `groovyscope hook` | What the groovy agent's `postToolUse` and `stop` hooks run (the hook JSON arrives on stdin): after a write, the Groovy file just written is checked and the findings go back to the agent in the same turn; with `hooks.stopGate: true`, the turn is refused while changed Groovy files have compile errors. Never fails the session |
 | `groovyscope checkup [--fix] [--agent] [--json]` | Everything to do after an install or upgrade, one line per item with the exact fix: Kiro files older than the package, project LSP entry, trust, classpath, hidden MCP servers, agent format, JDK, engine JAR, daemon. `--fix` applies the safe repairs; `--agent` is what the groovy agent's start hook runs |
 | `groovyscope doctor [--bundle report.zip]` | Checks Python, configuration and trust, JDK (vendor and version), the engine JAR (SHA-256), Kiro files, the Kiro agent's format and runtime profiles; `--bundle` writes a zip for bug reports |
 | `groovyscope logs [-n N] [-f] [--kiro]` | The engine daemon's log for this workspace, or groovyscope's lines from Kiro CLI's logs |

@@ -223,6 +223,38 @@
         }
       }
     },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "afterWrite": {
+          "type": "boolean"
+        },
+        "afterWriteInclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "compile",
+              "lint",
+              "practices",
+              "typecheck"
+            ]
+          }
+        },
+        "afterWriteMaxFindings": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stopGate": {
+          "type": "boolean"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "practices": {
       "type": "object",
       "additionalProperties": false,

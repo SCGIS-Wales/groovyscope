@@ -314,6 +314,20 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   a `groovy-reviewer` subagent for merge request review; a headless CI recipe in `docs/ci.md`
   (`kiro-cli chat --no-interactive --require-mcp-startup --output-format stream-json`). Done when: CI green,
   merged, released; the owner's Kiro checks of both hooks and one skill run recorded here.
+  Progress 2026-10-18, first branch `feat/kiro-native` (hooks, reviewer, CI recipe): `groovyscope hook` reads
+  Kiro's hook JSON from stdin; on `PostToolUse` for a `write` it checks the Groovy files the write touched
+  (`hooks.afterWriteInclude`, compile, lint and practices by default; the type check stays out because it
+  compiles the whole workspace) and prints a `groovyscope checked <file>` block, errors first, nothing for a
+  clean file; on `Stop`, with `hooks.stopGate: true`, it compiles the Groovy files changed in the working tree
+  and answers `{"decision": "block", "reason": ...}` while any has compile errors. The engine request is
+  bounded by `hooks.timeoutSeconds` and the command never fails the session. The agent template gains
+  `hooks.postToolUse` (matcher `write`) and `hooks.stop`; `agents/groovy-reviewer.json` is a read-only
+  reviewer agent for the `subagent` tool and unattended runs; `docs/ci.md` gets the headless merge request
+  review job; the steering explains the after-write block. Smoke-tested on the corpus through the daemon: a
+  broken write produced the block with the compile error, the gate blocked the turn with the error and the
+  reason. Next branch: skills generated from the cookbook, the same recipes as MCP prompts, the steering
+  trimmed (`inclusion: fileMatch` once the owner's Kiro 3 check says custom agents honour it), the
+  `kiro init --power` packaging once the plugin schema is confirmed on a Kiro install.
 - [ ] **Stage 16: tool surface and context cost** — not started, after the Stage 13 numbers. Planned: shorter
   tool descriptions (the explanations move to the skills), a combined `symbol_context` tool (definition,
   hover and a reference count in one call), `disabledTools` guidance for teams, the `/tools` and
@@ -421,3 +435,5 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   diagnostics scoped to the open documents, per-document pull, the type-check compile skipped where it cannot
   report; measured 18.7 s to 0.33 s per push on the generated workspace and 6.1 s to 3.8 s per single-file
   check after an edit on the corpus. The benchmark re-run with Kiro is the owner's part.
+- 2026-10-18: Stage 15 started on `feat/kiro-native`: `groovyscope hook` (after-write check, opt-in stop gate),
+  the `groovy-reviewer` agent and the headless CI review recipe; 331 Python tests at 95%.

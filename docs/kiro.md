@@ -52,6 +52,32 @@ check that crashes becomes a line in the report, and when the hook cannot run at
 says so once. `groovyscope checkup` in a terminal prints the same report with the fix per line; `--fix` applies
 the safe repairs; `--json` is for scripts.
 
+## What happens after every write, and at the end of a turn
+
+The agent's `hooks.postToolUse` entry (matcher `write`) runs `groovyscope hook` after each file write. The command
+reads Kiro's hook JSON from stdin, keeps only Groovy, Gradle and Jenkinsfile files inside the workspace, asks the
+daemon to check them (`hooks.afterWriteInclude`, default compile, lint and practices; the type check is left out
+because it compiles the whole workspace) and prints a `groovyscope checked <file>: N error(s), M warning(s)` block
+with up to `hooks.afterWriteMaxFindings` findings, errors first. Kiro adds the block to the context, so the agent
+sees a broken edit in the same turn instead of at the end of the task. A clean file prints nothing. The engine
+request is bounded by `hooks.timeoutSeconds`; when it is over budget or the daemon is down the hook prints one
+line and the session carries on.
+
+The `hooks.stop` entry runs the same command at the end of a turn. It does nothing unless `hooks.stopGate: true`
+in `.groovyscope.yaml`; then the Groovy files changed in the working tree (git status) are compiled and, while
+any has compile errors, the hook answers `{"decision": "block", "reason": ...}` so the agent fixes them before
+finishing. Whether Kiro V3 honours a blocking `Stop` answer is documented both ways; the owner's check decides.
+
+Settings: `hooks.afterWrite` (default true), `hooks.afterWriteInclude`, `hooks.afterWriteMaxFindings` (12),
+`hooks.stopGate` (false), `hooks.timeoutSeconds` (45).
+
+## The reviewer agent
+
+`groovyscope kiro init` also writes `agents/groovy-reviewer.json`: a read-only agent whose prompt runs
+`review_changes`, then `impact_of` for each changed public declaration, and reports a verdict with blocking,
+should-fix and nit findings. It has no `write` or `shell` tool and no hooks, so it suits the `subagent` tool and
+unattended runs (see [docs/ci.md](ci.md), "Merge request review with Kiro").
+
 ## Is the steering loaded?
 
 Inside Kiro, `/context show` lists the files in the agent's context; `steering/groovyscope.md` must appear,

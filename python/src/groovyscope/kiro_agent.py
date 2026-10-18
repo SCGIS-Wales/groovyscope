@@ -38,6 +38,8 @@ UNION_PATHS: tuple[tuple[str, ...], ...] = (
     ("toolsSettings", "shell", "allowedCommands"),
     ("hooks", "agentSpawn"),
     ("hooks", "userPromptSubmit"),
+    ("hooks", "postToolUse"),
+    ("hooks", "stop"),
 )
 # Keys both engines read, merged into a V3-only agent as well (hooks run the groovyscope checkup at start).
 SHARED_KEYS = ("hooks", "welcomeMessage", "resources")
