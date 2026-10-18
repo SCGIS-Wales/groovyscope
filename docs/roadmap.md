@@ -554,3 +554,5 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   export runs in its own process group and is stopped whole on timeout, a lock refuses a second export of the
   same workspace, and `refresh_classpath` reads trust when called. Long-running MCP tasks are not used: the SDK
   has the types without server support and Kiro does not negotiate them. 390 Python tests at 95% coverage.
+- 2026-10-18: [kiro-checks.md](kiro-checks.md) gathers every check the owner still owes (stages 9 to 16 and 20)
+  plus a memory drill for stages 17 to 19, as Kiro CLI prompts with what to expect and a report table.

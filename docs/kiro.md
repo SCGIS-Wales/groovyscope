@@ -150,6 +150,8 @@ kiro-cli --agent groovy
 
 ## Verify
 
+The full list of checks, with Kiro CLI prompts and a report table: [kiro-checks.md](kiro-checks.md).
+
 ```text
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
