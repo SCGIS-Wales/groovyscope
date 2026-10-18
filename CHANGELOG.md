@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.19.1...v0.20.0) (2026-10-18)
+
+
+### Features
+
+* **graph:** layered diagram layout from the Eclipse Layout Kernel, shared helpers named in boxes ([#85](https://github.com/SCGIS-Wales/groovyscope/issues/85)) ([52be17f](https://github.com/SCGIS-Wales/groovyscope/commit/52be17f76623fc1212926210542412571eacace6))
+
 ## [0.19.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.19.0...v0.19.1) (2026-10-18)
 
 
