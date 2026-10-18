@@ -22,8 +22,11 @@ def test_version_without_bundle(runner: CliRunner, monkeypatch: pytest.MonkeyPat
 
 
 def test_version_with_bundle(runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "read_manifest", lambda: {"version": "9.9.9", "codenarc": "4.0.0"})
+    output = runner.invoke(cli.main, ["version"]).output
+    assert "engine 9.9.9" in output and "codenarc 4.0.0" in output
     monkeypatch.setattr(cli, "read_manifest", lambda: {"version": "9.9.9"})
-    assert "engine 9.9.9" in runner.invoke(cli.main, ["version"]).output
+    assert "codenarc unknown" in runner.invoke(cli.main, ["version"]).output
 
 
 def test_version_option(runner: CliRunner) -> None:

@@ -48,11 +48,17 @@ tasks.withType<GroovyCompile>().configureEach {
     options.encoding = "UTF-8"
 }
 
+// The CodeNarc version comes from settings.gradle.kts (latest stable release on Maven Central, or the floor).
+val codenarcVersion = libs.versions.codenarc.get()
+
 tasks.processResources {
+    // Locals only: a task action must not capture the script object (configuration cache).
     val projectVersion = project.version.toString()
+    val embeddedCodenarc = codenarcVersion
     inputs.property("version", projectVersion)
+    inputs.property("codenarc", embeddedCodenarc)
     filesMatching("**/engine-version.properties") {
-        expand("version" to projectVersion)
+        expand("version" to projectVersion, "codenarc" to embeddedCodenarc)
     }
 }
 
@@ -93,7 +99,7 @@ tasks.check {
 
 tasks.jar {
     manifest {
-        attributes("Main-Class" to "org.groovyscope.engine.Main")
+        attributes("Main-Class" to "org.groovyscope.engine.Main", "CodeNarc-Version" to codenarcVersion)
     }
 }
 
@@ -103,7 +109,7 @@ tasks.shadowJar {
     mergeServiceFiles()
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
     manifest {
-        attributes("Main-Class" to "org.groovyscope.engine.Main")
+        attributes("Main-Class" to "org.groovyscope.engine.Main", "CodeNarc-Version" to codenarcVersion)
     }
 }
 

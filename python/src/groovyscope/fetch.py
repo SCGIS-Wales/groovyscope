@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from groovyscope import __version__, daemon
-from groovyscope.jar import write_manifest
+from groovyscope.jar import embedded_versions, write_manifest
 
 RELEASE_BASE = "https://github.com/SCGIS-Wales/groovyscope/releases/download"
 SUMS_NAME = "SHA256SUMS.txt"
@@ -155,5 +155,7 @@ def fetch_jar(
     destination.mkdir(parents=True, exist_ok=True)
     target = destination / name
     write_atomically(target, data)
-    write_manifest(destination, version=version, jar_name=name, sha256=actual)
+    write_manifest(
+        destination, version=version, jar_name=name, sha256=actual, codenarc=embedded_versions(target).get("codenarc")
+    )
     return {"path": str(target), "version": version, "sha256": actual, "source": origin}

@@ -33,7 +33,8 @@ profiles live in `config/codenarc/`.
 - `config/codenarc/jenkins.groovy`: pipeline code runs on Jenkins' CPS Groovy runtime, not Groovy 5/6, so it
   gets its own profile with `rulesets/jenkins.xml`.
 
-Both profiles load cleanly against CodeNarc 4.0.0 (the engine's specs assert it). The `enhanced` rules are
+Both profiles load cleanly against the embedded CodeNarc (4.0.0 or newer: the build resolves the latest stable
+release, see [architecture.md](architecture.md); the engine's specs assert it). The `enhanced` rules are
 included; they need the compile classpath, which comes from `workspace.classpath` or from `groovyscope
 classpath` (the project's own Gradle or Maven build, in a trusted workspace). `lint.rules` in
 `.groovyscope.yaml` switches single rules off or changes their priority on top of either profile

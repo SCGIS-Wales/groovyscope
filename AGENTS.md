@@ -6,6 +6,9 @@ Read `docs/roadmap.md` first: it says which stage is in progress and what "done"
 
 - `engine/` is a Gradle (Kotlin DSL) project. Build and test with `./gradlew build` (JDK 21 toolchain,
   bytecode target 17). The shaded JAR lands in `engine/build/libs/groovyscope-engine-<ver>-all.jar`.
+  CodeNarc is not pinned: `settings.gradle.kts` resolves the latest stable release from Maven Central and the
+  build embeds it; `codenarc` in `gradle/libs.versions.toml` is only the floor and offline fallback. Never
+  write a CodeNarc version into code, Python or docs; read it from the engine (`groovyscope version`).
 - `python/` is a uv project. Run `uv sync`, then `uv run ruff check .`, `uv run ruff format --check .`,
   `uv run mypy`, `uv run pytest --cov` (90% gate). `python3 scripts/bundle_jar.py` copies the JAR into the
   package so `groovyscope doctor` and the integration test can find it.

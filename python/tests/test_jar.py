@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import zipfile
 from pathlib import Path
 
-from groovyscope.jar import JAR_ENV, locate_jar, read_manifest, sha256_of, write_manifest
+from groovyscope.jar import JAR_ENV, embedded_versions, locate_jar, read_manifest, sha256_of, write_manifest
 
 
 def test_sha256_of(tmp_path: Path) -> None:
@@ -61,3 +62,47 @@ def test_locate_jar_env_override(tmp_path: Path) -> None:
     assert info["actual_sha256"] == sha256_of(jar)
     missing = locate_jar({JAR_ENV: str(tmp_path / "nope.jar")}, tmp_path)
     assert missing["error"] is not None and "missing file" in missing["error"]
+
+
+def _jar_with_versions(path: Path, content: str) -> Path:
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("org/groovyscope/engine/engine-version.properties", content)
+    return path
+
+
+def test_embedded_versions_reads_the_expanded_resource(tmp_path: Path) -> None:
+    jar = _jar_with_versions(tmp_path / "engine.jar", "version=1.2.3\ncodenarc= 4.0.0 \n")
+    assert embedded_versions(jar) == {"version": "1.2.3", "codenarc": "4.0.0"}
+
+
+def test_embedded_versions_skips_unexpanded_and_blank_values(tmp_path: Path) -> None:
+    jar = _jar_with_versions(tmp_path / "engine.jar", "version=1.2.3\ncodenarc=${codenarc}\nother=\nno-separator\n")
+    assert embedded_versions(jar) == {"version": "1.2.3"}
+
+
+def test_embedded_versions_is_empty_for_bad_input(tmp_path: Path) -> None:
+    not_a_jar = tmp_path / "x.jar"
+    not_a_jar.write_bytes(b"not a zip")
+    assert embedded_versions(not_a_jar) == {}
+    assert embedded_versions(tmp_path / "missing.jar") == {}
+    without_resource = tmp_path / "empty.jar"
+    with zipfile.ZipFile(without_resource, "w") as archive:
+        archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+    assert embedded_versions(without_resource) == {}
+
+
+def test_manifest_records_codenarc_when_known(tmp_path: Path) -> None:
+    write_manifest(tmp_path, version="1.2.3", jar_name="x.jar", sha256="abc", codenarc="4.0.0")
+    assert read_manifest(tmp_path) == {"version": "1.2.3", "jar": "x.jar", "sha256": "abc", "codenarc": "4.0.0"}
+    write_manifest(tmp_path, version="1.2.3", jar_name="x.jar", sha256="abc", codenarc=None)
+    assert "codenarc" not in (read_manifest(tmp_path) or {})
+
+
+def test_locate_jar_reports_codenarc(tmp_path: Path) -> None:
+    jar_dir = tmp_path / "_jar"
+    jar_dir.mkdir()
+    jar = _jar_with_versions(jar_dir / "groovyscope-engine-0.1.0-all.jar", "version=0.1.0\ncodenarc=4.0.0\n")
+    write_manifest(jar_dir, version="0.1.0", jar_name=jar.name, sha256=sha256_of(jar), codenarc="4.0.0")
+    assert locate_jar({}, jar_dir)["codenarc"] == "4.0.0"
+    override = locate_jar({"GROOVYSCOPE_JAR": str(jar)}, tmp_path / "nowhere")
+    assert override["source"] == "GROOVYSCOPE_JAR" and override["codenarc"] == "4.0.0"

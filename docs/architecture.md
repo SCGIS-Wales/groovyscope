@@ -18,7 +18,7 @@ Packages under `org.groovyscope.engine`:
 | Package | Stage | Responsibility |
 |---|---|---|
 | `lsp` | 0, 1, 10 | LSP4J server: lifecycle, incremental document sync, definition, type definition, implementation, references, document highlight, hover, document and workspace symbols, folding ranges, inlay hints, completion, signature help, prepare/rename, formatting and range formatting, code actions (quick fixes, fix all, organize imports), published and pulled diagnostics, call hierarchy, semantic tokens, plus the `groovyscope/*` requests the CLI and MCP server use. The only package allowed to import LSP4J types. |
-| `version` | 0 | Engine version from a Gradle-expanded resource. |
+| `version` | 0 | Engine version and the embedded CodeNarc version from a Gradle-expanded resource. |
 | `config` | 1 | The slice of `.groovyscope.yaml` the engine needs, handed over as JSON by the Python front end. |
 | `workspace` | 1 | Source discovery under the configured roots (whole-tree fallback), open-document overlay, classpath from configuration (never inferred). |
 | `compile` | 1 | `CompilationUnit` to `CANONICALIZATION`, never class generation; Grape and `@ASTTest` off; a filtered parent class loader; global AST transforms gated by `workspace.trust`. See "Compile strategy". |
@@ -314,3 +314,25 @@ them before trusting navigation or impact answers around them.
 
 MCP tools return compact JSON: paths relative to the root, `line:col`, a symbol kind, at most
 `output.maxResults` items within `output.maxBytes`, plus a continuation cursor. They never return file bodies.
+
+## CodeNarc version: resolved at build time, embedded, reported
+
+The engine does not pin CodeNarc. `engine/settings.gradle.kts` asks Maven Central for
+`org/codenarc/CodeNarc/maven-metadata.xml`, keeps the plain numeric releases (`4.0.0`, never `3.7.0-groovy-4.0`,
+`-rc` or `-SNAPSHOT`), takes the highest and overrides the `codenarc` entry of the version catalogue with it. The
+value in `gradle/libs.versions.toml` is the floor (the oldest release the engine was verified against, which
+Dependabot still raises) and the offline fallback: a lower or missing answer never wins over it. The lookup is a
+Gradle `ValueSource`, so a cached configuration is invalidated as soon as a new release appears. The build prints
+one line, `CodeNarc <version>: <why>`, and expands the version into `engine-version.properties` and the JAR
+manifest (`CodeNarc-Version`); `EngineVersion.codenarc()` reads it, `groovyscope/status` returns it, and the
+bundle manifest written by `scripts/bundle_jar.py` carries it, so `groovyscope version` and `doctor` name the
+CodeNarc the installed engine runs. The CycloneDX SBOM attached to each release records the same version.
+
+| Need | How |
+|---|---|
+| Pin a release for one build | `./gradlew build -PcodenarcVersion=4.0.0` or `GROOVYSCOPE_CODENARC_VERSION=4.0.0` |
+| No network | `--offline` or `-PcodenarcResolve=false`: the floor is used and the line says so |
+| Corporate mirror | `-PcodenarcMetadataUrl=https://mirror/.../org/codenarc/CodeNarc/maven-metadata.xml` |
+
+The benchmark corpus is a different thing: it is CodeNarc 4.0.0's `src/main` as a fixed subject, and it stays
+fixed on purpose so credit benchmark runs remain comparable.

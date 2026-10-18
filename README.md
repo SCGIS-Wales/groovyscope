@@ -64,7 +64,8 @@ and diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAM
 rather than guesses when a call site can only be matched by name. Findings come from four sources:
 
 - the compiler and Groovy 6's type checkers (NullChecker, SqlInjection, Regex, FormatString, Combiner, Purity);
-- CodeNarc 4 with a profile aligned with the [practices knowledge base](docs/practices.md);
+- CodeNarc 4 with a profile aligned with the [practices knowledge base](docs/practices.md); the engine build
+  embeds the latest stable CodeNarc release on Maven Central at build time (`groovyscope version` prints it);
 - groovyscope's own practice checks, GS001 to GS012 (integer division, Elvis on 0, GString logging, `Eval`,
   `@Grab`, string `execute()`, XXE, Groovy 6-only syntax under a Groovy 5 target and more), GS020 to GS027
   (names that say what things are and do: booleans as questions, verbs on methods, no generic words,

@@ -357,3 +357,10 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   SCGIS-Wales/homebrew-tap still rendered 0.7.0 at 05:30 UTC, so the daily `groovyscope formula` workflow had
   not yet picked up 0.8.0 to 0.11.0; check it after its next run or dispatch it by hand. The Kiro checks for
   Stage 11 and Stage 12 still need the owner's machine.
+- 2026-10-18: CodeNarc is no longer pinned (owner's request). `engine/settings.gradle.kts` resolves the latest
+  stable release from Maven Central at build time through a Gradle `ValueSource` (floor and offline fallback:
+  the version catalogue; pin with `-PcodenarcVersion`; mirror with `-PcodenarcMetadataUrl`), embeds it in
+  `engine-version.properties` and the JAR manifest, `status` returns `codenarc`, the bundle manifest carries
+  it and `groovyscope version` and `doctor` print it. Verified locally: 376 specs green, 318 Python tests at
+  95% (one hypothesis flake in `test_deep_merge_identity`, green on re-run, unrelated), the built JAR reports
+  `codenarc=4.0.0` (the latest stable release on 2026-10-18). The benchmark corpus stays at 4.0.0 by design.

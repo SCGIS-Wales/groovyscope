@@ -204,6 +204,8 @@ def version() -> None:
     engine = manifest.get("version", "unknown") if manifest else "not bundled"
     click.echo(f"groovyscope {__version__}")
     click.echo(f"engine {engine}")
+    if manifest:
+        click.echo(f"codenarc {manifest.get('codenarc', 'unknown')}")
 
 
 @main.command()
@@ -228,7 +230,11 @@ def doctor(obj: dict[str, Any], bundle: Path | None) -> None:
         written = diagnostics.bundle(
             bundle,
             doctor_lines=diagnostics.lines_of(report),
-            versions={"groovyscope": __version__, "engine": (manifest or {}).get("version")},
+            versions={
+                "groovyscope": __version__,
+                "engine": (manifest or {}).get("version"),
+                "codenarc": (manifest or {}).get("codenarc"),
+            },
             effective_config=effective,
             daemon_log=daemon_paths(obj["root"])[1],
             environ=dict(os.environ),
