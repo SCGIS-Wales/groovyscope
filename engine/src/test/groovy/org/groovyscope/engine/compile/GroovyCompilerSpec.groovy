@@ -58,6 +58,18 @@ class GroovyCompilerSpec extends Specification {
         result.modules().size() == 6
     }
 
+    def 'an unresolved class in one file is reported while another file has an unresolved import'() {
+        when: 'the import fails in B and the body of A names a class that exists nowhere'
+        def result = compiler.compile([
+                'file:///w/A.groovy': 'class A {\n    void run() {\n        NoSuchTypeAnywhere x = null\n    }\n}\n',
+                'file:///w/B.groovy': 'import org.apache.foo.Bar\nclass B {\n    Bar bar\n}\n',
+        ], [], false)
+
+        then: 'both files keep their own error'
+        result.diagnostics()['file:///w/A.groovy'].any { it.message().contains('NoSuchTypeAnywhere') }
+        result.diagnostics()['file:///w/B.groovy'].any { it.message().contains('org.apache.foo.Bar') }
+    }
+
     def 'a file that does not parse is dropped and the rest still compiles'() {
         when:
         def result = compile('broken')

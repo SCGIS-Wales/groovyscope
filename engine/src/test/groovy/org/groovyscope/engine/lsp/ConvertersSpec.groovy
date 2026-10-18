@@ -74,6 +74,20 @@ class ConvertersSpec extends Specification {
         converted.children[0].selectionRange.start.character == 4
     }
 
+    def 'a document symbol starts on the line of its name, below its annotations'() {
+        given: 'a method whose node starts at an annotation two lines above the name'
+        def method = new Symbol('execute', SymbolKind.METHOD, 'C', new Location('file:///x', Range.of(80, 4, 103, 5)),
+                Range.of(81, 12, 81, 19), 'Results execute()', [])
+
+        when:
+        def converted = Converters.documentSymbol(method)
+
+        then:
+        converted.range.start.line == 81 && converted.range.start.character == 0
+        converted.range.end.line == 103
+        converted.selectionRange.start.line == 81 && converted.selectionRange.start.character == 12
+    }
+
     def 'workspace symbols use the selection range when present'() {
         given:
         def symbol = new Symbol('C', SymbolKind.CLASS, 'p', new Location('file:///x', Range.of(0, 0, 9, 0)), Range.of(0, 6, 0, 7), 'class C', [])

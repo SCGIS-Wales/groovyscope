@@ -140,8 +140,11 @@ first round, five seconds at least); past it, the resolved round is kept as it s
 loop uses the same budget. Groovy checks for errors after every step of a phase, so it stopped that
 round after resolving class headers; the engine runs the rest of semantic analysis on those trees itself (a
 fresh `ResolveVisitor` for headers, bodies and variable scopes, then `StaticImportVisitor`). Every name that
-can resolve does, and only the genuinely broken files are partial. Only the first round's errors are
-reported, since later rounds mostly report the classes their own drops removed.
+can resolve does, and only the genuinely broken files are partial. The first round's errors are reported, and
+so are the errors that this completion pass finds: Groovy stopped the first round at the first failing file, so
+an unknown type in another file's method body surfaces only here. Later rounds' errors are not reported, since
+they mostly name the classes their own drops removed (an unknown name declared only in a file dropped for a
+syntax error is filtered the same way).
 
 Classpaths are often incomplete (JUnit 4 without Hamcrest, say). A classpath type whose members mention a
 missing class is treated as having no readable members, so the affected call stays unresolved instead of
@@ -186,7 +189,9 @@ Groovy runtime itself or, when `workspace.trust` is on, from the workspace class
 
 Every reference and definition carries one of three confidences. `STATIC`: the compiler or a declared type
 pins the target. `INFERRED`: a single candidate matched on an inferred receiver type (a `def` initialised
-with a constructor, a chained call, a type matched by simple name when the compiler could not resolve it).
+with a constructor, a call to a method whose overloads of that arity declare one return type, a call to a
+closure property whose every return constructs one type, a chained call, a type matched by simple name when
+the compiler could not resolve it).
 `DYNAMIC_UNKNOWN`: matched by name only. Rename refuses when any reference is `DYNAMIC_UNKNOWN`; impact
 analysis (Stage 4) will report those sites for manual review.
 
