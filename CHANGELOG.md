@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.19.0...v0.19.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* **graph:** grow the draw.io page from A4 to A3 to A2 instead of shrinking text ([#83](https://github.com/SCGIS-Wales/groovyscope/issues/83)) ([0e6c936](https://github.com/SCGIS-Wales/groovyscope/commit/0e6c936e116d2a47523a2d2bf51e823986ae586e))
+
 ## [0.19.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.18.0...v0.19.0) (2026-10-18)
 
 
