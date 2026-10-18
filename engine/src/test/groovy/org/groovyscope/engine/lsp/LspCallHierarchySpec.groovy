@@ -65,6 +65,9 @@ class LspCallHierarchySpec extends Specification {
 
         @JsonRequest('groovyscope/dynamicCode')
         CompletableFuture<Map<String, Object>> dynamicCode(Map<String, Object> params)
+
+        @JsonRequest('groovyscope/graph')
+        CompletableFuture<Map<String, Object>> graph(Map<String, Object> params)
     }
 
     static final String MAIN_REL = 'src/main/groovy/app/Main.groovy'
@@ -129,6 +132,19 @@ class LspCallHierarchySpec extends Specification {
         outgoing.empty || outgoing.every { it.to.uri != null }
         tokens.data.size() % 5 == 0 && tokens.data.size() > 0
         remote.textDocumentService.prepareCallHierarchy(new CallHierarchyPrepareParams(new TextDocumentIdentifier(main), new Position(0, 0))).get(60, TimeUnit.SECONDS).empty
+    }
+
+    def 'a folder seeds the relationship graph with every class of the files under it'() {
+        given:
+        String folder = Fixtures.project('basic-app').resolve('src/main/groovy/app/model').toUri().toString()
+
+        when:
+        def graph = remote.graph([uris: [folder], depth: 0]).get(60, TimeUnit.SECONDS)
+        def none = remote.graph([uris: [folder + 'nothing-here/']]).get(60, TimeUnit.SECONDS)
+
+        then:
+        graph.nodes*.id.contains('app.model.Person')
+        none.nodes == [] && none.note.contains('a folder counts the Groovy files under it')
     }
 
     def 'impact and call graph requests'() {

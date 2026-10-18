@@ -105,9 +105,18 @@ public final class QualityServices {
         return typed;
     }
 
-    /** What {@link #fix} changed in one document. */
+    /**
+     * What {@link #fix} changed per document: the edits, the codes whose fixes went in (every edit of the fix
+     * applied) with how many, the findings of fixable codes left without a safe fix (a type that cannot be inferred,
+     * a fix that clashed with another), and the documents refused whole.
+     */
     public record FixResult(Map<String, List<TextEdit>> edits, Map<String, List<String>> applied,
+            Map<String, Map<String, Integer>> appliedCounts, Map<String, Map<String, Integer>> left,
             Map<String, String> rejected) {
+        public FixResult(Map<String, List<TextEdit>> edits, Map<String, List<String>> applied,
+                Map<String, String> rejected) {
+            this(edits, applied, Map.of(), Map.of(), rejected);
+        }
     }
 
     private record LintEntry(String key, List<Diagnostic> diagnostics) {
@@ -617,6 +626,8 @@ public final class QualityServices {
         List<String> targets = uris == null || uris.isEmpty() ? new ArrayList<>(sources.keySet()) : new ArrayList<>(uris);
         Map<String, List<TextEdit>> edits = new TreeMap<>();
         Map<String, List<String>> applied = new TreeMap<>();
+        Map<String, Map<String, Integer>> appliedCounts = new TreeMap<>();
+        Map<String, Map<String, Integer>> left = new TreeMap<>();
         Map<String, String> rejected = new TreeMap<>();
         Map<String, Boolean> staticOk = staticVerdicts(targets, sources, codes);
         for (String uri : targets) {
@@ -625,28 +636,47 @@ public final class QualityServices {
             if (text == null || WorkspaceModel.isJavaUri(uri)) {
                 continue;
             }
-            List<CodeAction> chosen = chooseFixes(uri, text, codes, staticOk);
+            Map<String, Integer> missed = new TreeMap<>();
+            List<CodeAction> chosen = chooseFixes(uri, text, codes, staticOk, missed);
             if (chosen.isEmpty()) {
+                if (!missed.isEmpty()) {
+                    left.put(uri, missed);
+                }
                 continue;
             }
             List<TextEdit> all = new ArrayList<>();
-            List<String> used = new ArrayList<>();
             for (CodeAction action : chosen) {
                 all.addAll(action.edits());
-                used.add(action.diagnostic().code());
             }
             PracticeFixes.Applied result = PracticeFixes.apply(text, all);
             if (!compiler.parses(uri, result.text())) {
                 rejected.put(uri, "the fixed text does not parse; nothing applied");
                 continue;
             }
-            edits.put(uri, result.edits());
-            applied.put(uri, used);
+            // A fix counts only when every one of its edits went in; one that clashed with another is left.
+            Map<String, Integer> counts = new TreeMap<>();
+            for (CodeAction action : chosen) {
+                String code = action.diagnostic().code();
+                if (result.edits().containsAll(action.edits())) {
+                    counts.merge(code, 1, Integer::sum);
+                } else {
+                    missed.merge(code, 1, Integer::sum);
+                }
+            }
+            if (!result.edits().isEmpty()) {
+                edits.put(uri, result.edits());
+                applied.put(uri, new ArrayList<>(counts.keySet()));
+                appliedCounts.put(uri, counts);
+            }
+            if (!missed.isEmpty()) {
+                left.put(uri, missed);
+            }
         }
-        return new FixResult(edits, applied, rejected);
+        return new FixResult(edits, applied, appliedCounts, left, rejected);
     }
 
-    private List<CodeAction> chooseFixes(String uri, String text, Set<String> codes, Map<String, Boolean> staticOk) {
+    private List<CodeAction> chooseFixes(String uri, String text, Set<String> codes, Map<String, Boolean> staticOk,
+            Map<String, Integer> missed) {
         TextLines lines = new TextLines(text);
         org.codehaus.groovy.ast.ModuleNode module = navigation.snapshot().result().modules().get(uri);
         List<CodeAction> chosen = new ArrayList<>();
@@ -664,6 +694,8 @@ public final class QualityServices {
                 chosen.add(staticOk.getOrDefault(uri, false) ? options.get(0) : options.get(1));
             } else if (!options.isEmpty()) {
                 chosen.add(options.get(0));
+            } else if (FIXABLE_LINT_CODES.contains(diagnostic.code())) {
+                missed.merge(diagnostic.code(), 1, Integer::sum);
             }
         }
         for (PracticeFinder.Practice practice : practices(uri)) {

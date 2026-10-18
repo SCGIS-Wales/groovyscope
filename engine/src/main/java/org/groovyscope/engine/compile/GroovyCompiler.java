@@ -234,12 +234,22 @@ public class GroovyCompiler {
     private CompilationResult keepResolvedAttempt(Map<String, String> sources, Map<String, List<Diagnostic>> genuine,
             Attempt resolved, Set<String> dropped, List<Path> classpath, boolean trust, int attempts) {
         Map<String, ModuleNode> modules = new HashMap<>(resolved.modules);
+        // Groovy stopped the resolved round at the first failing file, so the other files never reported their own
+        // unresolved classes; finishing semantic analysis here does, and those errors are as real as the first
+        // round's (every class is in this round). Only names declared in files dropped for syntax are not.
+        Map<String, List<Diagnostic>> finished = new HashMap<>();
+        ErrorCollector collector = resolved.unit == null ? null : resolved.unit.getErrorCollector();
+        Set<String> uris = sources.keySet();
         for (Map.Entry<String, SourceUnit> unit : resolved.units.entrySet()) {
             ModuleNode module = modules.get(unit.getKey());
             if (module != null) {
+                int before = errorCount(collector);
                 finishSemanticAnalysis(resolved.unit, unit.getValue(), module);
+                collectSince(collector, before, uris, finished);
             }
         }
+        Set<String> droppedNames = declaredNames(dropped, sources);
+        finished.values().forEach(list -> list.removeIf(d -> namesDroppedClass(d, droppedNames)));
         // Files dropped for syntax errors before the resolved round have no tree in it: parse them alone.
         for (String uri : dropped) {
             if (!modules.containsKey(uri) && sources.containsKey(uri)) {
@@ -251,6 +261,7 @@ public class GroovyCompiler {
             diagnostics.put(uri, new ArrayList<>());
         }
         mergeDiagnostics(diagnostics, genuine);
+        mergeDiagnostics(diagnostics, finished);
         diagnostics.keySet().removeIf(GroovyCompiler::isJava);
         Set<String> partial = new LinkedHashSet<>(dropped);
         partial.addAll(resolved.brokenUris);
@@ -396,6 +407,57 @@ public class GroovyCompiler {
                 }
             }
         }
+    }
+
+    private static int errorCount(ErrorCollector collector) {
+        List<? extends Message> errors = collector == null ? null : collector.getErrors();
+        return errors == null ? 0 : errors.size();
+    }
+
+    /** The errors {@code collector} gained after its first {@code from}, as diagnostics per document. */
+    private static void collectSince(ErrorCollector collector, int from, Set<String> uris,
+            Map<String, List<Diagnostic>> out) {
+        List<? extends Message> errors = collector == null ? null : collector.getErrors();
+        if (errors == null) {
+            return;
+        }
+        for (Message message : errors.subList(Math.min(from, errors.size()), errors.size())) {
+            Diagnostic diagnostic = toDiagnostic(message, uris, Severity.ERROR);
+            if (diagnostic != null) {
+                add(out, diagnostic);
+            }
+        }
+    }
+
+    private static final java.util.regex.Pattern DECLARED_TYPE = java.util.regex.Pattern.compile(
+            "\\b(?:class|interface|trait|enum|record)\\s+([A-Za-z_$][\\w$]*)");
+
+    /** The simple names of the types the given documents declare, read from their text (they may not parse). */
+    static Set<String> declaredNames(Set<String> uris, Map<String, String> sources) {
+        Set<String> names = new LinkedHashSet<>();
+        for (String uri : uris) {
+            String text = sources.get(uri);
+            if (text != null) {
+                java.util.regex.Matcher matcher = DECLARED_TYPE.matcher(text);
+                while (matcher.find()) {
+                    names.add(matcher.group(1));
+                }
+            }
+        }
+        return names;
+    }
+
+    /** True for an unresolved-class error about a type that only a dropped file declares. */
+    static boolean namesDroppedClass(Diagnostic diagnostic, Set<String> droppedNames) {
+        String message = diagnostic.message() == null ? "" : diagnostic.message().strip();
+        String prefix = "unable to resolve class ";
+        if (!message.startsWith(prefix) || droppedNames.isEmpty()) {
+            return false;
+        }
+        String name = message.substring(prefix.length()).split("\\s")[0];
+        String simple = name.substring(name.lastIndexOf('.') + 1);
+        int generic = simple.indexOf('<');
+        return droppedNames.contains(generic < 0 ? simple : simple.substring(0, generic));
     }
 
     /** Links variable usages to their declarations without resolving classes; errors are ignored. */
