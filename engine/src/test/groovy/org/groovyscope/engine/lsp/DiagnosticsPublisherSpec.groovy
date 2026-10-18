@@ -25,7 +25,7 @@ class DiagnosticsPublisherSpec extends Specification {
         given:
         def services = Fixtures.services('practices-sample')
         def client = new RecordingLanguageClient()
-        def publisher = new DiagnosticsPublisher({ services }, { client })
+        def publisher = new DiagnosticsPublisher({ services }, { client }, { services.workspace().sources().keySet() as Set })
         String clean = Fixtures.uri('practices-sample', 'src/main/groovy/sample/Clean.groovy')
 
         when: 'the first publish sends every document'
@@ -55,6 +55,70 @@ class DiagnosticsPublisherSpec extends Specification {
         publisher.shutdown()
     }
 
+    def 'the open scope publishes the open documents only and clears a document once it is closed'() {
+        given:
+        def services = Fixtures.services('practices-sample')
+        def client = new RecordingLanguageClient()
+        Set<String> open = [] as Set
+        def publisher = new DiagnosticsPublisher({ services }, { client }, { open })
+        String clean = Fixtures.uri('practices-sample', 'src/main/groovy/sample/Clean.groovy')
+
+        when: 'nothing is open'
+        publisher.publishNow()
+
+        then: 'nothing is pushed (the default scope is open)'
+        services.workspace().config().diagnostics().push() == 'open'
+        client.received.empty
+
+        when: 'one document is open'
+        open << clean
+        publisher.publishNow()
+
+        then: 'only that document is pushed'
+        client.received*.uri == [clean]
+
+        when: 'it is closed again'
+        open.clear()
+        publisher.publishNow()
+
+        then: 'its diagnostics are cleared, nothing else is sent'
+        client.received.size() == 2
+        (client.received.last() as PublishDiagnosticsParams).uri == clean
+        (client.received.last() as PublishDiagnosticsParams).diagnostics.empty
+
+        cleanup:
+        publisher.shutdown()
+    }
+
+    def 'the none scope never pushes and the workspace scope pushes every document'() {
+        given:
+        def base = Fixtures.services('practices-sample')
+        def client = new RecordingLanguageClient()
+        def none = org.groovyscope.engine.config.EngineConfig.fromJson('{"diagnostics": {"push": "none"}}')
+        def all = org.groovyscope.engine.config.EngineConfig.fromJson('{"diagnostics": {"push": "workspace", "debounceMillis": 7}}')
+        def services = new org.groovyscope.engine.services.LanguageServices(
+                new org.groovyscope.engine.workspace.WorkspaceModel(base.workspace().root(), none),
+                new org.groovyscope.engine.compile.GroovyCompiler())
+        def publisher = new DiagnosticsPublisher({ services }, { client }, { [] as Set })
+
+        when:
+        publisher.publishNow()
+
+        then:
+        client.received.empty
+
+        when:
+        services.reconfigure(all)
+        publisher.publishNow()
+
+        then:
+        client.received.size() == services.workspace().sources().size()
+        services.workspace().config().diagnostics().debounceMillis() == 7
+
+        cleanup:
+        publisher.shutdown()
+    }
+
     def 'shutdown during a publish never interrupts the writing thread and stops before the next notification'() {
         given:
         def services = Fixtures.services('practices-sample')
@@ -76,7 +140,7 @@ class DiagnosticsPublisherSpec extends Specification {
                 }
             }
         }
-        def publisher = new DiagnosticsPublisher({ services }, { client })
+        def publisher = new DiagnosticsPublisher({ services }, { client }, { services.workspace().sources().keySet() as Set })
 
         when: 'a publish is writing its first notification when shutdown arrives'
         publisher.schedule(0)

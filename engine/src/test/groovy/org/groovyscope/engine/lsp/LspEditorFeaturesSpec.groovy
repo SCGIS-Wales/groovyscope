@@ -41,6 +41,8 @@ import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.InlayHintKind
 import org.eclipse.lsp4j.InlayHintParams
 import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.DidOpenTextDocumentParams
+import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.TextDocumentIdentifier
@@ -219,6 +221,8 @@ class LspEditorFeaturesSpec extends spock.lang.Specification {
         when:
         connect('lint-sample')
         String messy = Fixtures.uri('lint-sample', MESSY_REL)
+        remote.textDocumentService.didOpen(new DidOpenTextDocumentParams(
+            new TextDocumentItem(messy, 'groovy', 1, Fixtures.text('lint-sample', MESSY_REL))))
         PublishDiagnosticsParams pushed = null
         for (int i = 0; i < 600 && pushed == null; i++) {
             pushed = client.received.find { it instanceof PublishDiagnosticsParams && it.uri == messy } as PublishDiagnosticsParams

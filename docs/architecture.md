@@ -209,9 +209,15 @@ deliberately loose so shared runners do not fail the build.
   type checker, which runs only at a later phase); a call matches each such overload.
 - Default-argument overloads and methods added by AST transformations are not visible before class
   generation, which the engine never runs.
-- The whole workspace is recompiled after an edit (debounced) inside the warm daemon. Per-file invalidation
-  with a dependency graph remains future work; on projects of a few hundred files the full recompile is
-  well under a second.
+- The whole workspace is recompiled after an edit inside the warm daemon, lazily: a push after the
+  `diagnostics.debounceMillis` quiet window, or the next request that needs the snapshot. Measured on the
+  CodeNarc corpus (529 Groovy files, no classpath): 3.6 s for the recompile, 4.2 s for the separate type-check
+  compile, 1.2 s for a whole-workspace `check` with nothing changed. What made edits slow before 0.13 was not
+  the compile but the delivery: every push recomputed practice and lint findings for every file, and a pull
+  for one document computed every document. Now a push covers the documents the connection has open
+  (`diagnostics.push: open`), a pull computes its one document, and the type-check compile runs only when a
+  requested file mentions `@CompileStatic` or `@TypeChecked` (the checkers apply nowhere else). Per-file
+  invalidation with a dependency graph remains future work; the numbers above say it is not the bottleneck.
 
 ## Python package (`python/`)
 

@@ -94,10 +94,13 @@ public final class QualityServices {
         if (cached != null && cached.version() == current.version()) {
             return cached.typed();
         }
+        long started = System.nanoTime();
         Map<String, List<Diagnostic>> typed = typeChecker.analyze(workspace.compileSources(), workspace.classpath(),
                 workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
                 current.result().unresolvedUris());
         typeCache = new TypeCheckEntry(current.version(), typed);
+        org.groovyscope.engine.log.EngineLog.debug("type-checked %d file(s) in %d ms (snapshot %d)", typed.size(),
+                (System.nanoTime() - started) / 1_000_000, current.version());
         return typed;
     }
 
@@ -430,27 +433,38 @@ public final class QualityServices {
      * never filtered.
      */
     public Map<String, List<Diagnostic>> publishedDiagnostics() {
+        return publishedDiagnostics(null);
+    }
+
+    /**
+     * The same, for {@code uris} only ({@code null} means every document): the pushed diagnostics of an agent or
+     * editor session cover the few documents it has open, so the practice and lint passes run for those alone
+     * while the compile diagnostics of the rest stay available through {@code check}.
+     */
+    public Map<String, List<Diagnostic>> publishedDiagnostics(Collection<String> uris) {
         Map<String, List<Diagnostic>> merged = new TreeMap<>();
         Map<String, String> sources = workspace.sources();
-        for (Map.Entry<String, List<Diagnostic>> entry : navigation.diagnostics().entrySet()) {
-            merged.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
+        Collection<String> wanted = uris == null ? sources.keySet() : uris;
+        Map<String, List<Diagnostic>> compile = navigation.diagnostics();
+        for (String uri : wanted) {
+            if (uris != null && !sources.containsKey(uri)) {
+                continue; // a document outside the workspace (or gone): nothing to report
+            }
+            merged.computeIfAbsent(uri, k -> new ArrayList<>()).addAll(compile.getOrDefault(uri, List.of()));
         }
         EngineConfig.Lint settings = workspace.config().lint();
         if (settings.publish()) {
-            for (Map.Entry<String, String> source : sources.entrySet()) {
-                List<Diagnostic> kept = merged.computeIfAbsent(source.getKey(), k -> new ArrayList<>());
-                for (Diagnostic diagnostic : lint(source.getKey(), source.getValue(), null)) {
+            for (String uri : merged.keySet()) {
+                List<Diagnostic> kept = merged.get(uri);
+                for (Diagnostic diagnostic : lint(uri, sources.get(uri), null)) {
                     if (CodeNarcAnalyzer.priorityOf(diagnostic) <= settings.publishMaxPriority()) {
                         kept.add(diagnostic);
                     }
                 }
             }
         }
-        for (String uri : sources.keySet()) {
-            merged.computeIfAbsent(uri, k -> new ArrayList<>()).addAll(practiceDiagnostics(uri));
-        }
-        for (String uri : sources.keySet()) {
-            merged.computeIfAbsent(uri, k -> new ArrayList<>());
+        for (String uri : merged.keySet()) {
+            merged.get(uri).addAll(practiceDiagnostics(uri));
         }
         return merged;
     }
@@ -500,7 +514,7 @@ public final class QualityServices {
                 }
             }
         }
-        if (wanted.contains(INCLUDE_TYPECHECK)) {
+        if (wanted.contains(INCLUDE_TYPECHECK) && anyMayNeedTypeCheck(targets, sources)) {
             Map<String, List<Diagnostic>> typed = typeCheckAll();
             for (String uri : targets) {
                 for (Diagnostic diagnostic : profileCheckerPolicy(uri, typed.getOrDefault(uri, List.of()))) {
@@ -514,6 +528,20 @@ public final class QualityServices {
             list.sort((a, b) -> a.range().start().compareTo(b.range().start()));
         }
         return new CheckResult(result);
+    }
+
+    /**
+     * Whether the type check can report anything for {@code targets}: it only speaks about statically typed
+     * code, so a request for files without {@code @CompileStatic} or {@code @TypeChecked} skips the whole-workspace
+     * type-check compile (the costliest step of a single-file {@code check} after an edit).
+     */
+    static boolean anyMayNeedTypeCheck(Collection<String> targets, Map<String, String> sources) {
+        for (String uri : targets) {
+            if (TypeCheckAnalyzer.mayNeedTypeCheck(sources.get(uri))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The formatting edits for one document (empty when it is already formatted). */

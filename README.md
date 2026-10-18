@@ -196,7 +196,9 @@ environment variable, for example `GROOVYSCOPE_DAEMON__HEAP=2g`. Worth knowing: 
 (written by `groovyscope classpath`, its entries join `workspace.classpath`), `lint.rules` (per-rule
 overrides such as `{CompileStatic: off, LineLength: {priority: 3}}`), `lint.publishMaxPriority` (only
 priority 1 and 2 lint findings reach the editor and the agent as diagnostics; 3 stays available through
-`check` and `review`), `practices.severity` (per GS or RP code, `GS100: off` included), `naming`
+`check` and `review`), `diagnostics.push` (`open`: after an edit only the documents the session has open get
+pushed diagnostics, the default; `workspace` for every file; `none` to pull only) and
+`diagnostics.debounceMillis`, `practices.severity` (per GS or RP code, `GS100: off` included), `naming`
 (`allowedAbbreviations`, `vocabulary`),
 `duplicates.minLines` / `duplicates.minStatements` for `find_duplicates`, and `reports.sarif` /
 `reports.jacoco` for the build's SpotBugs and JaCoCo reports. Runtime profiles live in

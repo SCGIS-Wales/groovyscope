@@ -455,7 +455,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
             String uri = params.getTextDocument().getUri();
             LanguageServices current = ready();
             List<org.eclipse.lsp4j.Diagnostic> items = new ArrayList<>();
-            for (Diagnostic diagnostic : current.quality().publishedDiagnostics().getOrDefault(uri, List.of())) {
+            for (Diagnostic diagnostic : current.quality().publishedDiagnostics(List.of(uri)).getOrDefault(uri, List.of())) {
                 items.add(Converters.toLsp(diagnostic, current.quality().fixable(diagnostic)));
             }
             return new DocumentDiagnosticReport(new RelatedFullDocumentDiagnosticReport(items));

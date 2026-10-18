@@ -42,6 +42,17 @@ class EngineConfigSpec extends Specification {
         config.trust()
     }
 
+    def 'diagnostics delivery settings are parsed, normalised and defaulted'() {
+        expect:
+        EngineConfig.DEFAULTS.diagnostics() == new EngineConfig.Diagnostics('open', 300)
+        EngineConfig.fromJson('{"diagnostics": {"push": "Workspace", "debounceMillis": 1000}}').diagnostics() ==
+                new EngineConfig.Diagnostics('workspace', 1000)
+        EngineConfig.fromJson('{"diagnostics": {"push": "none"}}').diagnostics().push() == 'none'
+        EngineConfig.fromJson('{"diagnostics": {"push": "everything", "debounceMillis": -5}}').diagnostics() ==
+                new EngineConfig.Diagnostics('open', 0)
+        EngineConfig.fromJson('{"diagnostics": {"push": "none"}}').withConfigHash('h').diagnostics().push() == 'none'
+    }
+
     def 'non-boolean trust and non-array lists fall back to defaults'() {
         when:
         def config = EngineConfig.fromJson('{"workspace": {"trust": "yes", "sourceRoots": "src"}}')
