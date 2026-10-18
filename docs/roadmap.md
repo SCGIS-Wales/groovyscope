@@ -378,8 +378,9 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
   long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
   green, merged, released; the owner's Kiro check of one elicitation prompt recorded here.
-- [ ] **Stage 21: fixes from the owner's first Kiro check** — 2026-10-18, approved by the owner. Three PRs.
-  A (engine, `fix/engine-correctness`): an unknown type in one file is reported while another file has an
+- [ ] **Stage 21: fixes from the owner's first Kiro check** — 2026-10-18, approved by the owner. Three PRs,
+  merged as #79 (A), #80 (B) and the `feat/kiro-checks-kit` PR (C), released together; waiting for the owner's
+  retest. A (engine): an unknown type in one file is reported while another file has an
   unresolved import (Groovy stopped the first round at the first failing file and the errors of the completion
   pass were dropped); the `def` fix writes the import of a type from another package and counts applied and left
   fixes per code; a folder seeds the relationship graph; a `def` local initialised by a method with a declared
@@ -387,7 +388,9 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   B (front end): real changed-line counts, a draw.io layout with lines that never cross boxes, a hook that starts
   in well under a second, no fixed tool count in the welcome text, prompt syntax per Kiro engine, the client's
   capabilities recorded, a plain verdict on implicit catches, absolute paths, a short `kiro repair` summary.
-  C (test kit): `groovyscope checks prepare` and `checks report`, `kiro-checks.md` rewritten for the TUI.
+  C (test kit): `groovyscope checks prepare` (the workspace for every check, with a `change` branch to review,
+  built without pasting shell) and `checks report` (versions, doctor lines, hook start-up time, the result
+  table); `kiro-checks.md` rewritten for the terminal UI, with a reworded hook prompt and a terminal fallback.
   Done when: the three PRs merged, released, and the owner's retest of the failed checks recorded here.
 - [x] **Process: merge and release automation** — PRs merge without a human once CI is green (auto-merge
   after the owner enables it in the repository settings; by API until then); `release-please.yml` takes the
