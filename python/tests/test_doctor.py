@@ -144,6 +144,20 @@ def test_kiro_agent_check_names_version_and_format(tmp_path: Path) -> None:
     assert kiro_agent_check(tmp_path, home, None)[0] == "warn"
 
 
+def test_kiro_agent_check_warns_when_kiro_3_meets_a_classic_agent(tmp_path: Path) -> None:
+    from groovyscope.doctor import kiro_agent_check  # noqa: PLC0415
+
+    def kiro3(arguments: list[str]) -> tuple[int, str]:
+        return (0, "kiro-cli 3.0.1") if arguments == ["--version"] else (1, "")
+
+    home = tmp_path / "kh"
+    agent = home / "agents" / "groovy.json"
+    agent.parent.mkdir(parents=True)
+    agent.write_text('{"tools": ["*"], "allowedTools": ["read"]}')
+    level, _, message = kiro_agent_check(tmp_path, home, kiro3)
+    assert level == "warn" and "V3 engine, which skips a Classic" in message and "--agent-format universal" in message
+
+
 def test_kiro_agent_check_reports_hidden_servers_and_the_universal_option(tmp_path: Path) -> None:
     import json  # noqa: PLC0415
 

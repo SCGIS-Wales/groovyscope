@@ -21,6 +21,7 @@ from groovyscope import classpath as classpath_export
 from groovyscope.edits import FileEdit, changed_line_count, file_edits, uri_path, write_document
 from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
 from groovyscope.render import page
+from groovyscope.tools_catalog import TOOL_INFO
 
 SERVER_NAME = "groovyscope"
 LOG = logging.getLogger("groovyscope.mcp")
@@ -900,38 +901,6 @@ def build_tools(
     tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
     tools.update(mcp_understanding.understanding_tools(root, call, cap, tools))
     return tools
-
-
-# name: (title, read only). Every tool is closed-world (only this workspace) and idempotent.
-TOOL_INFO: dict[str, tuple[str, bool]] = {
-    "find_symbol": ("Find Groovy declarations", True),
-    "goto_definition": ("Go to definition", True),
-    "type_definition": ("Go to type definition", True),
-    "find_references": ("Find references", True),
-    "hover": ("Hover information", True),
-    "document_symbols": ("Document outline", True),
-    "call_graph": ("Call graph", True),
-    "impact_of": ("Impact of a change", True),
-    "check": ("Check findings", True),
-    "review": ("Review changed files", True),
-    "explain": ("Explain a finding code", True),
-    "profile_status": ("Runtime profile of a file", True),
-    "find_dynamic_code": ("Find dynamic Groovy", True),
-    "workspace_status": ("Workspace and daemon status", True),
-    "refresh_classpath": ("Refresh the classpath from the build", False),
-    "format": ("Format files", False),
-    "fix": ("Apply safe fixes", False),
-    "rename": ("Rename a symbol", False),
-    "read_symbol": ("Read one declaration", True),
-    "find_code": ("Structural code search", True),
-    "find_duplicates": ("Find duplicated code", True),
-    "workspace_overview": ("Workspace overview", True),
-    "review_changes": ("Review the branch as a merge request", True),
-    "coverage_gaps": ("Uncovered classes and methods", True),
-    "explain_code": ("Explain what code does", True),
-    "relationship_graph": ("Class relationship graph", False),
-    "check_naming": ("Naming findings and facts", True),
-}
 
 
 def compact_json(value: Any) -> str:

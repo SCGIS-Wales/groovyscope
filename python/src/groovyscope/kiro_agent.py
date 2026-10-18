@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from groovyscope.config import deep_merge
+from groovyscope.tools_catalog import mutating_tools, read_only_tools, v3_matches
 
 KNOWN_UPGRADE_REVISION = 2
 FORMATS = ("v2", "universal", "universal-out-of-sync", "v3", "unknown", "external")
@@ -40,12 +41,35 @@ UNION_PATHS: tuple[tuple[str, ...], ...] = (
 )
 # Keys both engines read, merged into a V3-only agent as well (hooks run the groovyscope checkup at start).
 SHARED_KEYS = ("hooks", "welcomeMessage", "resources")
-# The V3 rules groovyscope needs, as `kiro-cli agent upgrade` derives them from the V2 template.
-V3_RULES: tuple[dict[str, Any], ...] = (
-    {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},
-    {"capability": "fs_read", "effect": "allow"},
-    {"capability": "shell", "match": ["./gradlew *", "groovyscope *", "git status", "git diff*"], "effect": "allow"},
-)
+# Entries earlier releases wrote that are replaced on merge: the bare `@groovyscope` allowed every tool, the
+# per-tool entries from the catalogue allow only the read-only ones (Kiro ignores `readOnlyHint`).
+RETIRED_ALLOWED_TOOLS = ("@groovyscope",)
+RETIRED_V3_RULES: tuple[dict[str, Any], ...] = ({"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},)
+
+
+def v3_rules() -> tuple[dict[str, Any], ...]:
+    """The V3 rules groovyscope needs: read-only MCP tools allowed, the mutating ones ask, file reads and the
+    build, groovyscope and git status commands allowed. Derived from the tool catalogue, never written by hand."""
+    return (
+        {"capability": "mcp", "match": v3_matches(read_only_tools()), "effect": "allow"},
+        {"capability": "mcp", "match": v3_matches(mutating_tools()), "effect": "ask"},
+        {"capability": "fs_read", "effect": "allow"},
+        {
+            "capability": "shell",
+            "match": ["./gradlew *", "groovyscope *", "git status", "git diff*"],
+            "effect": "allow",
+        },
+    )
+
+
+def major_version(version: str | None) -> int | None:
+    """``3`` from ``3.0.1``; None when the version is unknown or not numeric."""
+    if not version:
+        return None
+    head = version.split(".", 1)[0]
+    return int(head) if head.isdigit() else None
+
+
 KIRO_TIMEOUT_SECONDS = 60
 
 KiroRunner = Callable[[Sequence[str]], tuple[int, str]]
@@ -190,6 +214,8 @@ def merge_v2(current: Mapping[str, Any], template: Mapping[str, Any]) -> dict[st
     for path in UNION_PATHS:
         existing = get_path(current, path)
         if existing is not None:
+            if path == ("allowedTools",) and isinstance(existing, list):
+                existing = [entry for entry in existing if entry not in RETIRED_ALLOWED_TOOLS]
             set_path(merged, path, union(existing, get_path(template, path)))
     return merged
 
@@ -208,8 +234,9 @@ def merge_v3(current: Mapping[str, Any], template: Mapping[str, Any] | None = No
     rules = permissions.get("rules")
     if not isinstance(rules, list):
         rules = []
-        permissions["rules"] = rules
-    for rule in V3_RULES:
+    rules = [rule for rule in rules if rule not in RETIRED_V3_RULES]
+    permissions["rules"] = rules
+    for rule in v3_rules():
         if rule not in rules:
             rules.append(dict(rule))
     return merged

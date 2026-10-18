@@ -99,6 +99,10 @@ def kiro_check(root: Path, global_home: Path | None = None) -> Check:
     return ("warn", "kiro files", "missing: " + ", ".join(missing))
 
 
+# Kiro CLI 3.0 makes the V3 engine the default and retires the Classic engine that read V2 agent files.
+KIRO_V3_DEFAULT_MAJOR = 3
+
+
 def kiro_agent_check(root: Path, global_home: Path, run: kiro_agent.KiroRunner | None) -> Check:
     """Which Kiro CLI is installed and which format the groovy agent is in (project first, then global)."""
     version = kiro_agent.kiro_version(run)
@@ -112,7 +116,13 @@ def kiro_agent_check(root: Path, global_home: Path, run: kiro_agent.KiroRunner |
             meaning = AGENT_FORMAT_MEANING.get(found, found)
             level = "ok" if found in {"v2", "universal", "v3"} else "warn"
             message = f"{label}; {agent} is {found} ({meaning})"
-            if found == "v2" and kiro_agent.supports_upgrade(run):
+            if found == "v2" and (kiro_agent.major_version(version) or 0) >= KIRO_V3_DEFAULT_MAJOR:
+                level = "warn"
+                message += (
+                    "; Kiro CLI 3 runs the V3 engine, which skips a Classic (V2) agent: "
+                    "`groovyscope kiro repair --agent-format universal` (or `v3` without kiro-cli)"
+                )
+            elif found == "v2" and kiro_agent.supports_upgrade(run):
                 message += (
                     "; this kiro-cli can load it in both engines: `groovyscope kiro repair --agent-format universal`"
                 )

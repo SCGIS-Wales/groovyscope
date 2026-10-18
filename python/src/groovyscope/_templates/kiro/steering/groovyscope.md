@@ -22,6 +22,9 @@ inclusion: always
 - For any Groovy, Gradle or Jenkinsfile question, use the `code` tool (find references, go to definition,
   hover, diagnostics, rename with dry run) or the `groovyscope` MCP tools. Do not use grep, rg, sed, awk,
   head or tail to locate Groovy symbols or read Groovy files.
+- If the `code` tool answers "unsupported file extension" or "code tool is not enabled" for a Groovy file,
+  do not fall back to text search: `groovyscope.goto_definition`, `find_references`, `hover`, `find_symbol`
+  and `check` answer the same questions through the same engine. Mention the `code` tool failure once.
 - In an unfamiliar workspace, call `groovyscope.workspace_overview` first (packages, largest files and
   classes, untested classes). Then `groovyscope.document_symbols` for the outline of a file with its line
   ranges, then `groovyscope.read_symbol` for the one class, method or field you need, with line numbers.
