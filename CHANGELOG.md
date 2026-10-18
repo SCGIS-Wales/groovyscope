@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.16.0...v0.16.1) (2026-10-18)
+
+
+### Documentation
+
+* **roadmap:** stages 18 and 19 released in 0.16.0 ([#72](https://github.com/SCGIS-Wales/groovyscope/issues/72)) ([3188054](https://github.com/SCGIS-Wales/groovyscope/commit/31880544c149f5746dca21f1fd1bc428b2d42c03))
+
 ## [0.16.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.15.0...v0.16.0) (2026-10-18)
 
 
