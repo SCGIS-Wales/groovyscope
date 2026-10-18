@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.13.0...v0.14.0) (2026-10-18)
+
+
+### Features
+
+* **kiro:** twelve skills from the prompts cookbook, served as MCP prompts too, and a steering half the size ([#62](https://github.com/SCGIS-Wales/groovyscope/issues/62)) ([466e20b](https://github.com/SCGIS-Wales/groovyscope/commit/466e20baaef8d900e76ee7089fcac9285cdde632))
+
 ## [0.13.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.12.0...v0.13.0) (2026-10-18)
 
 
