@@ -62,8 +62,8 @@ def write_manifest(jar_dir: Path, *, version: str, jar_name: str, sha256: str, c
 def embedded_versions(jar_path: Path) -> dict[str, str]:
     """The versions the engine build expanded into the JAR (``version``, ``codenarc``); empty when unreadable.
 
-    The CodeNarc version is resolved at build time (the latest stable release on Maven Central, see
-    ``engine/settings.gradle.kts``), so it is read from the JAR instead of being written anywhere by hand.
+    The CodeNarc version is chosen by the engine build (``engine/gradle/libs.versions.toml``, see
+    ``engine/settings.gradle.kts``), so it is read from the JAR instead of being written anywhere else by hand.
     """
     try:
         with zipfile.ZipFile(jar_path) as archive:
