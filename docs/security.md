@@ -19,6 +19,11 @@ groovyscope trust --revoke   # stop trusting it
 groovyscope trust --list
 ```
 
+`groovyscope trust` asks a person: it is refused when standard input is not a terminal, and inside an agent
+session (an environment variable such as `KIRO_*` or `CLAUDECODE` is set) unless you add
+`--yes-i-am-the-user`. `--revoke` and `--list` always work. The groovy agent's shell allowlist never matches
+`groovyscope trust`, so the agent cannot grant trust on its own.
+
 In an untrusted workspace, settings in the repository's own `.groovyscope.yaml` that would run code from the
 repository are ignored, and `doctor` and every command name them:
 
@@ -28,6 +33,13 @@ repository are ignored, and `doctor` and every command name them:
 | `jdk.home` | groovyscope starts `<jdk.home>/bin/java` |
 | `lint.ruleset`, `lint.jenkinsRuleset` | CodeNarc rule sets are Groovy scripts the engine evaluates; remote (`http(s)`) rule sets are always refused |
 | emulation jars of a runtime profile kept in the repository | The emulation compile loads those jars |
+| `logging.file` | The engine would write wherever it names |
+| `jdk.autoProvision`, `jdk.vendor` | They download and run a JDK |
+| `daemon.heapDumpOnOutOfMemory` | A heap dump holds every open document |
+
+Two settings are capped rather than ignored: `daemon.heap` and `daemon.maxHeap` never exceed
+`daemon.untrustedHeapCeiling` (which the repository's file cannot raise), and `reports.sarif` and
+`reports.jacoco` are kept to paths inside the workspace.
 
 Your environment (`GROOVYSCOPE_*` variables) and a configuration file you name with `--config` are your own
 choice and are not gated. The classpath itself comes from `workspace.classpath`, from the file
@@ -72,6 +84,11 @@ nothing else.
   naming anything else are ignored. Files larger than `workspace.maxFileBytes` are skipped.
 - The CLI and the MCP server write edits only to Groovy sources inside the workspace, atomically, keeping each
   file's mode and line endings; MCP paths that leave the workspace are rejected.
+- Source roots that resolve outside the workspace, and open documents outside it, are never analysed.
+- A daemon serves only the workspace it was started for (`--root`); a client naming another root is refused.
+- The engine's log file must lie under the cache folder or the system temporary folder; it is opened without
+  following symlinks, created 0600 and rotated past `daemon.logMaxBytes`. Each log record is one line, with
+  control characters escaped, so a file name cannot forge log lines.
 - The daemon's socket folder is created private (0700) and refused when another user owns it or can write to
   it; the socket itself is 0600. A second daemon never removes a live daemon's socket.
 

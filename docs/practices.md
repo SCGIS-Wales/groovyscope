@@ -603,20 +603,20 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Explicit types | MethodReturnTypeRequired, MethodParameterTypeRequired, FieldTypeRequired, NoDef | STC | Replace `def` with the inferred type |
 | Redundant def | UnnecessaryDefIn* | none | Remove `def` |
 | Finality | ParameterReassignment | `val` (6), `@AutoFinal` | Convert to `final` or `val` |
-| Integer division | none | none | GS001: suggest `intdiv` |
+| Integer division | none | none | GS001: suggest `intdiv` (needs review; skipped when the quotient is narrowed to an integer) |
 | Floating money | NoDouble, NoFloat, BigDecimalInstantiation | none | Change to BigDecimal |
 | Elvis on zero | none | none | GS002 |
 | Null dereference | BrokenNullCheck, UnnecessaryNullCheck | NullChecker (6) | Surface checker output; GS003 for safe navigation into a primitive |
 | GString misuse | GStringAsMapKey, UnnecessaryGString, GStringExpressionWithinString | none | `.toString()` or change the quotes |
-| File truthiness | none | Groovy 5 semantics | GS004: `!= null` |
+| File truthiness | none | Groovy 5 semantics | GS004: `!= null` or `exists()`, chosen by the reader |
 | Null returns | ReturnsNullInsteadOfEmptyCollection, BooleanMethodReturnsNull | none | Return empty |
 | Dead or unused code | DeadCode, Empty*, Unused* rules, UnusedImport | Duplicate labels (6) | Remove |
 | Java boilerplate | unnecessary and groovyism rule sets | none | "Groovify" action |
 | Immutability | PrivateFieldCouldBeFinal, PublicInstanceField, NonFinalPublicField | `@Immutable` | Convert to record |
 | Purity | none | ModifiesChecker, PurityChecker (6) | Suggest `@Pure` |
 | Exceptions | exceptions rule set, EmptyCatchBlock | none | Narrow the catch; rethrow with cause |
-| Logging | Println, PrintStackTrace, SystemOutPrint | none | GS005: GString in a log call |
-| Code evaluation, Grab | IllegalClassReference (configured) | `groovy.grape.enable`, `groovy.asttest.enable` | GS006, GS007 |
+| Logging | Println, PrintStackTrace, SystemOutPrint | none | GS005: GString in a SLF4J or Log4j2 call (`{}` fix); a level guard elsewhere |
+| Code evaluation, Grab | IllegalClassReference (configured) | `groovy.grape.enable`, `groovy.asttest.enable` | GS006; GS007 names the build dependency to declare (no automatic fix) |
 | SQL injection | jdbc rule set | SqlInjectionChecker plus runtime rejection (6) | Remove quotes |
 | Command injection | none | none | GS008: use the list form |
 | XXE | none | Secure defaults | GS009: `allowDocTypeDeclaration = true` |

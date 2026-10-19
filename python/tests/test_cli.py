@@ -243,8 +243,9 @@ def test_lsp_relays_through_the_daemon(
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
     assert relayed == [cli.daemon_lifecycle.socket_path(tmp_path, dict(os.environ))]
-    assert ensured[0][-7:-3] == ["daemon", "--socket", str(relayed[0]), "--idle-seconds"]
-    assert ensured[0][-2] == "--cache-dir"
+    assert ensured[0][-9:-5] == ["daemon", "--socket", str(relayed[0]), "--idle-seconds"]
+    assert ensured[0][-4] == "--cache-dir"
+    assert ensured[0][-2:] == ["--root", str(tmp_path.resolve())]
     assert "-XX:+AutoCreateSharedArchive" in ensured[0]
 
 

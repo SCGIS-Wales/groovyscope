@@ -77,9 +77,11 @@ rather than guesses when a call site can only be matched by name. Findings come 
   classpath than the local build: constructs not proven on the runtime, descriptor parameter mistakes, secret
   flows, contract drift against a recorded baseline, and an emulation compile with the runtime's own Groovy.
 
-`groovyscope fix` and the `fix` MCP tool apply the safe fixes (adding `@CompileStatic` only when the class
-then type-checks, `intdiv`, typed parameter reads and more) and reject any edit that would stop the file
-parsing. `explain` says why a finding matters and how to fix it.
+`groovyscope fix` and the `fix` MCP tool apply the fixes that keep behaviour (semicolons, redundant `def`,
+quotes, parameterised SLF4J and Log4j2 messages) and reject any edit that would stop the file parsing. Fixes that
+change behaviour (`intdiv`, `!= null` for a `File`, `@CompileStatic`, the list form of `execute()` and others)
+are listed as needing review and applied only when you name their code with `--code`; `@CompileStatic` goes only
+on a class that then type-checks, and a class that does not gets `@CompileDynamic` with a note to justify it. `explain` says why a finding matters and how to fix it.
 
 For reading code, the MCP server gives the agent a map of the workspace (`workspace_overview`), the outline of
 a file with line ranges (`document_symbols`), the source of one declaration with line numbers (`read_symbol`),
