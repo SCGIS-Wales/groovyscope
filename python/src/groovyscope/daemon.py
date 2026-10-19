@@ -23,6 +23,8 @@ STATUS_METHOD = "groovyscope/status"
 SHUTDOWN_METHOD = "groovyscope/shutdownDaemon"
 START_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 15.0
+LOCK_TIMEOUT_SECONDS = START_TIMEOUT_SECONDS + STOP_TIMEOUT_SECONDS  # one holder may stop an old daemon, then start
+LOCK_POLL_SECONDS = 0.1
 # sun_path is 104 bytes on macOS and the BSDs, 108 on Linux (including the terminating NUL).
 MAX_SOCKET_PATH = {"darwin": 103}.get(sys.platform, 107)
 LOG = logging.getLogger("groovyscope.daemon")
@@ -123,8 +125,16 @@ def check_socket_path(socket_file: Path) -> None:
 
 
 @contextlib.contextmanager
-def start_lock(socket_file: Path) -> Iterator[None]:
-    """Serialise probe-and-start across processes, so two clients never start two daemons for one root."""
+def start_lock(
+    socket_file: Path,
+    *,
+    timeout: float = LOCK_TIMEOUT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> Iterator[None]:
+    """Serialise probe-and-start (and stop) across processes, so two clients never start two daemons for one root.
+    The wait is bounded: a holder that takes longer than ``timeout`` (a start and a stop together) is stuck, and
+    the caller gets a RuntimeError instead of hanging with it."""
     try:
         import fcntl  # noqa: PLC0415 - POSIX only; Unix domain sockets are too
     except ImportError:  # pragma: no cover - non-POSIX
@@ -132,7 +142,17 @@ def start_lock(socket_file: Path) -> Iterator[None]:
         return
     lock_file = socket_file.with_name(socket_file.name + ".lock")
     with lock_file.open("a") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        deadline = clock() + timeout
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if clock() >= deadline:
+                    msg = f"another groovyscope process has been starting or stopping the daemon on {socket_file} "
+                    msg += f"for over {timeout:.0f}s; try again, or `groovyscope daemon stop`"
+                    raise RuntimeError(msg) from None
+                sleep(LOCK_POLL_SECONDS)
         try:
             yield
         finally:
@@ -289,7 +309,7 @@ def ensure_running(
     check = _probe(probe_fn)
     state = probe_state if state_fn is None else state_fn
     launch = start if start_fn is None else start_fn
-    halt = stop if stop_fn is None else stop_fn
+    halt = stop_unlocked if stop_fn is None else stop_fn
     section: Mapping[str, Any] = settings or {}
     check_socket_path(socket_file)
     secure_dir(socket_file.parent)
@@ -370,7 +390,21 @@ def stop(
     sleep: Callable[[float], None] = time.sleep,
     timeout: float = STOP_TIMEOUT_SECONDS,
 ) -> bool:
-    """Ask a running daemon to exit and wait for its socket to go away. False when it was not running."""
+    """Ask a running daemon to exit and wait for its socket to go away. False when it was not running. Holds the
+    start lock, so a start racing the stop never sees the old socket and keeps it."""
+    with start_lock(socket_file):
+        return stop_unlocked(socket_file, probe_fn=probe_fn, notify=notify, sleep=sleep, timeout=timeout)
+
+
+def stop_unlocked(
+    socket_file: Path,
+    *,
+    probe_fn: Probe | None = None,
+    notify: Callable[[Path, str], None] = rpc.notify,
+    sleep: Callable[[float], None] = time.sleep,
+    timeout: float = STOP_TIMEOUT_SECONDS,
+) -> bool:
+    """``stop`` for a caller that already holds the start lock."""
     check = _probe(probe_fn)
     if check(socket_file) is None:
         return False

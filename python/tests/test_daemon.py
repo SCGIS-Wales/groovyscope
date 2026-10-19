@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import json
 import subprocess
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from groovyscope import daemon
+from groovyscope import daemon, selfheal
 
 
 @pytest.fixture(autouse=True)
@@ -290,3 +295,60 @@ def test_ensure_running_does_not_start_a_second_jvm_against_a_busy_daemon(tmp_pa
         state_fn=lambda _p: daemon.PROBE_BUSY,
     )
     assert status == {"busy": True} and started == []
+
+
+def test_the_start_lock_gives_up_after_its_budget_instead_of_hanging(tmp_path: Path) -> None:
+    socket_file = tmp_path / "d.sock"
+    lock_file = tmp_path / "d.sock.lock"
+    now = [0.0]
+    naps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        naps.append(seconds)
+        now[0] += seconds
+
+    with lock_file.open("a") as other:
+        fcntl.flock(other.fileno(), fcntl.LOCK_EX)  # another process starting the daemon, stuck
+        with (
+            pytest.raises(RuntimeError, match="for over 2s"),
+            daemon.start_lock(socket_file, timeout=2, sleep=sleep, clock=lambda: now[0]),
+        ):
+            pytest.fail("the lock must not be granted")
+    assert naps and sum(naps) >= 2
+    with daemon.start_lock(socket_file, timeout=2, sleep=sleep, clock=lambda: now[0]):
+        pass  # free again
+
+
+def test_stop_holds_the_start_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    held: list[Path] = []
+
+    @contextlib.contextmanager
+    def recording(socket_file: Path, **_k: object) -> Iterator[None]:
+        held.append(socket_file)
+        yield
+
+    monkeypatch.setattr(daemon, "start_lock", recording)
+    assert daemon.stop(tmp_path / "d.sock", probe_fn=lambda _p: None) is False
+    assert held == [tmp_path / "d.sock"]
+
+
+def test_two_writers_never_lose_the_state_file(tmp_path: Path) -> None:
+    path = tmp_path / "daemon.state.json"
+    failures: list[BaseException] = []
+
+    def write(heap: str) -> None:
+        try:
+            for _ in range(150):
+                state = selfheal.started(selfheal.empty_state(), heap, selfheal.EXIT_NONE, 0, 1.0)
+                selfheal.save_state(path, state)
+        except BaseException as exc:
+            failures.append(exc)
+
+    writers = [threading.Thread(target=write, args=(heap,)) for heap in ("1g", "2g")]
+    for writer in writers:
+        writer.start()
+    for writer in writers:
+        writer.join(30)
+    assert failures == []
+    assert json.loads(path.read_text(encoding="utf-8"))["heap"] in {"1g", "2g"}
+    assert [p.name for p in tmp_path.iterdir()] == [path.name]  # no temporary file left behind

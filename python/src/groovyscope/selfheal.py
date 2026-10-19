@@ -19,6 +19,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TypedDict
 
+from groovyscope import atomic
+
 STATE_SUFFIX = ".state.json"
 WINDOW_SECONDS = 600.0  # the restart budget's window
 BACKOFF_BASE_SECONDS = 1.0
@@ -89,10 +91,7 @@ def load_state(path: Path) -> DaemonState:
 
 
 def save_state(path: Path, state: DaemonState) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, path)  # noqa: PTH105 - os.replace keeps the intent (atomic rename) explicit
+    atomic.write_text(path, json.dumps(state, indent=2) + "\n")
 
 
 def parse_heap(text: str) -> int:
