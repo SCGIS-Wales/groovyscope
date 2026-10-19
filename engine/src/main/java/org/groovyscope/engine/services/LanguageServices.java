@@ -612,6 +612,62 @@ public final class LanguageServices {
         return withBudgetWarning(base, current.result().sources().keySet());
     }
 
+    /**
+     * The compile diagnostics of a result that is not the snapshot (see {@link #compileOnly}): unresolved library
+     * imports folded the same way when no classpath is configured.
+     */
+    public Map<String, List<Diagnostic>> diagnosticsOf(CompilationResult result) {
+        if (!workspace.classpath().isEmpty()) {
+            return result.diagnostics();
+        }
+        return org.groovyscope.engine.compile.MissingDependencies.fold(result.diagnostics(), result.sources(),
+                org.groovyscope.engine.practices.PracticeFinder.severity(
+                        org.groovyscope.engine.compile.MissingDependencies.CODE, workspace.config()));
+    }
+
+    /**
+     * {@code targets} compiled on their own against the classes of the last full compile, when they are exactly the
+     * documents whose text changed since it (no document added or removed, no Java source among them, the
+     * snapshot otherwise current): what a check after a write needs, at the cost of one file instead of the
+     * workspace. Empty when that does not hold; the caller then uses the snapshot. The snapshot is left as it
+     * is (still stale), and the caller closes the result.
+     */
+    public Optional<CompilationResult> compileOnly(java.util.Collection<String> targets) {
+        Snapshot last = snapshot;
+        if (!hasCompiled() || !isDirty() || targets.isEmpty()) {
+            return Optional.empty();
+        }
+        Map<String, String> now = workspace.compileSources();
+        Map<String, String> before = last.result().sources();
+        if (!now.keySet().equals(before.keySet())) {
+            return Optional.empty();
+        }
+        Map<String, String> changed = new HashMap<>();
+        for (Map.Entry<String, String> source : now.entrySet()) {
+            if (!source.getValue().equals(before.get(source.getKey()))) {
+                changed.put(source.getKey(), source.getValue());
+            }
+        }
+        // Exactly the targets: an unchanged target's findings could depend on what changed, so it takes the snapshot.
+        if (changed.isEmpty() || !changed.keySet().equals(new java.util.HashSet<>(targets))
+                || changed.keySet().stream().anyMatch(WorkspaceModel::isJavaUri)) {
+            return Optional.empty();
+        }
+        Map<String, ClassNode> known = new HashMap<>();
+        for (Map.Entry<String, ModuleNode> module : last.result().modules().entrySet()) {
+            if (!changed.containsKey(module.getKey()) && !last.result().unresolvedUris().contains(module.getKey())) {
+                for (ClassNode classNode : module.getValue().getClasses()) {
+                    known.put(classNode.getName(), classNode);
+                }
+            }
+        }
+        long started = System.nanoTime();
+        CompilationResult result = compiler.compile(changed, workspace.classpath(), workspace.config().trust(), known);
+        org.groovyscope.engine.log.EngineLog.debug("compiled %d changed file(s) of %s alone in %d ms",
+                changed.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000);
+        return Optional.of(result);
+    }
+
     /** The code of the warning that names what the workspace budget left out of the analysis. */
     public static final String BUDGET_CODE = "GS101";
 

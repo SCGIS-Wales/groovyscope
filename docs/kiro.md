@@ -76,7 +76,11 @@ reads Kiro's hook JSON from stdin, keeps only Groovy, Gradle and Jenkinsfile fil
 daemon to check them (`hooks.afterWriteInclude`, default compile, lint and practices; the type check is left out
 because it compiles the whole workspace) and prints a `groovyscope checked <file>: N error(s), M warning(s)` block
 with up to `hooks.afterWriteMaxFindings` findings, errors first. Kiro adds the block to the context, so the agent
-sees a broken edit in the same turn instead of at the end of the task. A clean file prints nothing. The engine
+sees a broken edit in the same turn instead of at the end of the task. A clean file prints nothing. When only
+the written files changed since the daemon's last full compile, they are compiled alone against the rest of the
+workspace as that compile left it, and CodeNarc runs alongside: on a 300-class workspace with a classpath, a check
+after writing a 3,600-line file went from 2.7 s to 1.5 s (compile and practices alone from 1.2 s to 0.45 s). The
+next whole-workspace question compiles everything as before. The engine
 request is bounded by `hooks.timeoutSeconds`; a hook never starts the daemon (the LSP session does, and a cold JVM
 would hold the agent for its start-up), so when it is over budget or the daemon is down the hook prints one
 line and the session carries on.

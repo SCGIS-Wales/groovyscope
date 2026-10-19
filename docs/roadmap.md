@@ -673,3 +673,10 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   Spock stub on a private method), GS014 (metaClass override bypassed by `@CompileStatic`), GS015 (metaClass on a
   double) and GS016 (a JUnit test with no assertion, verification or expected exception, helpers followed). The
   steering says the same in two lines.
+- 2026-10-19: the faster check after a write (the last item of the owner's approved list). Measured on a
+  300-class workspace with library jars on the classpath and a 3,600-line file written: about 0.9 s for the
+  whole-workspace compile, 1.2 s for CodeNarc, 0.3 s for the rest. A check of written files that are the only
+  change since the last full compile now compiles them alone, resolving every other workspace class to the tree that
+  compile left (`LanguageServices.compileOnly`; the snapshot stays stale for the next whole-workspace question), and
+  CodeNarc runs on its own thread meanwhile. Median of 12 writes: 2.71 s before, 1.47 s after (compile and practices
+  alone: 0.45 s); findings are identical to the full compile's.

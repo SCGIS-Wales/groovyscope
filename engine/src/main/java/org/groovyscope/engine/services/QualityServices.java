@@ -27,7 +27,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.codenarc.ruleset.RuleSet;
 import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.format.BasicFormatter;
@@ -75,6 +79,17 @@ public final class QualityServices {
     private final TypeCheckAnalyzer typeChecker = new TypeCheckAnalyzer();
     private final org.groovyscope.engine.compile.GroovyCompiler compiler = new org.groovyscope.engine.compile.GroovyCompiler();
     private final Map<String, LintEntry> lintCache = new ConcurrentHashMap<>();
+    /**
+     * CodeNarc runs here while the compile and the practices run on the request's thread: it parses the text on its
+     * own, so the two overlap and a check after a write costs the slower of them, not their sum. Daemon threads, shared
+     * by every workspace, at most one per processor.
+     */
+    private static final ExecutorService LINT = Executors.newFixedThreadPool(
+            Math.max(2, Runtime.getRuntime().availableProcessors()), runnable -> {
+                Thread thread = new Thread(runnable, "groovyscope-lint");
+                thread.setDaemon(true);
+                return thread;
+            });
     private final Map<String, PracticeEntry> practiceCache = new ConcurrentHashMap<>();
 
     private record PracticeEntry(long version, List<PracticeFinder.Practice> practices) {
@@ -398,8 +413,15 @@ public final class QualityServices {
         if (cached != null && cached.version() == snapshot.version()) {
             return cached.practices();
         }
-        org.codehaus.groovy.ast.ModuleNode module = snapshot.result().modules().get(uri);
-        String text = snapshot.result().sources().get(uri);
+        List<PracticeFinder.Practice> found = practicesOf(uri, snapshot.result().modules().get(uri),
+                snapshot.result().sources().get(uri));
+        practiceCache.put(uri, new PracticeEntry(snapshot.version(), List.copyOf(found)));
+        return found;
+    }
+
+    /** The practice findings of one document's tree and text (the snapshot's, or a fresh single-file compile's). */
+    private List<PracticeFinder.Practice> practicesOf(String uri, org.codehaus.groovy.ast.ModuleNode module,
+            String text) {
         Optional<Profile> governing = governing(uri);
         EngineConfig config = workspace.config();
         if (governing.isPresent() && !governing.get().target().groovy().isBlank()) {
@@ -425,7 +447,6 @@ public final class QualityServices {
             found.addAll(Contracts.drift(uri, Contracts.baseline(workspace.root(), relative),
                     contractItems(governing.get(), uri), workspace.config()));
         }
-        practiceCache.put(uri, new PracticeEntry(snapshot.version(), List.copyOf(found)));
         return found;
     }
 
@@ -494,25 +515,34 @@ public final class QualityServices {
         for (String uri : targets) {
             result.put(uri, new ArrayList<>());
         }
-        if (wanted.contains(INCLUDE_COMPILE)) {
-            Map<String, List<Diagnostic>> compile = navigation.diagnostics();
-            for (String uri : targets) {
-                result.get(uri).addAll(compile.getOrDefault(uri, List.of()));
-            }
-        }
-        if (wanted.contains(INCLUDE_LINT)) {
-            for (String uri : targets) {
-                org.groovyscope.engine.concurrent.Cancellation.checkpoint();
-                String text = sources.get(uri);
-                if (text != null) {
-                    result.get(uri).addAll(lint(uri, text, profile));
+        CompletableFuture<Map<String, List<Diagnostic>>> linted = wanted.contains(INCLUDE_LINT)
+                ? CompletableFuture.supplyAsync(() -> lintAll(targets, sources, profile), LINT)
+                : CompletableFuture.completedFuture(Map.of());
+        // After a write only the written files changed: compile them alone against the last full compile's classes
+        // (see LanguageServices.compileOnly) instead of the whole workspace.
+        Optional<org.groovyscope.engine.compile.CompilationResult> alone = uris != null && !uris.isEmpty()
+                && (wanted.contains(INCLUDE_COMPILE) || wanted.contains(INCLUDE_PRACTICES))
+                ? quickCompile(targets) : Optional.empty();
+        try {
+            if (wanted.contains(INCLUDE_COMPILE)) {
+                Map<String, List<Diagnostic>> compile = alone.map(navigation::diagnosticsOf)
+                        .orElseGet(navigation::diagnostics);
+                for (String uri : targets) {
+                    result.get(uri).addAll(compile.getOrDefault(uri, List.of()));
                 }
             }
+            if (wanted.contains(INCLUDE_PRACTICES)) {
+                for (String uri : targets) {
+                    result.get(uri).addAll(alone.isPresent() && alone.get().sources().containsKey(uri)
+                            ? practicesOf(uri, alone.get().modules().get(uri), alone.get().sources().get(uri))
+                                    .stream().map(PracticeFinder.Practice::diagnostic).toList()
+                            : practiceDiagnostics(uri));
+                }
+            }
+        } finally {
+            alone.ifPresent(org.groovyscope.engine.compile.CompilationResult::close);
         }
         if (wanted.contains(INCLUDE_PRACTICES)) {
-            for (String uri : targets) {
-                result.get(uri).addAll(practiceDiagnostics(uri));
-            }
             for (Map.Entry<String, List<Diagnostic>> entry : emulate(targets).entrySet()) {
                 result.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).addAll(entry.getValue());
             }
@@ -535,10 +565,52 @@ public final class QualityServices {
                 }
             }
         }
+        for (Map.Entry<String, List<Diagnostic>> entry : joined(linted).entrySet()) {
+            result.get(entry.getKey()).addAll(entry.getValue());
+        }
         for (List<Diagnostic> list : result.values()) {
             list.sort((a, b) -> a.range().start().compareTo(b.range().start()));
         }
         return new CheckResult(result);
+    }
+
+    /** The single-file compile of {@link LanguageServices#compileOnly}, or empty (also when it fails). */
+    private Optional<org.groovyscope.engine.compile.CompilationResult> quickCompile(List<String> targets) {
+        try {
+            return navigation.compileOnly(targets);
+        } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
+            // The previous generation's trees can lose their loader to a full compile finishing meanwhile; the
+            // snapshot path below is always right, only slower.
+            org.groovyscope.engine.log.EngineLog.debug("single-file compile skipped: %s", e);
+            return Optional.empty();
+        }
+    }
+
+    /** CodeNarc findings per target (on a lint thread; {@link #lint} caches by text). */
+    private Map<String, List<Diagnostic>> lintAll(List<String> targets, Map<String, String> sources, String profile) {
+        Map<String, List<Diagnostic>> found = new HashMap<>();
+        for (String uri : targets) {
+            String text = sources.get(uri);
+            if (text != null) {
+                found.put(uri, lint(uri, text, profile));
+            }
+        }
+        return found;
+    }
+
+    /** The lint result, or the lint thread's failure rethrown as it was. */
+    static Map<String, List<Diagnostic>> joined(CompletableFuture<Map<String, List<Diagnostic>>> linted) {
+        try {
+            return linted.join();
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (e.getCause() instanceof Error error) {
+                throw error;
+            }
+            throw e;
+        }
     }
 
     /**
