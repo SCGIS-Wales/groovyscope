@@ -313,11 +313,11 @@ def test_review_changed_renders_a_merge_request_review(
     assert cli.triage_lines(
         {
             "noise": {"count": 2, "codes": [{"code": "NoDef", "count": 2, "fixable": 2}]},
-            "fix": {"count": 2, "command": "groovyscope fix --codes NoDef"},
+            "fix": {"count": 2, "command": "groovyscope fix --code NoDef"},
         }
     ) == [
         "noise (2): NoDef 2 (2 fixable)",
-        "safe fixes for 2: `groovyscope fix --codes NoDef`",
+        "safe fixes for 2: `groovyscope fix --code NoDef`",
     ]
     assert calls[:2] == ["groovyscope/check", "groovyscope/documentSymbols"]
     as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "--changed", "--staged", "--json"])
