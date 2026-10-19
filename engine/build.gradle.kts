@@ -109,8 +109,16 @@ tasks.jar {
 tasks.shadowJar {
     archiveBaseName.set("groovyscope-engine")
     archiveClassifier.set("all")
+    // Shadow 9 hands duplicate files to its transformers only when duplicates are included: without this the
+    // service files and the Groovy extension module descriptors of every module but one were dropped, and with them
+    // the nio, datetime, dateutil, sql and macro extension methods the type checker (and FormatStringChecker) need.
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
-    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+    mergeGroovyExtensionModules()
+    filesNotMatching(listOf("META-INF/services/**", "META-INF/groovy/**")) {
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    }
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/*.EC")
     manifest {
         attributes("Main-Class" to "org.groovyscope.engine.Main", "CodeNarc-Version" to codenarcVersion)
     }
