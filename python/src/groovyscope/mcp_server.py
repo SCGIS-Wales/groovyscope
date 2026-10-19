@@ -1489,47 +1489,68 @@ def engine_dispatcher(
     budget: float,
 ) -> tuple[Dispatch, Callable[[], None]]:
     """One engine channel with a configuration that follows the files on disk and a reconnect-and-retry when the
-    engine went away (daemon stopped, JVM killed, upgraded). The lock is held only to swap the channel or to send
-    a configuration, never for the duration of a request."""
-    state: dict[str, Any] = {"session": opener(socket_file), "applied": None}
+    engine went away (daemon stopped, JVM killed, upgraded). The lock is held only to read or swap the channel and
+    to claim a configuration push, never while a request or a reload runs: a reload is sent by one caller while the
+    others carry on, and it counts as applied only when the channel it went to is still the current one."""
+    state: dict[str, Any] = {"session": opener(socket_file), "applied": None, "sending": None}
     session_lock = threading.Lock()
 
-    def apply_configuration() -> None:
+    def apply_configuration(session: Any) -> None:
         current = configuration() if configuration is not None else None
-        if current is None or current[0] == state["applied"]:
+        if current is None:
             return
         digest, document = current
+        with session_lock:
+            sending = state["sending"]
+            if (
+                state["session"] is not session
+                or state["applied"] == digest
+                or (sending is not None and sending[0] is session and sending[1] == digest)
+            ):
+                return
+            state["sending"] = (session, digest)
         try:
-            reply = engine(state["session"], RELOAD_METHOD, {"config": document}, timeout=RELOAD_TIMEOUT_SECONDS)
+            reply = engine(session, RELOAD_METHOD, {"config": document}, timeout=RELOAD_TIMEOUT_SECONDS)
         except RuntimeError as exc:  # the engine refused the document; the old configuration stays in force
             LOG.warning("engine kept its configuration: %s", exc)
+        except BaseException:
+            with session_lock:
+                state["sending"] = None
+            raise
         else:
             if isinstance(reply, Mapping) and reply.get("reloaded"):
                 LOG.info("engine configuration reloaded (%s)", digest[:12])
-        state["applied"] = digest
+        with session_lock:
+            if state["session"] is session:  # compare and swap: a reload sent to a replaced channel counts for nothing
+                state["applied"] = digest
+            state["sending"] = None
+
+    def replace(session: Any, exc: BaseException) -> Any:
+        with session_lock:
+            if state["session"] is session:  # the first caller to notice replaces it; the others reuse it
+                LOG.info("engine session lost (%s); reconnecting", exc)
+                closer(session)
+                state["session"] = opener(reconnect()) if reconnect is not None else session
+                state["applied"] = None
+            return state["session"]
 
     def dispatch(method: str, params: dict[str, Any]) -> Any:
         with session_lock:
-            apply_configuration()
             session = state["session"]
         try:
+            apply_configuration(session)
             return engine(session, method, params, timeout=budget)
         except TimeoutError:
             # TimeoutError is an OSError in Python 3, but a slow engine is alive: never reconnect for it, and never
             # send the request again (the channel already told the engine to stop it).
             raise
         except (OSError, ValueError) as exc:
-            # The socket died or the stream is out of frame: only a fresh channel can answer.
+            # The socket died, the stream is out of frame, a write broke or the daemon is exiting: only a fresh
+            # channel can answer.
             if reconnect is None:
                 raise
-            with session_lock:
-                if state["session"] is session:  # the first caller to notice replaces it; the others reuse it
-                    LOG.info("engine session lost (%s); reconnecting", exc)
-                    closer(session)
-                    state["session"] = opener(reconnect())
-                    state["applied"] = None
-                    apply_configuration()
-                session = state["session"]
+            session = replace(session, exc)
+            apply_configuration(session)
             return engine(session, method, params, timeout=budget)
 
     return (dispatch, lambda: closer(state["session"]))

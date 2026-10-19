@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -293,3 +294,65 @@ def test_classpath_command_reloads_the_running_daemon_in_place(
     monkeypatch.setattr(cli, "_RPC", refusing)
     fallback = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
     assert fallback.exit_code == 0 and "was stopped" in fallback.output and stopped
+
+
+def test_a_configuration_push_on_a_dead_channel_reconnects_then_applies() -> None:
+    sent: list[tuple[str, str]] = []
+
+    def call(session: dict[str, Any], method: str, _params: Any = None, timeout: float | None = None) -> Any:
+        sent.append((session["name"], method))
+        if session["name"] == "dead":
+            msg = "engine closed the session"
+            raise ConnectionError(msg)
+        return {"reloaded": True} if method == mcp_server.RELOAD_METHOD else {"ok": method}
+
+    names = iter(["dead", "fresh"])
+    caller, _ = mcp_server.session_caller(
+        Path("/a.sock"),
+        lambda: Path("/b.sock"),
+        open_session=lambda _p: {"name": next(names)},
+        configuration=lambda: ("h1", "{}"),
+        call_fn=call,
+        close_fn=lambda _s: None,
+    )
+    assert caller("groovyscope/check", {}) == {"ok": "groovyscope/check"}
+    assert sent == [
+        ("dead", mcp_server.RELOAD_METHOD),
+        ("fresh", mcp_server.RELOAD_METHOD),
+        ("fresh", "groovyscope/check"),
+    ]
+
+
+def test_a_slow_configuration_reload_does_not_hold_other_calls() -> None:
+    reloading = threading.Event()
+    release = threading.Event()
+
+    def call(_session: dict[str, Any], method: str, _params: Any = None, timeout: float | None = None) -> Any:
+        if method == mcp_server.RELOAD_METHOD:
+            reloading.set()
+            release.wait(10)
+            return {"reloaded": True}
+        return {"ok": method}
+
+    caller, _ = mcp_server.session_caller(
+        Path("/a.sock"),
+        None,
+        open_session=lambda _p: {},
+        configuration=lambda: ("h1", "{}"),
+        call_fn=call,
+        close_fn=lambda _s: None,
+    )
+    first: dict[str, Any] = {}
+    worker = threading.Thread(target=lambda: first.update(answer=caller("groovyscope/check", {})))
+    worker.start()
+    assert reloading.wait(5)
+    second: dict[str, Any] = {}
+    other = threading.Thread(target=lambda: second.update(answer=caller("groovyscope/status", {})))
+    other.start()
+    try:
+        other.join(3)
+        assert second.get("answer") == {"ok": "groovyscope/status"}  # answered while the reload still waits
+    finally:
+        release.set()
+        worker.join(5)
+    assert first["answer"] == {"ok": "groovyscope/check"}
