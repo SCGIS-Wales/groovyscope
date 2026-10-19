@@ -1,6 +1,7 @@
 # Agent guide for groovyscope
 
 Read `docs/roadmap.md` first: it says which stage is in progress and what "done" means for it.
+`docs/improvement-plan.md` is the owner's audit, worked phase by phase; its section 11 tracks progress.
 
 ## Layout and commands
 
@@ -17,7 +18,7 @@ Read `docs/roadmap.md` first: it says which stage is in progress and what "done"
 
 ## Style rules
 
-- Python: functional. No user-defined classes except `TypedDict` declarations. Type hints everywhere,
+- Python: functional. No user-defined classes except `TypedDict` declarations and exception classes. Type hints everywhere,
   `mypy --strict` and ruff clean, line length 120. Pure functions with injected collaborators
   (`runner`, `which`, `environ`) so tests do not touch the real machine.
 - Java: `-Xlint:all -Werror`. The engine API must stay free of LSP4J types outside `org.groovyscope.engine.lsp`.

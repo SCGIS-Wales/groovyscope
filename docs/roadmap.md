@@ -46,9 +46,9 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Groovy 6 checkers appended to `@CompileStatic`/`@TypeChecked` classes via a compilation customizer, the
   bundled `basic` formatter, `groovyscope/check` and `groovyscope/format` RPCs, `groovyscope check` and
   `groovyscope format` commands. Not delivered: the GrEclipse formatter (needs vendored Eclipse bundles;
-  moved to Stage 6), the SARIF upload in CI (deferred until the engine lints itself), and the NullChecker
-  strict-mode switch (no public configuration found in groovy-typecheckers 6.0.0; it runs in its default
-  mode).
+  moved to Stage 6), and the SARIF upload in CI (deferred until the engine lints itself). The NullChecker
+  strict mode was later wired as `NullChecker(strict: true)`, and it loads and reports on groovy-typecheckers
+  6.0.0 (probe 0.3 of `docs/improvement-plan.md`).
   CodeNarc 4 in process with the bundled rulesets (prune unknown rules), Groovy 6 type-checker extensions,
   GrEclipse formatting via spotless-lib returning TextEdits, pull diagnostics, codeAction, `check` and
   `format` CLI commands, SARIF upload in CI.
@@ -680,3 +680,8 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   compile left (`LanguageServices.compileOnly`; the snapshot stays stale for the next whole-workspace question), and
   CodeNarc runs on its own thread meanwhile. Median of 12 writes: 2.71 s before, 1.47 s after (compile and practices
   alone: 0.45 s); findings are identical to the full compile's.
+- 2026-10-19: Phase 0 of `docs/improvement-plan.md` (the owner's audit): baseline and probes, findings in section 13
+  of the plan. The shaded JAR keeps only groovy-xml's extension module, which silently turns off the whole type
+  check (FormatStringChecker needs groovy-macro's `withConstraints`, and the load failure is a message the
+  analyser does not read); LSP4J leaves a running request open when its connection closes; CodeNarc's enhanced
+  rules fire for JDK types but not workspace classes, and its Jenkins rules only in files named `Jenkinsfile`.
