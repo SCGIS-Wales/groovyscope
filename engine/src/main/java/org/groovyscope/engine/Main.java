@@ -122,7 +122,6 @@ public final class Main {
     static Options parseOptions(List<String> options, Map<String, String> environment, Path cwd) throws IOException {
         List<String> remaining = new ArrayList<>(options);
         String json = environment == null ? null : environment.get(CONFIG_ENV);
-        String configHash = EngineConfig.hashOf(json);
         Path socket = null;
         Path cacheDir = null;
         Path root = null;
@@ -145,6 +144,8 @@ public final class Main {
             }
         }
         configureLogging(json, cacheDir);
+        // Hashed from the configuration actually used, whether it came from the environment or from --config.
+        String configHash = EngineConfig.hashOf(json);
         return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir, root);
     }
 

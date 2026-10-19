@@ -175,4 +175,18 @@ class MainSpec extends Specification {
         System.getProperty('groovy.grape.enable') == 'false'
         System.getProperty('groovy.asttest.enable') == 'false'
     }
+
+    def 'a configuration file given with --config is the one hashed (P-14)'() {
+        given:
+        Path file = temp.resolve('engine-config.json')
+        Files.writeString(file, '{"workspace":{"trust":false}}')
+
+        when:
+        def fromFile = Main.parseOptions(['--config', file.toString()], [:], temp)
+        def fromEnv = Main.parseOptions([], [(Main.CONFIG_ENV): '{"workspace":{"trust":false}}'], temp)
+
+        then:
+        fromFile.config.configHash() == fromEnv.config.configHash()
+        fromFile.config.configHash() != ''
+    }
 }
