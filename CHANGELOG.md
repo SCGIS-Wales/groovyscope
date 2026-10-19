@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.23.0...v0.23.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **review:** suggest `groovyscope fix --code X`, the option fix has ([#98](https://github.com/SCGIS-Wales/groovyscope/issues/98)) ([29ded8b](https://github.com/SCGIS-Wales/groovyscope/commit/29ded8b2bbcefc3dc45b59af39bf8ae7b0e59eee))
+
 ## [0.23.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.22.1...v0.23.0) (2026-10-19)
 
 
