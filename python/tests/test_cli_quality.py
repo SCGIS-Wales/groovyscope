@@ -566,6 +566,21 @@ def test_a_hook_never_fails_the_session_even_on_a_broken_configuration(runner: C
     assert "groovyscope: hook skipped" in result.output
 
 
+def test_the_session_start_records_the_stop_gate_baseline(
+    runner: CliRunner, tmp_path: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "Old.groovy").write_text("class Old { broken")
+    monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, "?? Old.groovy\0"))
+    off = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--event", "agentSpawn"], input="{}")
+    assert off.exit_code == 0 and not cli.session_baseline_file(tmp_path).exists()  # stopGate is off by default
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  stopGate: true\n")
+    on = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--event", "agentSpawn"], input="{}")
+    assert on.exit_code == 0
+    assert json.loads(cli.session_baseline_file(tmp_path).read_text())  # Old.groovy recorded
+    settings = cli.hooks.settings(cli.load_config(tmp_path, None, {}))
+    assert cli.hook_targets(tmp_path, "stop", {}, settings) == []  # the agent changed nothing yet
+
+
 def test_output_that_is_not_utf8_is_read_without_failing() -> None:
     done = process.run_text(
         [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'caf\\xe9.groovy')"], timeout=30

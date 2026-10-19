@@ -167,6 +167,8 @@ def checkup_command(obj: dict[str, Any], *, for_agent: bool, fix: bool, as_json:
         # repair, and nothing to install on the user's machine.
         click.echo(checkup.IDLE_NOTE)
         return
+    if for_agent:
+        session_baseline(obj)
     try:
         report = checkup.build(
             obj["root"],
@@ -1078,6 +1080,9 @@ def run_hook(obj: dict[str, Any], event: str | None) -> None:
     """The body of ``groovyscope hook`` (see hook_command)."""
     payload = hooks.parse_payload(sys.stdin.read())
     name = hooks.event_name(payload, event)
+    if name == "sessionStart":
+        session_baseline(obj)
+        return
     if name not in {"postToolUse", "stop"}:
         return
     # Everything that needs no engine comes first: most hook events end here, in milliseconds.
@@ -1102,12 +1107,29 @@ def run_hook(obj: dict[str, Any], event: str | None) -> None:
 
 def hook_targets(root: Path, name: str, payload: Mapping[str, Any], settings: hooks.HookSettings) -> list[Path]:
     """The files the event is about, or nothing when the event needs no engine: the setting is off, the write
-    touched no Groovy file, or no Groovy file changed in the working tree."""
+    touched no Groovy file, or no Groovy file changed in the working tree since the session started."""
     if name == "postToolUse":
         return hooks.written_paths(payload, root) if settings["afterWrite"] else []
     if not settings["stopGate"]:
         return []
-    return hooks.changed_groovy_files(root, changes.default_runner)
+    changed = hooks.changed_groovy_files(root, changes.default_runner)
+    return hooks.changed_since_baseline(changed, session_baseline_file(root))
+
+
+def session_baseline_file(root: Path) -> Path:
+    """Where the session's stop gate baseline of a workspace is kept."""
+    environ = dict(os.environ)
+    return daemon_lifecycle.cache_dir(environ) / "hooks" / f"{daemon_lifecycle.workspace_key(root)}.baseline.json"
+
+
+def session_baseline(obj: dict[str, Any]) -> None:
+    """With hooks.stopGate on, the Groovy files already changed when the agent starts (stat only, nothing read),
+    so the gate holds the agent to its own changes. Never fails the start."""
+    try:
+        if hooks.settings(load_config(obj["root"], obj["config_path"], dict(os.environ)))["stopGate"]:
+            hooks.record_baseline(obj["root"], changes.default_runner, session_baseline_file(obj["root"]))
+    except Exception as exc:  # a hook step: logged, the session goes on
+        LOG.warning("stop gate baseline not recorded: %s", exc)
 
 
 def hook_after_write(socket_file: Path, root: Path, paths: Sequence[Path], settings: hooks.HookSettings) -> str:
