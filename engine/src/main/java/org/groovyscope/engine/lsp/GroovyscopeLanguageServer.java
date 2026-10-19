@@ -139,7 +139,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             this.liveConfig = liveConfig;
             this.reloader = reloader;
         }
-        this.requests = executors == null ? RequestExecutors.forConfig(config) : executors;
+        this.requests = (executors == null ? RequestExecutors.forConfig(config) : executors).forConnection();
         this.diagnostics = new DiagnosticsPublisher(services::get, client::get);
         this.textDocumentService = new GroovyscopeTextDocumentService(services::get, diagnostics, requests);
         this.diagnostics.openDocuments(textDocumentService::openedDocuments);
@@ -1079,10 +1079,12 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
 
     /**
      * Releases what this connection holds once its stream has ended (normally or not): the documents it opened
-     * are closed, so their unsaved text stops overriding the disk for other clients, and its diagnostics thread
-     * stops. Safe to call more than once.
+     * are closed, so their unsaved text stops overriding the disk for other clients, its running requests are
+     * cancelled and its diagnostics thread stops. Safe to call more than once.
      */
     public void connectionClosed() {
+        // LSP4J leaves this connection's running requests open (probe 0.4): nobody would read their answers.
+        requests.cancelAll();
         textDocumentService.closeAll();
         diagnostics.shutdown();
     }

@@ -153,6 +153,30 @@ class DaemonServerSpec extends Specification {
         thrown(IllegalStateException)
     }
 
+    def 'a client accepted just before an idle exit is still served during the grace period (E-14)'() {
+        given:
+        def server = new DaemonServer(socket, EngineConfig.DEFAULTS, Duration.ofMinutes(5), exited::countDown)
+        server.start()
+        def late = connect()
+        waitFor { server.connectionCount() == 1 }
+
+        when: 'the idle exit begins while the client is connected'
+        server.requestExit(true)
+        waitFor { !server.isOpen() }
+        def status = late.remote.status().get(20, TimeUnit.SECONDS)
+
+        then: 'the listener is gone, but the request is answered, not refused'
+        !Files.exists(socket)
+        status.engine != null
+        !exited.await(200, TimeUnit.MILLISECONDS)
+
+        when:
+        late.channel.close()
+
+        then:
+        exited.await(20, TimeUnit.SECONDS)
+    }
+
     def 'a stale socket file is replaced and a second close is harmless'() {
         given:
         Files.writeString(socket, 'stale')

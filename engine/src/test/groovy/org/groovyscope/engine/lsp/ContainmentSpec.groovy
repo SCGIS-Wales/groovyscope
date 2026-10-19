@@ -147,6 +147,25 @@ class ContainmentSpec extends Specification {
         server.services() == null
     }
 
+    def 'a closed connection cancels its running request (E-15)'() {
+        given:
+        def running = new java.util.concurrent.CountDownLatch(1)
+        def request = server.requests().heavy { cancel ->
+            running.countDown()
+            while (true) {
+                org.groovyscope.engine.concurrent.Cancellation.checkpoint()
+                Thread.onSpinWait()
+            }
+        }
+        running.await(30, TimeUnit.SECONDS)
+
+        when:
+        server.connectionClosed()
+
+        then:
+        request.isCancelled()
+    }
+
     def 'status reports the configuration hash'() {
         given:
         def hashed = new GroovyscopeLanguageServer({ }, root, EngineConfig.DEFAULTS.withConfigHash('abc'))
