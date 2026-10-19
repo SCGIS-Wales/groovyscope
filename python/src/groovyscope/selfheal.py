@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -27,13 +28,29 @@ BACKOFF_BASE_SECONDS = 1.0
 BACKOFF_CAP_SECONDS = 30.0
 TAIL_BYTES = 65536  # how much of the log after the last start is searched for the exit cause
 OOM_MARKER = "OutOfMemoryError"
+# Only these mean the heap was too small: a bigger -Xmx helps. Metaspace, native threads, direct buffers and the
+# rest are OutOfMemoryErrors that a bigger heap does not cure (it can make some of them worse).
+HEAP_EXHAUSTED = (
+    "java.lang.OutOfMemoryError: Java heap space",
+    "java.lang.OutOfMemoryError: GC overhead limit exceeded",
+)
+OOM_KIND = re.compile(r"java\.lang\.OutOfMemoryError: ([^\r\n]+)")
+OTHER_OOM_ADVICE = {
+    "Metaspace": "too many classes were loaded (Metaspace); a bigger heap does not help: trim workspace.classpath "
+    "or restart the daemon",
+    "unable to create native thread": "the system refused another thread (check `ulimit -u` and other JVMs); a "
+    "bigger heap does not help",
+    "Direct buffer memory": "the JVM ran out of direct (native) memory; a bigger heap does not help: restart the "
+    "daemon, and report it with `groovyscope doctor --bundle` if it recurs",
+}
 AUTO = "auto"
 GIB = 1024**3
 MIB = 1024**2
 DEFAULT_MAX_HEAP_BYTES = 4 * GIB
 PHYSICAL_SHARE = 4  # `maxHeap: auto` is a quarter of physical memory, capped at DEFAULT_MAX_HEAP_BYTES
 UNITS = {"k": 1024, "m": MIB, "g": GIB}
-EXIT_OOM = "oom"
+EXIT_OOM = "oom"  # the heap ran out: the next start grows it
+EXIT_OOM_OTHER = "oom-other"  # another OutOfMemoryError (Metaspace, threads, direct memory): the heap stays
 EXIT_OTHER = "exit"
 EXIT_NONE = "none"  # the log did not grow: the previous JVM wrote nothing (or this is the first start)
 
@@ -84,7 +101,7 @@ def load_state(path: Path) -> DaemonState:
     if isinstance(restarts, list):
         state["restarts"] = [float(t) for t in restarts if isinstance(t, (int, float))]
     last = loaded.get("lastExit")
-    state["lastExit"] = last if last in {EXIT_OOM, EXIT_OTHER, EXIT_NONE} else EXIT_NONE
+    state["lastExit"] = last if last in {EXIT_OOM, EXIT_OOM_OTHER, EXIT_OTHER, EXIT_NONE} else EXIT_NONE
     size = loaded.get("logSize")
     state["logSize"] = int(size) if isinstance(size, (int, float)) and size >= 0 else 0
     return state
@@ -143,7 +160,26 @@ def exit_cause(log_file: Path, state: DaemonState) -> str:
             written = handle.read(size - start).decode("utf-8", errors="replace")
     except OSError:
         return EXIT_NONE
-    return EXIT_OOM if OOM_MARKER in written else EXIT_OTHER
+    return exit_cause_of(written)
+
+
+def exit_cause_of(text: str) -> str:
+    """``oom`` when the JVM ran out of heap, ``oom-other`` for any other OutOfMemoryError, ``exit`` otherwise."""
+    if any(marker in text for marker in HEAP_EXHAUSTED):
+        return EXIT_OOM
+    return EXIT_OOM_OTHER if OOM_MARKER in text else EXIT_OTHER
+
+
+def oom_advice(text: str) -> str | None:
+    """What to do about the last non-heap OutOfMemoryError in ``text``; None for a heap one or none at all."""
+    if exit_cause_of(text) != EXIT_OOM_OTHER:
+        return None
+    kinds = OOM_KIND.findall(text)
+    kind = kinds[-1].strip() if kinds else "unknown kind"
+    for name, advice in OTHER_OOM_ADVICE.items():
+        if name in kind:
+            return advice
+    return f"the JVM ran out of memory that is not heap ({kind}); a bigger heap does not help: restart the daemon"
 
 
 def kept_heap(state: DaemonState, configured_heap: str) -> str | None:
@@ -203,6 +239,8 @@ def plan_restart(
                 f"the last daemon exited with OutOfMemoryError and the heap is already at daemon.maxHeap ({current}); "
                 "raise `daemon.maxHeap` in `.groovyscope.yaml` or narrow the workspace"
             )
+    elif cause == EXIT_OOM_OTHER:
+        reason = "the last daemon exited with an OutOfMemoryError that a bigger heap does not cure; the heap stays"
     return {"allowed": True, "delay": delay, "heap": heap, "cause": cause, "reason": reason}
 
 

@@ -139,6 +139,26 @@ def test_prepare_start_rotates_grows_waits_and_records(tmp_path: Path) -> None:
     assert not selfheal.state_path(tmp_path / "never.log").exists()
 
 
+def test_only_a_heap_exhaustion_grows_the_heap(tmp_path: Path) -> None:
+    settings = {"heapGrowthFactor": 1.5, "maxHeap": "4g", "maxRestartsPerTenMinutes": 3}
+    log = tmp_path / "d.log"
+    log.write_text("Terminating due to java.lang.OutOfMemoryError: Metaspace\n")
+    state = selfheal.empty_state()
+    assert selfheal.exit_cause(log, state) == selfheal.EXIT_OOM_OTHER
+    plan = selfheal.plan_restart(state, selfheal.EXIT_OOM_OTHER, settings, "1g", 1000.0)
+    assert plan["heap"] is None and "a bigger heap does not cure" in plan["reason"]
+    advice = daemon.out_of_memory_advice(str(log))
+    assert "Metaspace" in advice and "daemon.heap" not in advice
+    log.write_text("java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory\n")
+    assert "ulimit -u" in daemon.out_of_memory_advice(str(log))
+    log.write_text("java.lang.OutOfMemoryError: Requested array size exceeds VM limit\n")
+    assert "Requested array size exceeds VM limit" in daemon.out_of_memory_advice(str(log))
+    log.write_text("Terminating due to java.lang.OutOfMemoryError: GC overhead limit exceeded\n")
+    assert selfheal.exit_cause_of(log.read_text()) == selfheal.EXIT_OOM
+    assert "daemon.heap" in daemon.out_of_memory_advice(str(log))
+    assert selfheal.load_state(tmp_path / "missing.json")["lastExit"] == selfheal.EXIT_NONE
+
+
 def test_a_new_configured_heap_replaces_a_heap_grown_from_the_old_one() -> None:
     settings = {"heapGrowthFactor": 1.5, "maxHeap": "16g", "maxRestartsPerTenMinutes": 3}
     state = selfheal.started(selfheal.empty_state(), "1536m", selfheal.EXIT_OOM, 0, 1000.0, configured="1g")

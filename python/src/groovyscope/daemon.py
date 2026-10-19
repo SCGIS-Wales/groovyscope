@@ -28,9 +28,6 @@ LOCK_POLL_SECONDS = 0.1
 # sun_path is 104 bytes on macOS and the BSDs, 108 on Linux (including the terminating NUL).
 MAX_SOCKET_PATH = {"darwin": 103}.get(sys.platform, 107)
 LOG = logging.getLogger("groovyscope.daemon")
-# What the JVM prints when `-XX:+ExitOnOutOfMemoryError` ends the daemon (`Terminating due to
-# java.lang.OutOfMemoryError: Java heap space`); any other OutOfMemoryError in the log tail counts too.
-OOM_MARKER = "OutOfMemoryError"
 # `doctor` and `checkup` warn once the heap in use passes this share of the maximum.
 HEAP_WARN_RATIO = 0.85
 HEAP_FIX = "raise `daemon.heap` in `.groovyscope.yaml` (then `groovyscope daemon restart`)"
@@ -436,8 +433,8 @@ def info(root: Path, environ: Mapping[str, str], *, probe_fn: Probe | None = Non
 
 
 def out_of_memory(log_file: Path) -> bool:
-    """Whether the daemon's log ends with an ``OutOfMemoryError``: the JVM exited for lack of heap."""
-    return OOM_MARKER in log_tail(log_file)
+    """Whether the daemon's log ends with an ``OutOfMemoryError`` of any kind (see selfheal.exit_cause_of)."""
+    return selfheal.exit_cause_of(log_tail(log_file)) != selfheal.EXIT_OTHER
 
 
 def memory_use(status: Mapping[str, Any] | None) -> tuple[int, int] | None:
@@ -470,5 +467,7 @@ def memory_warning(status: Mapping[str, Any] | None, ratio: float = HEAP_WARN_RA
 
 
 def out_of_memory_advice(log: str) -> str:
-    """What to do when the last daemon died of an ``OutOfMemoryError``."""
-    return f"the last daemon exited with OutOfMemoryError (log: {log}); {HEAP_FIX}"
+    """What to do when the last daemon died of an ``OutOfMemoryError``: a bigger heap for a heap exhaustion, the
+    kind's own advice for the others (read from the log)."""
+    other = selfheal.oom_advice(log_tail(Path(log)))
+    return f"the last daemon exited with OutOfMemoryError (log: {log}); {other or HEAP_FIX}"
