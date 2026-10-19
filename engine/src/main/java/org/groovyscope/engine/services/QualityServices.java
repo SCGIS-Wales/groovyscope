@@ -100,25 +100,102 @@ public final class QualityServices {
     }
 
     private volatile TypeCheckEntry typeCache;
+    // The type check under way and the snapshot version it serves: requests for that version join it (E-12).
+    private final Object typeLock = new Object();
+    private CompletableFuture<TypeCheckEntry> typeJob;
+    private long typeJobVersion = -1;
+    private final java.util.concurrent.atomic.AtomicInteger typeChecksRun = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** How many whole-workspace type checks this instance has run (for specs). */
+    int typeChecksRun() {
+        return typeChecksRun.get();
+    }
 
     /**
      * The type check of the whole workspace, run once per snapshot: every {@code check} asks for all of it (the
-     * checkers need every class), so a request for one file must not pay for a full compile each time.
+     * checkers need every class), so a request for one file must not pay for a full compile each time. Requests that
+     * arrive while it runs join it; it checks the snapshot's own sources, so its result matches the version it is
+     * cached under.
      */
     private Map<String, List<Diagnostic>> typeCheckAll() {
-        org.groovyscope.engine.services.Snapshot current = navigation.snapshot();
-        TypeCheckEntry cached = typeCache;
-        if (cached != null && cached.version() == current.version()) {
-            return cached.typed();
+        while (true) {
+            org.groovyscope.engine.services.Snapshot current = navigation.snapshot();
+            TypeCheckEntry cached = typeCache;
+            if (cached != null && cached.version() == current.version()) {
+                return cached.typed();
+            }
+            org.groovyscope.engine.concurrent.MemoryGuard.requireHeadroom();
+            CompletableFuture<TypeCheckEntry> job;
+            boolean owner;
+            synchronized (typeLock) {
+                owner = typeJob == null || typeJobVersion != current.version();
+                if (owner) {
+                    typeJob = new CompletableFuture<>();
+                    typeJobVersion = current.version();
+                }
+                job = typeJob;
+            }
+            if (owner) {
+                return runTypeCheck(current, job).typed();
+            }
+            TypeCheckEntry joined = joinTypeCheck(job);
+            if (joined != null) {
+                return joined.typed();
+            }
+            // the owner was cancelled: this request runs the check itself on the next pass
         }
-        long started = System.nanoTime();
-        Map<String, List<Diagnostic>> typed = typeChecker.analyze(workspace.compileSources(), workspace.classpath(),
-                workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
-                current.result().unresolvedUris());
-        typeCache = new TypeCheckEntry(current.version(), typed);
-        org.groovyscope.engine.log.EngineLog.debug("type-checked %d file(s) in %d ms (snapshot %d)", typed.size(),
-                (System.nanoTime() - started) / 1_000_000, current.version());
-        return typed;
+    }
+
+    private TypeCheckEntry runTypeCheck(org.groovyscope.engine.services.Snapshot current,
+            CompletableFuture<TypeCheckEntry> job) {
+        try {
+            long started = System.nanoTime();
+            typeChecksRun.incrementAndGet();
+            Map<String, List<Diagnostic>> typed = typeChecker.analyze(current.result().sources(),
+                    workspace.classpath(), workspace.config().trust(), workspace.config().typecheck(),
+                    workspace.config().groovy(), current.result().unresolvedUris());
+            TypeCheckEntry entry = new TypeCheckEntry(current.version(), typed);
+            typeCache = entry;
+            org.groovyscope.engine.log.EngineLog.debug("type-checked %d file(s) in %d ms (snapshot %d)", typed.size(),
+                    (System.nanoTime() - started) / 1_000_000, current.version());
+            job.complete(entry);
+            return entry;
+        } catch (RuntimeException | Error e) {
+            job.completeExceptionally(e);
+            throw e;
+        } finally {
+            synchronized (typeLock) {
+                if (typeJob == job) {
+                    typeJob = null;
+                }
+            }
+        }
+    }
+
+    /** Waits for another request's type check, polling this request's cancel flag; null when that one was cancelled. */
+    private static TypeCheckEntry joinTypeCheck(CompletableFuture<TypeCheckEntry> job) {
+        while (true) {
+            try {
+                return job.get(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                org.groovyscope.engine.concurrent.Cancellation.checkpoint();
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof java.util.concurrent.CancellationException) {
+                    return null;
+                }
+                if (cause instanceof RuntimeException runtime) {
+                    throw runtime;
+                }
+                if (cause instanceof Error error) {
+                    throw error;
+                }
+                throw new IllegalStateException(cause);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new java.util.concurrent.CancellationException("interrupted while waiting for the type check");
+            }
+        }
     }
 
     /**

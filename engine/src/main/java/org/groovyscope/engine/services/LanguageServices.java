@@ -552,6 +552,14 @@ public final class LanguageServices {
             revalidate();
             return published;
         }
+        if (isDirty() && published.version() > 0 && org.groovyscope.engine.concurrent.MemoryGuard.pressure()) {
+            // Under heap pressure a compile is the whole-workspace step refused; a light request keeps the
+            // published snapshot (E-18).
+            if (staleOk != null) {
+                return published;
+            }
+            org.groovyscope.engine.concurrent.MemoryGuard.requireHeadroom();
+        }
         while (isDirty()) {
             CompileJob job;
             boolean owner;
@@ -760,12 +768,11 @@ public final class LanguageServices {
 
     /** Drops every cache that can be rebuilt from the snapshot: what memory pressure asks for. */
     public void shed() {
-        synchronized (lock) {
-            graph = null;
-            graphVersion = -1;
-            quality = null;
-            folded = null;
-        }
+        // The fields are volatile and only caches: no lock, so shedding never waits behind a request (E-18).
+        graph = null;
+        graphVersion = -1;
+        quality = null;
+        folded = null;
         cachedSymbols = null;
     }
 

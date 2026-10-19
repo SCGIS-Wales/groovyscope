@@ -84,6 +84,14 @@ public final class MemoryGuard {
         return guard != null && guard.underPressure();
     }
 
+    /** Refuses a whole-workspace step (a compile, a type check) while the installed guard reports pressure. */
+    public static void requireHeadroom() {
+        MemoryGuard guard = INSTALLED.get();
+        if (guard != null && guard.underPressure()) {
+            throw new MemoryPressureException(guard.advice());
+        }
+    }
+
     static Optional<MemoryPoolMXBean> tenuredPool() {
         MemoryPoolMXBean best = null;
         for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {

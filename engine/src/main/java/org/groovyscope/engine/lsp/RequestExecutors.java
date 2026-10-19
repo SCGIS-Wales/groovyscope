@@ -145,6 +145,11 @@ public final class RequestExecutors {
                 return;
             }
             Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+            if (cause instanceof org.groovyscope.engine.concurrent.MemoryPressureException pressure) {
+                outer.completeExceptionally(new ResponseErrorException(new ResponseError(
+                        ResponseErrorCode.RequestFailed, pressure.getMessage(), null)));
+                return;
+            }
             outer.completeExceptionally(!(cause instanceof RejectedExecutionException) ? cause
                     : executor.isShutdown() ? exiting() : busy(executor, lane));
         });
