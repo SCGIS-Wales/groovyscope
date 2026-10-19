@@ -1,6 +1,7 @@
 import java.util.Calendar
 import java.util.GregorianCalendar
 import java.util.Properties
+import java.util.zip.ZipFile
 
 plugins {
     java
@@ -144,6 +145,30 @@ tasks.shadowJar {
 
 tasks.assemble {
     dependsOn(tasks.shadowJar)
+}
+
+// The engine supports Java 17: no class in the shaded JAR may need a newer runtime (a dependency compiled for 21
+// fails only when its classes load, which may be deep in a request). Multi-release entries are exempt.
+val checkJava17Bytecode = tasks.register("checkJava17Bytecode") {
+    val jar = tasks.shadowJar.flatMap { it.archiveFile }
+    inputs.file(jar)
+    doLast {
+        val java17ClassMajor = 61
+        val newer = mutableListOf<String>()
+        ZipFile(jar.get().asFile).use { zip ->
+            for (entry in zip.entries()) {
+                if (!entry.name.endsWith(".class") || entry.name.startsWith("META-INF/versions/")) continue
+                val header = zip.getInputStream(entry).use { it.readNBytes(8) }
+                val major = ((header[6].toInt() and 0xff) shl 8) or (header[7].toInt() and 0xff)
+                if (major > java17ClassMajor) newer += "${entry.name} (class version $major)"
+            }
+        }
+        check(newer.isEmpty()) { "classes that need a Java newer than 17:\n" + newer.take(20).joinToString("\n") }
+    }
+}
+
+tasks.check {
+    dependsOn(checkJava17Bytecode)
 }
 
 // The CycloneDX plugin (3.x) writes build/reports/cyclonedx/bom.json and bom.xml with its defaults.
