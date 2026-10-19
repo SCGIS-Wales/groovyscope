@@ -160,6 +160,11 @@ public final class WorkspaceModel {
         List<Path> roots = new ArrayList<>();
         for (String relative : config.sourceRoots()) {
             Path candidate = root.resolve(relative).normalize();
+            if (!contains(candidate)) {
+                FileWalker.reportOnce("root:" + relative, "source root " + relative + " lies outside the workspace "
+                        + root + "; ignored");
+                continue;
+            }
             if (Files.isDirectory(candidate)) {
                 roots.add(candidate);
             }
@@ -259,7 +264,7 @@ public final class WorkspaceModel {
             uris.add(toUri(file));
         }
         for (String open : openDocuments.keySet()) {
-            if (isGroovyUri(open)) {
+            if (isGroovyUri(open) && admitted(open)) {
                 uris.add(open);
             }
         }
@@ -309,7 +314,7 @@ public final class WorkspaceModel {
         }
         for (Map.Entry<String, String> open : openDocuments.entrySet()) {
             String uri = open.getKey();
-            if (!isGroovyUri(uri) && !(withJava && isJavaUri(uri))) {
+            if (!isGroovyUri(uri) && !(withJava && isJavaUri(uri)) || !admitted(uri)) {
                 continue;
             }
             if (limit > 0 && open.getValue().length() > limit) {
@@ -348,6 +353,19 @@ public final class WorkspaceModel {
                 return true;
             }
         }
+        return false;
+    }
+
+    /**
+     * Whether an open document joins the analysis: only a {@code file:} document inside the workspace. Anything else
+     * (another folder, an {@code untitled:} buffer, a library source the editor opened) is left out, reported once.
+     */
+    boolean admitted(String uri) {
+        if (contains(uri)) {
+            return true;
+        }
+        FileWalker.reportOnce("open:" + uri, "open document " + uri + " is not a file inside the workspace " + root
+                + "; not analysed");
         return false;
     }
 

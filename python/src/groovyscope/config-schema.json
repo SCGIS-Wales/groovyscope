@@ -116,6 +116,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "untrustedHeapCeiling": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*[kKmMgG]$"
+        },
         "enabled": {
           "type": "boolean"
         },

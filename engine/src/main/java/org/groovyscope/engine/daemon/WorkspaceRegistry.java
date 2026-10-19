@@ -39,7 +39,17 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
 
     private volatile EngineConfig config;
     private final Path cacheDir;
+    private final Path onlyRoot;
     private final Map<Path, LanguageServices> services = new ConcurrentHashMap<>();
+
+    /** A workspace other than the one a daemon was started for: its configuration and trust were never read. */
+    public static final class RootRefusedException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+
+        RootRefusedException(String message) {
+            super(message);
+        }
+    }
 
     public WorkspaceRegistry(EngineConfig config) {
         this(config, null);
@@ -47,14 +57,37 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
 
     /** @param cacheDir where per-workspace symbol caches live; {@code null} disables caching */
     public WorkspaceRegistry(EngineConfig config, Path cacheDir) {
+        this(config, cacheDir, null);
+    }
+
+    /**
+     * @param onlyRoot the one workspace this registry serves (its configuration, trust included, is the one given);
+     *     {@code null} serves any root
+     */
+    public WorkspaceRegistry(EngineConfig config, Path cacheDir, Path onlyRoot) {
         this.config = config;
         this.cacheDir = cacheDir;
+        this.onlyRoot = onlyRoot == null ? null : canonical(onlyRoot);
     }
 
     @Override
     public LanguageServices apply(Path root) {
         Path key = root.toAbsolutePath().normalize();
+        if (onlyRoot != null && !onlyRoot.equals(canonical(key))) {
+            throw new RootRefusedException("this daemon serves " + onlyRoot + " with that workspace's configuration "
+                    + "and trust; " + key + " needs its own (run groovyscope there)");
+        }
         return services.computeIfAbsent(key, k -> new LanguageServices(new WorkspaceModel(k, config), new GroovyCompiler(), openStore(k)));
+    }
+
+    /** The real path when it exists (symbolic links resolved), else the normalised absolute path. */
+    static Path canonical(Path path) {
+        Path absolute = path.toAbsolutePath().normalize();
+        try {
+            return absolute.toRealPath();
+        } catch (java.io.IOException e) {
+            return absolute;
+        }
     }
 
     private SymbolStore openStore(Path root) {

@@ -170,7 +170,7 @@ def load_config_with_notes(
     trusted = trust.is_trusted(root, home or Path.home()) or (
         explicit is not None and bool((from_file.get("workspace") or {}).get("trust"))
     )
-    return trust.gate(merged, workspace_file, from_env, defaults, trusted=trusted)
+    return trust.gate(merged, workspace_file, from_env, defaults, trusted=trusted, root=root)
 
 
 def load_config(

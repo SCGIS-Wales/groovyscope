@@ -58,8 +58,10 @@ import org.codehaus.groovy.ast.expr.TernaryExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
+import org.codehaus.groovy.ast.stmt.CatchStatement;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.ast.stmt.IfStatement;
+import org.codehaus.groovy.ast.stmt.ReturnStatement;
 import org.codehaus.groovy.ast.stmt.Statement;
 import org.codehaus.groovy.ast.stmt.WhileStatement;
 import org.codehaus.groovy.control.SourceUnit;
@@ -85,14 +87,31 @@ public final class PracticeFinder {
     /** Reported as the diagnostic source. */
     public static final String SOURCE = "groovyscope";
 
-    /** A finding with an optional fix. */
-    public record Practice(Diagnostic diagnostic, String fixTitle, List<TextEdit> fix) {
+    /** Another way to fix a finding, offered as a code action next to the first (never applied in bulk). */
+    public record Alternative(String title, List<TextEdit> edits) {
+        public Alternative {
+            edits = List.copyOf(edits);
+        }
+    }
+
+    /** A finding with an optional fix, and other fixes when the intent is not clear from the code. */
+    public record Practice(Diagnostic diagnostic, String fixTitle, List<TextEdit> fix, List<Alternative> alternatives) {
         public Practice {
             fix = List.copyOf(fix);
+            alternatives = List.copyOf(alternatives);
+        }
+
+        public Practice(Diagnostic diagnostic, String fixTitle, List<TextEdit> fix) {
+            this(diagnostic, fixTitle, fix, List.of());
         }
 
         public boolean fixable() {
             return !fix.isEmpty();
+        }
+
+        /** Whether the fix keeps behaviour, so the bulk fix may apply it (see {@link PracticeCatalog#safety}). */
+        public boolean preserving() {
+            return PracticeCatalog.PRESERVING.equals(PracticeCatalog.bundled().safety(diagnostic.code()));
         }
     }
 
@@ -113,9 +132,14 @@ public final class PracticeFinder {
             "char");
     static final Set<String> FILE_TYPES = Set.of("java.io.File", "java.nio.file.Path");
     static final Set<String> LOG_METHODS = Set.of("trace", "debug", "info", "warn", "error");
-    static final Set<String> LOGGER_TYPES = Set.of("org.slf4j.Logger", "java.util.logging.Logger",
-            "org.apache.logging.log4j.Logger", "org.apache.commons.logging.Log");
-    static final Set<String> LOGGER_NAMES = Set.of("log", "logger", "LOG", "LOGGER");
+    /** Logger types and their library; only SLF4J and Log4j2 take {@code {}} placeholders. */
+    static final java.util.Map<String, String> LOGGER_TYPES = java.util.Map.of("org.slf4j.Logger", "slf4j",
+            "org.apache.logging.log4j.Logger", "log4j2", "java.util.logging.Logger", "jul",
+            "org.apache.commons.logging.Log", "commons", "org.apache.log4j.Logger", "log4j");
+    /** Groovy's logging annotations: each adds a {@code log} field and guards every call with the level check. */
+    static final java.util.Map<String, String> LOGGING_ANNOTATIONS = java.util.Map.of("Slf4j", "slf4j", "Log4j2",
+            "log4j2", "Log", "jul", "Commons", "commons", "Log4j", "log4j");
+    static final Set<String> PLACEHOLDER_LIBRARIES = Set.of("slf4j", "log4j2");
     static final Set<String> SQL_METHODS = Set.of("rows", "eachRow", "firstRow", "execute", "executeUpdate",
             "executeInsert", "query", "call");
     static final Set<String> EVAL_METHODS = Set.of("me", "x", "xy", "xyz");
@@ -285,6 +309,11 @@ public final class PracticeFinder {
         private final boolean production;
         /** Elvis expressions passed straight to an empty-rejecting parser (identity, not equality). */
         private final Set<Expression> parsed = Collections.newSetFromMap(new IdentityHashMap<>());
+        /** Divisions whose result is narrowed to an integral type (truncated anyway): not GS001 findings. */
+        private final Set<Expression> narrowed = Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Set<Object> caught = Collections.newSetFromMap(new IdentityHashMap<>());
+        private MethodNode currentMethod;
+        private ClassNode currentClass;
         private boolean inSpock;
         private String block = "";
 
@@ -312,8 +341,10 @@ public final class PracticeFinder {
             }
             for (ClassNode classNode : module.getClasses()) {
                 inSpock = isSpecification(classNode);
+                currentClass = classNode;
                 visitClass(classNode);
             }
+            currentClass = null;
         }
 
         private void visitImport(ImportNode importNode) {
@@ -337,6 +368,28 @@ public final class PracticeFinder {
         }
 
         void report(String code, ASTNode node, String message, String fixTitle, List<TextEdit> fix) {
+            report(code, node, message, fixTitle, fix, List.of());
+        }
+
+        /** {@link #report} with the configured severity lowered to at most {@code ceiling}. */
+        void reportAtMost(Severity ceiling, String code, ASTNode node, String message, String fixTitle,
+                List<TextEdit> fix) {
+            Severity configured = severity(code, config);
+            if (configured == null) {
+                return;
+            }
+            Severity severity = configured.ordinal() >= ceiling.ordinal() ? configured : ceiling;
+            Range range = AstRanges.rangeOf(node);
+            if (range == null) {
+                return;
+            }
+            String title = PracticeCatalog.bundled().find(code).map(PracticeCatalog.Entry::title).orElse(code);
+            out.add(new Practice(new Diagnostic(uri, range, severity, SOURCE, code, title + ": " + message),
+                    fixTitle, fix, List.of()));
+        }
+
+        void report(String code, ASTNode node, String message, String fixTitle, List<TextEdit> fix,
+                List<Alternative> alternatives) {
             Severity severity = severity(code, config);
             Range range = AstRanges.rangeOf(node);
             if (severity == null || range == null) {
@@ -344,7 +397,7 @@ public final class PracticeFinder {
             }
             String title = PracticeCatalog.bundled().find(code).map(PracticeCatalog.Entry::title).orElse(code);
             out.add(new Practice(new Diagnostic(uri, range, severity, SOURCE, code, title + ": " + message),
-                    fixTitle, fix));
+                    fixTitle, fix, alternatives));
         }
 
         String source(ASTNode node) {
@@ -361,9 +414,12 @@ public final class PracticeFinder {
             for (AnnotationNode annotation : node.getAnnotations()) {
                 String name = annotation.getClassNode().getNameWithoutPackage();
                 if (production && Set.of("Grab", "Grapes", "GrabResolver", "GrabConfig", "GrabExclude").contains(name)) {
-                    String text = source(annotation);
-                    report("GS007", annotation, "@" + name + " resolves dependencies at compile time",
-                            "Remove @" + name, text == null ? List.of() : List.of(replace(annotation, "")));
+                    // No automatic fix: removing the annotation leaves code that no longer compiles.
+                    String coordinates = grabCoordinates(annotation);
+                    report("GS007", annotation, "@" + name + " resolves dependencies at compile time"
+                            + (coordinates == null ? "; declare the dependency in the build instead"
+                                    : "; declare implementation '" + coordinates + "' in the build instead"), null,
+                            List.of());
                 }
                 if (name.equals("SafeRegex") && config.groovy().mustCompileOnGroovy5()) {
                     report("GS010", annotation, "@SafeRegex is Groovy 6 only, but groovy.compat includes 5.x", null,
@@ -376,6 +432,21 @@ public final class PracticeFinder {
                 }
             }
             super.visitAnnotations(node);
+        }
+
+        /** {@code group:module:version} of a {@code @Grab}, from its value or its group, module and version. */
+        static String grabCoordinates(AnnotationNode annotation) {
+            Expression value = annotation.getMember("value");
+            if (value instanceof ConstantExpression constant && constant.getValue() instanceof String text) {
+                return text;
+            }
+            Expression group = annotation.getMember("group");
+            Expression module = annotation.getMember("module");
+            Expression version = annotation.getMember("version");
+            if (group instanceof ConstantExpression g && module instanceof ConstantExpression m) {
+                return g.getText() + ":" + m.getText() + (version instanceof ConstantExpression v ? ":" + v.getText() : "");
+            }
+            return null;
         }
 
         @Override
@@ -411,13 +482,18 @@ public final class PracticeFinder {
         @Override
         public void visitBinaryExpression(BinaryExpression expression) {
             int op = expression.getOperation().getType();
-            if (op == Types.DIVIDE && named(typeOf(expression.getLeftExpression()), INTEGRAL)
+            if (op == Types.ASSIGN && named(typeOf(expression.getLeftExpression()), INTEGRAL)) {
+                narrowed.add(expression.getRightExpression());
+            }
+            if (op == Types.DIVIDE && !narrowed.contains(expression)
+                    && named(typeOf(expression.getLeftExpression()), INTEGRAL)
                     && named(typeOf(expression.getRightExpression()), INTEGRAL)) {
                 String left = source(expression.getLeftExpression());
                 String right = source(expression.getRightExpression());
                 List<TextEdit> fix = left == null || right == null ? List.of()
                         : List.of(replace(expression, wrap(expression.getLeftExpression(), left) + ".intdiv(" + right + ")"));
-                report("GS001", expression, "both operands are integral, so / yields a BigDecimal", "Use intdiv", fix);
+                report("GS001", expression, "both operands are integral, so / yields a BigDecimal (a fraction); intdiv "
+                        + "truncates, which changes the value, so only where truncation is meant", "Use intdiv", fix);
             }
             if (op == Types.ASSIGN && !(expression instanceof DeclarationExpression)) {
                 checkPrimitiveSafeNavigation(expression.getLeftExpression(), expression.getRightExpression());
@@ -432,6 +508,10 @@ public final class PracticeFinder {
 
         @Override
         public void visitDeclarationExpression(DeclarationExpression expression) {
+            if (!expression.isMultipleAssignmentDeclaration() && !expression.getVariableExpression().isDynamicTyped()
+                    && named(expression.getVariableExpression().getOriginType(), INTEGRAL)) {
+                narrowed.add(expression.getRightExpression());
+            }
             if (!expression.isMultipleAssignmentDeclaration()) {
                 checkPrimitiveSafeNavigation(expression.getVariableExpression(), expression.getRightExpression());
                 String text = source(expression);
@@ -454,6 +534,30 @@ public final class PracticeFinder {
                 report("GS003", value, "null when the receiver is null, which a " + type.getName() + " cannot hold",
                         "Default with ?: " + fallback, fix);
             }
+        }
+
+        @Override
+        public void visitCastExpression(CastExpression expression) {
+            if (named(expression.getType(), INTEGRAL)) {
+                narrowed.add(expression.getExpression());
+            }
+            super.visitCastExpression(expression);
+        }
+
+        @Override
+        public void visitReturnStatement(ReturnStatement statement) {
+            if (currentMethod != null && named(currentMethod.getReturnType(), INTEGRAL)) {
+                narrowed.add(statement.getExpression());
+            }
+            super.visitReturnStatement(statement);
+        }
+
+        @Override
+        protected void visitConstructorOrMethod(MethodNode node, boolean isConstructor) {
+            MethodNode saved = currentMethod;
+            currentMethod = node;
+            super.visitConstructorOrMethod(node, isConstructor);
+            currentMethod = saved;
         }
 
         @Override
@@ -517,8 +621,14 @@ public final class PracticeFinder {
                 Expression whole = condition.getExpression();
                 List<TextEdit> fix = text == null ? List.of()
                         : List.of(replace(whole, text + (negated ? " == null" : " != null")));
-                report("GS004", whole, "a File or Path is truthy only if it exists (Groovy 5)",
-                        negated ? "Compare with == null" : "Compare with != null", fix);
+                boolean path = "java.nio.file.Path".equals(typeOf(tested).getName());
+                String exists = path ? "java.nio.file.Files.exists(" + text + ")" : wrap(tested, text) + ".exists()";
+                List<Alternative> alternatives = text == null ? List.of()
+                        : List.of(new Alternative(negated ? "Test that it does not exist" : "Test that it exists",
+                                List.of(replace(whole, (negated ? "!" : "") + exists))));
+                report("GS004", whole, "a File or Path is truthy only if it exists (Groovy 5); say whether you mean "
+                        + "present (!= null) or existing (exists())",
+                        negated ? "Compare with == null" : "Compare with != null", fix, alternatives);
             }
         }
 
@@ -585,10 +695,12 @@ public final class PracticeFinder {
                 return;
             }
             Expression receiver = call.getObjectExpression();
-            boolean logger = named(typeOf(receiver), LOGGER_TYPES)
-                    || receiver instanceof VariableExpression variable && LOGGER_NAMES.contains(variable.getName());
-            if (!logger) {
-                return;
+            ClassNode type = typeOf(receiver);
+            String annotated = annotatedLogger(receiver);
+            String library = type != null && LOGGER_TYPES.containsKey(type.getName()) ? LOGGER_TYPES.get(type.getName())
+                    : annotated;
+            if (library == null) {
+                return; // a receiver merely named log is not proven to be a logger
             }
             StringBuilder message = new StringBuilder("'");
             List<String> arguments = new ArrayList<>();
@@ -601,8 +713,12 @@ public final class PracticeFinder {
                 }
                 message.append(literal);
                 if (i < gstring.getValues().size()) {
-                    String value = source(gstring.getValue(i));
-                    if (value == null) {
+                    Expression interpolated = gstring.getValue(i);
+                    String value = source(interpolated);
+                    // A lazy ${-> x} would log the closure itself, and SLF4J takes a trailing Throwable as the
+                    // exception (a stack trace, and a literal {} left in the message).
+                    if (value == null || interpolated instanceof ClosureExpression
+                            || i == gstring.getValues().size() - 1 && mayBeThrowable(interpolated)) {
                         fixable = false;
                     }
                     arguments.add(value);
@@ -610,11 +726,60 @@ public final class PracticeFinder {
                 }
             }
             message.append("'");
-            List<TextEdit> fix = fixable
+            List<TextEdit> fix = fixable && PLACEHOLDER_LIBRARIES.contains(library)
                     ? List.of(replace(gstring, message + (arguments.isEmpty() ? "" : ", " + String.join(", ", arguments))))
                     : List.of();
-            report("GS005", gstring, "the GString is built even when " + name + " is disabled",
-                    "Use {} placeholders", fix);
+            if (annotated != null) {
+                // The logging AST transformation wraps the call in a level check, so nothing is built in vain.
+                reportAtMost(Severity.INFORMATION, "GS005", gstring, "the logging annotation already skips the call "
+                        + "when " + name + " is disabled; " + (PLACEHOLDER_LIBRARIES.contains(library)
+                                ? "{} placeholders keep the message template constant and interpolated values (such as "
+                                        + "secrets) out of it"
+                                : "keep interpolated values (such as secrets) out of the message"),
+                        PLACEHOLDER_LIBRARIES.contains(library) ? "Use {} placeholders" : null, fix);
+                return;
+            }
+            report("GS005", gstring, "the GString is built even when " + name + " is disabled"
+                    + (PLACEHOLDER_LIBRARIES.contains(library) ? "" : "; guard the call with the level check"),
+                    PLACEHOLDER_LIBRARIES.contains(library) ? "Use {} placeholders" : null, fix);
+        }
+
+        /** True unless the value's declared type proves it is not a Throwable (a catch parameter always may be). */
+        private boolean mayBeThrowable(Expression value) {
+            if (value instanceof VariableExpression variable && caught.contains(variable.getAccessedVariable())) {
+                return true;
+            }
+            ClassNode type = typeOf(value);
+            if (type == null) {
+                return false;
+            }
+            String name = type.getName();
+            return type.isDerivedFrom(ClassHelper.make(Throwable.class)) || name.endsWith("Exception")
+                    || name.endsWith("Error") || name.endsWith("Throwable");
+        }
+
+        @Override
+        public void visitCatchStatement(CatchStatement statement) {
+            caught.add(statement.getVariable());
+            super.visitCatchStatement(statement);
+        }
+
+        /** The library of the logging annotation on the enclosing class, when the receiver is the field it adds. */
+        private String annotatedLogger(Expression receiver) {
+            if (currentClass == null || !(receiver instanceof VariableExpression variable)) {
+                return null;
+            }
+            for (ClassNode holder = currentClass; holder != null; holder = holder.getOuterClass()) {
+                for (AnnotationNode annotation : holder.getAnnotations()) {
+                    String library = LOGGING_ANNOTATIONS.get(annotation.getClassNode().getNameWithoutPackage());
+                    Expression field = annotation.getMember("value");
+                    String name = field instanceof ConstantExpression constant ? String.valueOf(constant.getValue()) : "log";
+                    if (library != null && name.equals(variable.getName())) {
+                        return library;
+                    }
+                }
+            }
+            return null;
         }
 
         private void checkEvaluation(MethodCallExpression call, String name) {

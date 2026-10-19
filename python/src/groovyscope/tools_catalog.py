@@ -111,3 +111,74 @@ def v3_matches(names: tuple[str, ...]) -> list[str]:
 def description(name: str, fallback: str | None = None) -> str:
     """The one-line description the agent reads for ``name``."""
     return DESCRIPTIONS.get(name) or (fallback or name).strip()
+
+
+# Shell commands an agent may run without asking (Kiro `toolsSettings.shell.allowedCommands`, matched whole). Only
+# what reads, or runs the project's tests through Gradle (as the owner's plan allows): never `trust`, `classpath`
+# (runs build scripts), `verify` (runs the build), `jdk`, `fetch`, `kiro`, `fix --apply`, `format --apply`,
+# `checkup --fix`, `graph` writing a file, `doctor --bundle`, another Gradle task or flag, or `git diff --output`. A
+# value may not start with `-` (so it is never an option) nor hold a shell metacharacter (`;`, `&`, `|`, `$`, a
+# backquote, redirections, brackets) or a glob (`*`, `?`, `[`), which the shell would expand into file names chosen
+# by the repository, such as one named `--apply`.
+SHELL_VALUE = r"[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*"
+SAFE_GROOVYSCOPE_OPTIONS: dict[str, tuple[str, ...]] = {
+    "check": ("--profile V", "--include V", "--json", "--format (?:text|json|short|sarif)", "--import-sarif V"),
+    "review": ("--changed", "--base V", "--staged", "--top V", "--json"),
+    "test-results": ("--limit V", "--json"),
+    "explain": ("--json",),
+    "explain-code": ("--json",),
+    "naming": ("--json",),
+    "coverage": ("--json",),
+    "impact": ("--change V", "--json"),
+    "callgraph": ("--direction V", "--depth V", "--json"),
+    # without a stdout format, graph writes a draw.io file: the format comes first
+    "graph --format (?:mermaid|json)": ("--path V", "--kinds V", "--depth V", "--level V", "--max-nodes V"),
+    "fix": ("--code V", "--changed", "--base V", "--json"),
+    "format": ("--json",),
+    "checkup": ("--agent", "--json"),
+    "logs": ("-n V", "--lines V", "-f", "--follow", "--kiro"),
+    "version": (),  # no options and no values
+    "doctor": (),
+    "daemon status": (),
+}
+SAFE_GRADLE_FLAGS = ("offline", "continue", "info", "quiet", "warn", "stacktrace", "rerun-tasks", "console=plain")
+SAFE_OTHER_COMMANDS = (
+    r"\./gradlew (?:test|check|jacocoTestReport)(?: --(?:" + "|".join(SAFE_GRADLE_FLAGS) + "))*",
+    "git status",
+    r"git diff(?: (?:--stat|--name-only|--name-status|--cached|--staged|--no-color|--numstat|--shortstat|--|"
+    r"-U[0-9]+|--unified=[0-9]+|" + SHELL_VALUE + "))*",
+)
+# The same for the V3 engine (`permissions.rules` shell `match`, globs). Whether V3 splits `a; b` before matching is
+# not confirmed, so these are exact commands with no wildcard; anything longer asks.
+SAFE_SHELL_GLOBS = (
+    "groovyscope check",
+    "groovyscope check --json",
+    "groovyscope review",
+    "groovyscope review --changed",
+    "groovyscope review --changed --json",
+    "groovyscope test-results",
+    "groovyscope naming",
+    "groovyscope coverage",
+    "groovyscope version",
+    "groovyscope doctor",
+    "groovyscope checkup --agent",
+    "groovyscope daemon status",
+    "./gradlew test",
+    "./gradlew check",
+    "./gradlew jacocoTestReport",
+    "git status",
+    "git diff",
+    "git diff --stat",
+)
+
+
+def safe_shell_commands() -> tuple[str, ...]:
+    """The V2 ``allowedCommands`` regular expressions (see SAFE_GROOVYSCOPE_OPTIONS)."""
+    patterns = []
+    for command, options in SAFE_GROOVYSCOPE_OPTIONS.items():
+        words = [option.replace(" V", " " + SHELL_VALUE) for option in options]
+        if options:
+            words.append(SHELL_VALUE)
+        tail = f"(?: (?:{'|'.join(words)}))*" if words else ""
+        patterns.append(f"groovyscope {command}{tail}")
+    return (*patterns, *SAFE_OTHER_COMMANDS)

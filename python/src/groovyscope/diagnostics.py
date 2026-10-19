@@ -28,26 +28,58 @@ KIRO_LOG_FILES = ("lsp.log", "mcp.log")  # never kiro-chat.log: it holds convers
 KIRO_MARKERS = ("groovyscope", "groovy")
 ENV_KEYS = ("JAVA_HOME", "PATH", "KIRO_HOME", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "SHELL", "TERM")
 SECRET_HINTS = ("TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL")
+CONTROL_LIMIT = 0x20  # code points below are C0 control characters
+DELETE = 0x7F
+LINE_BREAKS = "\x85\u2028\u2029"  # NEL and the Unicode line and paragraph separators: str.splitlines breaks on them
 
 
 def level_of(name: str | None, default: int = logging.WARNING) -> int:
     return LEVELS.get((name or "").lower(), default)
 
 
+def escape_controls(text: str) -> str:
+    """Control characters (CR, LF and the rest of C0, DEL, NEL and the Unicode line separators) as escapes, so a file
+    name or message read from the workspace cannot start a line of its own in a log."""
+    return "".join(
+        ch
+        if ch == "\t" or (ord(ch) >= CONTROL_LIMIT and ord(ch) != DELETE and ch not in LINE_BREAKS)
+        else ch.encode("unicode_escape").decode()
+        for ch in text
+    )
+
+
+def one_line(record: logging.LogRecord) -> logging.LogRecord:
+    """A logging filter: the record's message and traceback escaped onto one line each (see escape_controls)."""
+    record.msg = escape_controls(record.getMessage())
+    record.args = None
+    if record.exc_info:
+        record.exc_text = escape_controls(logging.Formatter().formatException(record.exc_info))
+        record.exc_info = None
+    return record
+
+
 def configure(level: int, log_file: Path | None = None) -> None:
-    """Send groovyscope's log records to stderr at ``level`` and, when given, to ``log_file`` (appending)."""
+    """Send groovyscope's log records to stderr at ``level`` and, when given, to ``log_file`` (appending). A log
+    file that cannot be opened is reported once and left out; logging goes on to stderr."""
     logger = logging.getLogger(ROOT_LOGGER)
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         handler.close()
     stderr = logging.StreamHandler(sys.stderr)
     stderr.setFormatter(logging.Formatter(FORMAT if level <= logging.INFO else "%(message)s"))
+    stderr.addFilter(one_line)
     logger.addHandler(stderr)
     if log_file is not None:
-        log_file.expanduser().parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file.expanduser(), encoding="utf-8")
-        file_handler.setFormatter(logging.Formatter(FORMAT))
-        logger.addHandler(file_handler)
+        try:
+            log_file.expanduser().parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(log_file.expanduser(), encoding="utf-8")
+        except OSError as exc:
+            stderr.handle(logging.makeLogRecord({"msg": f"groovyscope: cannot write the log file {log_file}: {exc}",
+                                                 "levelno": logging.WARNING, "levelname": "WARNING"}))  # fmt: skip
+        else:
+            file_handler.setFormatter(logging.Formatter(FORMAT))
+            file_handler.addFilter(one_line)
+            logger.addHandler(file_handler)
     logger.setLevel(level)
     logger.propagate = False
 

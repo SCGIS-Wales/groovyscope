@@ -56,7 +56,7 @@ class DynamicCodeFinderSpec extends Specification {
     def 'def on public API, metaclass writes, Eval and process execution are found'() {
         given:
         def services = Fixtures.services('basic-app')
-        String uri = 'file:///virtual/Dyn.groovy'
+        String uri = Fixtures.uri('basic-app', 'src/main/groovy/app/Dyn.groovy')
         services.workspace().open(uri, '''
             class Open {
                 def api(x) { x }
@@ -88,7 +88,7 @@ class DynamicCodeFinderSpec extends Specification {
     def 'execute() on a runner is not a process; on strings, lists and untyped values it is'() {
         given:
         def services = Fixtures.services('basic-app')
-        String uri = 'file:///virtual/Exec.groovy'
+        String uri = Fixtures.uri('basic-app', 'src/main/groovy/app/Exec.groovy')
         services.workspace().open(uri, '''
             class Runner { int execute() { 0 } }
             class Uses {

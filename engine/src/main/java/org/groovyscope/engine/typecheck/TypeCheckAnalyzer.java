@@ -110,6 +110,17 @@ public final class TypeCheckAnalyzer {
         return analyze(sources, classpath, trust, settings, EngineConfig.Groovy.DEFAULTS, Set.of());
     }
 
+    /** What became of one document in a type check. */
+    public enum Status { CHECKED, SKIPPED, TIMED_OUT, CRASHED }
+
+    /** Type-check errors per URI and whether each document was checked at all. */
+    public record Result(Map<String, List<Diagnostic>> diagnostics, Map<String, Status> status) {
+    }
+
+    /** Only Groovy's own static type checker, none of the Groovy 6 extensions: what a typing verdict needs. */
+    public static final EngineConfig.TypeCheck CORE_ONLY = new EngineConfig.TypeCheck("off", false, false, false,
+            false, false);
+
     /**
      * Type-check errors per URI. Files in {@code skip} (the ones the main compile could not resolve; it already
      * reports them) are left out, and files whose names stop resolving are dropped and the rest retried, so one
@@ -117,13 +128,30 @@ public final class TypeCheckAnalyzer {
      */
     public Map<String, List<Diagnostic>> analyze(Map<String, String> sources, List<Path> classpath, boolean trust,
             EngineConfig.TypeCheck settings, EngineConfig.Groovy groovy, Set<String> skip) {
+        return check(sources, classpath, trust, settings, groovy, skip).diagnostics();
+    }
+
+    /**
+     * {@link #analyze} with each document's {@link Status}: only a {@code CHECKED} document with no error passed. A
+     * check that could not run (a checker that failed to load, a compiler crash) is a {@code typecheck-failed}
+     * warning and {@code CRASHED}, never an empty, clean-looking result.
+     */
+    public Result check(Map<String, String> sources, List<Path> classpath, boolean trust,
+            EngineConfig.TypeCheck settings, EngineConfig.Groovy groovy, Set<String> skip) {
+        return check(sources, classpath, trust, extensionsFor(settings, groovy), skip);
+    }
+
+    /** {@link #check} with the checker extensions named directly. */
+    Result check(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions,
+            Set<String> skip) {
         Map<String, List<Diagnostic>> diagnostics = new HashMap<>();
+        Map<String, Status> status = new HashMap<>();
         for (String uri : sources.keySet()) {
             diagnostics.put(uri, new ArrayList<>());
+            status.put(uri, Status.SKIPPED);
         }
         Map<String, String> remaining = new LinkedHashMap<>(sources);
         remaining.keySet().removeAll(skip);
-        List<String> extensions = extensionsFor(settings, groovy);
         long started = System.nanoTime();
         long deadline = Long.MAX_VALUE;
         for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
@@ -132,7 +160,8 @@ public final class TypeCheckAnalyzer {
                 // unresolved go without a type check rather than holding every request for minutes.
                 org.groovyscope.engine.log.EngineLog.warn("type check stopped after %d round(s): %d file(s) unchecked",
                         attempt, remaining.size());
-                return diagnostics;
+                remaining.keySet().forEach(uri -> status.put(uri, Status.TIMED_OUT));
+                return new Result(diagnostics, status);
             }
             org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             Pass pass = compileOnce(remaining, classpath, trust, extensions);
@@ -142,21 +171,31 @@ public final class TypeCheckAnalyzer {
             if (pass.crash != null) {
                 String first = remaining.keySet().iterator().next();
                 diagnostics.get(first).add(new Diagnostic(first, org.groovyscope.engine.model.Range.of(0, 0, 0, 1),
-                        Severity.WARNING, SOURCE, "typecheck-failed", "the type checker failed: " + pass.crash));
-                return diagnostics;
+                        Severity.WARNING, SOURCE, "typecheck-failed", "the type checker failed: " + pass.crash.getMessage()));
+                remaining.keySet().forEach(uri -> status.put(uri, Status.CRASHED));
+                return new Result(diagnostics, status);
             }
             if (pass.checked || pass.broken.isEmpty()) {
                 for (Map.Entry<String, List<Diagnostic>> entry : pass.diagnostics.entrySet()) {
                     diagnostics.get(entry.getKey()).addAll(entry.getValue());
                 }
-                return diagnostics;
+                if (pass.incomplete != null) {
+                    String first = remaining.keySet().iterator().next();
+                    diagnostics.get(first).add(new Diagnostic(first, org.groovyscope.engine.model.Range.of(0, 0, 0, 1),
+                            Severity.WARNING, SOURCE, "typecheck-incomplete", "a type checker failed part-way (only the "
+                                    + "errors found before are reported): " + pass.incomplete));
+                }
+                Status outcome = pass.incomplete == null ? Status.CHECKED : Status.CRASHED;
+                remaining.keySet().forEach(uri -> status.put(uri, outcome));
+                return new Result(diagnostics, status);
             }
             remaining.keySet().removeAll(pass.broken); // resolution errors: the compile pass reports those
         }
-        return diagnostics;
+        return new Result(diagnostics, status);
     }
 
-    private record Pass(boolean checked, Set<String> broken, Map<String, List<Diagnostic>> diagnostics, Exception crash) {
+    private record Pass(boolean checked, Set<String> broken, Map<String, List<Diagnostic>> diagnostics, Exception crash,
+            String incomplete) {
     }
 
     private Pass compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions) {
@@ -185,7 +224,7 @@ public final class TypeCheckAnalyzer {
         } catch (CompilationFailedException e) {
             // Errors are read from the collectors below.
         } catch (RuntimeException | LinkageError | AssertionError e) {
-            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(e.toString(), e));
+            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(e.toString(), e), null);
         } finally {
             closeQuietly(loader);
             if (transformLoader != loader) {
@@ -196,6 +235,14 @@ public final class TypeCheckAnalyzer {
         for (String uri : sources.keySet()) {
             found.put(uri, new ArrayList<>());
         }
+        // A checker extension that could not load means static checking did not run as asked: a failed check, not a
+        // clean one. An exception while checking (a checker's own bug) leaves the errors found so far, marked
+        // incomplete.
+        String unloaded = unloadedExtension(unit.getErrorCollector(), extensions);
+        if (unloaded != null) {
+            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(unloaded), null);
+        }
+        String incomplete = exceptionWhileChecking(unit.getErrorCollector());
         collect(unit.getErrorCollector(), sources, found);
         for (SourceUnit source : units.values()) {
             collect(source.getErrorCollector(), sources, found);
@@ -210,7 +257,13 @@ public final class TypeCheckAnalyzer {
                 }
             }
         }
-        return new Pass(checked, broken, found, null);
+        if (!checked && broken.isEmpty() && incomplete == null) {
+            // stopped before static checking with nothing to show for it: a failed check, never a clean one
+            String other = otherError(unit.getErrorCollector());
+            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(other != null ? other
+                    : "the compile stopped before static checking"), null);
+        }
+        return new Pass(checked, broken, found, null, incomplete);
     }
 
     /** The checker that produced a static type checking message, or {@code typecheck} for the core checker. */
@@ -244,6 +297,51 @@ public final class TypeCheckAnalyzer {
     static String stripPrefix(String message) {
         String prefix = "[Static type checking] - ";
         return message.startsWith(prefix) ? message.substring(prefix.length()) : message;
+    }
+
+    /** A checker extension the compiler could not load, as its message; null when every one loaded. */
+    static String unloadedExtension(ErrorCollector collector, List<String> extensions) {
+        String other = otherError(collector);
+        if (other == null) {
+            return null;
+        }
+        if (other.contains("type checking extension")) {
+            return other;
+        }
+        for (String extension : extensions) {
+            int arguments = extension.indexOf('(');
+            if (other.contains(arguments < 0 ? extension : extension.substring(0, arguments))) {
+                return other;
+            }
+        }
+        return null;
+    }
+
+    /** The first error that is neither a syntax error nor an exception, as text; null when there is none. */
+    static String otherError(ErrorCollector collector) {
+        if (collector == null || collector.getErrors() == null) {
+            return null;
+        }
+        for (Message message : collector.getErrors()) {
+            if (message instanceof org.codehaus.groovy.control.messages.SimpleMessage simple
+                    && !(message instanceof SyntaxErrorMessage)) {
+                return simple.getMessage();
+            }
+        }
+        return null;
+    }
+
+    /** An exception raised while checking (not about a line of code), as text; null when there is none. */
+    static String exceptionWhileChecking(ErrorCollector collector) {
+        if (collector == null || collector.getErrors() == null) {
+            return null;
+        }
+        for (Message message : collector.getErrors()) {
+            if (message instanceof org.codehaus.groovy.control.messages.ExceptionMessage exception) {
+                return String.valueOf(exception.getCause());
+            }
+        }
+        return null;
     }
 
     private static void collect(ErrorCollector collector, Map<String, String> sources, Map<String, List<Diagnostic>> out) {

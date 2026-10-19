@@ -394,7 +394,7 @@ Branch `docs/phase-7`. Model `haiku` for counts and tables, `sonnet` for steerin
 Tick each box in the phase PR.
 
 - [x] Phase 0: baseline and probes (0.1 to 0.5)
-- [ ] Phase 1: security and fix safety (1.1 to 1.11)
+- [x] Phase 1: security and fix safety (1.1 to 1.12)
 - [ ] Phase 2: concurrency and resilience (engine E-11 to E-28, Python P-11 to P-27, P9/P10 rest)
 - [ ] Phase 3: release, build and supply chain (D-01 to D-23, Q-15, P-31)
 - [ ] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27)
@@ -427,3 +427,28 @@ New item for Phase 1:
 - **Problem:** an extension that fails to load, or any other non syntax message, stops the compile before static checking, and the result is an empty list: the user is told the code type checks.
 - **Change:** turn every other error message into one `typecheck-failed` warning on the first affected document naming the cause; a unit that did not reach `INSTRUCTION_SELECTION` without resolution errors is a failed check, not a clean one.
 - **Tests:** an extension name that cannot load yields `typecheck-failed`; an integration test through the shaded JAR finds `day.noSuchThing()`.
+
+### Phase 1 (19 October 2026)
+
+| Item | Result |
+|---|---|
+| 1.1 Trust and logs | Confirmed. Gated keys added (`logging.file`, `jdk.autoProvision`, `jdk.vendor`, `daemon.heapDumpOnOutOfMemory`); heap capped at `daemon.untrustedHeapCeiling`, report paths kept in the workspace; the engine log confined to the cache or temporary folder, opened without following links, 0600, rotated; records escaped to one line on both sides. |
+| 1.2 Agent allowlist | Confirmed. The broad `groovyscope .*` and `./gradlew .*` patterns matched `groovyscope trust` and any Gradle task; replaced by option lists for each read-only command, retired on repair. `trust` refuses a non terminal and an agent session unless `--yes-i-am-the-user`. |
+| 1.3, 1.6 Quote and map key fixes | Confirmed. The quote fix is now AST based and escapes for single quotes; the map key fix wraps in parentheses. |
+| 1.4 Fix safety | Confirmed. Each catalogue entry carries `safety`. Decisions: entries with no fix are `none`; `@CompileDynamic` actions and runtime profile fixes count as preserving (they annotate or follow the profile's own advice). GS004 offers `exists()` as an alternative; GS007 has no fix. |
+| 1.5, 1.12 Type check verdicts | Confirmed. Groovy 6.0.0's `FormatStringChecker` throws a `NullPointerException` on an unresolved method call; the analyser now reports `typecheck-incomplete` beside the real errors, and verdicts use Groovy's own checker alone (`CORE_ONLY`). A check that did not run gives no verdict and no annotation. |
+| 1.7 Logging | Confirmed. The library comes from the declared type or the class's logging annotation; name only matching dropped. |
+| 1.8 Formatter | Confirmed. Strings, GStrings and block comments are lexer marked and never edited; CRLF kept per line. |
+| 1.9 Daemon root | Confirmed. A daemon serves only the root it was started with. |
+| 1.10 Outside sources | Confirmed. Source roots and open documents outside the workspace are skipped. |
+| 1.11 Shaded JAR | Confirmed (probe 0.2). Service files and Groovy extension descriptors are merged; an integration test checks `Path.text` and `LocalDate + 1` through the JAR. The manual ELK provider registration stays: it costs nothing and keeps unshaded runs working. |
+
+Independent review of the Phase 1 diff (an `opus` subagent, without the author's notes), all acted on before merge:
+
+- The allowlist accepted globs (`groovyscope fix *` expands to a repository file named `--apply`), `verify` (runs the build), `graph` without a stdout format (writes a draw.io file) and any Gradle flag (`--scan` uploads). Globs, `verify` and other Gradle flags are gone; `graph` must name `--format mermaid|json`; the V3 rules are exact commands, since V3's handling of `a; b` is unconfirmed. `./gradlew test`, `check` and `jacocoTestReport` stay approved as section 4 decides, although they run the project's build scripts: **owner to confirm**.
+- `@CompileStatic` verdicts: a class right after the `package` line got its annotation above the inserted import (the trial did not parse and every class "failed"), and an error inside an anonymous class was charged to that class. Imports now always read before annotation lines, an unparsable trial gives no verdict, and an error counts against the enclosing class the annotation covers.
+- GS005's `{}` fix changed behaviour for a lazy `${-> x}` and a trailing Throwable (SLF4J takes it as the exception); neither gets the fix now.
+- The formatter's spans were in code points (the ANTLR stream) against UTF-16 line offsets, so an emoji earlier in the file shifted them; now mapped.
+- The engine log accepted the shared temporary directory, was not re-checked when reopened, and kept the previous file after a refused reconfigure; NEL and the Unicode line separators were not escaped (Python's `splitlines` breaks on them). All fixed; `daemon.logMaxBytes` was declared twice and is now the one key for both logs.
+- Any non syntax message was read as a checker that failed to load; now only a message about a type checking extension is, and a compile that stopped before static checking with nothing to show is a failed check, never a clean one.
+- Kept as is: Groovy 6.0.0's `FormatStringChecker` NPE appears only beside a real error and is reported as `typecheck-incomplete`.

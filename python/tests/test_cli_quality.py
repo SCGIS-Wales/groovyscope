@@ -188,12 +188,14 @@ def test_fix_reports_then_applies(runner: CliRunner, tmp_path: Path, engine: dic
         "applied": {target.as_uri(): ["GS001"]},
         "appliedCounts": {target.as_uri(): {"GS001": 1}},
         "left": {target.as_uri(): {"NoDef": 2}},
+        "needsReview": {target.as_uri(): {"GS002": 1}},
         "rejected": {(tmp_path / "src" / "B.groovy").as_uri(): "the fixed text does not parse; nothing applied"},
     }
     dry = runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "src/A.groovy", "--code", "GS001"])
     assert dry.exit_code == 1
     assert "src/A.groovy: GS001 1, 1 line(s)" in dry.output and "src/B.groovy: skipped" in dry.output
     assert "src/A.groovy: left without a safe fix: NoDef 2" in dry.output
+    assert "src/A.groovy: needs review, the fix changes behaviour (name it with --code to apply): GS002 1" in dry.output
     assert engine["requests"][-1] == (
         "groovyscope/fix",
         {"root": str(tmp_path), "uris": [target.as_uri()], "codes": ["GS001"]},

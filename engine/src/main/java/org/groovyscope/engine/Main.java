@@ -100,7 +100,7 @@ public final class Main {
     }
 
     /** Parsed daemon/LSP options: configuration plus the daemon socket and idle timeout. */
-    record Options(EngineConfig config, Path socket, long idleSeconds, Path cacheDir) {
+    record Options(EngineConfig config, Path socket, long idleSeconds, Path cacheDir, Path root) {
     }
 
     static final long DEFAULT_IDLE_SECONDS = 3600;
@@ -111,6 +111,7 @@ public final class Main {
         String configHash = EngineConfig.hashOf(json);
         Path socket = null;
         Path cacheDir = null;
+        Path root = null;
         long idleSeconds = DEFAULT_IDLE_SECONDS;
         while (!remaining.isEmpty()) {
             String option = remaining.remove(0);
@@ -118,6 +119,7 @@ public final class Main {
                 case "--config" -> json = Files.readString(cwd.resolve(value(remaining, option)), StandardCharsets.UTF_8);
                 case "--socket" -> socket = cwd.resolve(value(remaining, option));
                 case "--cache-dir" -> cacheDir = cwd.resolve(value(remaining, option));
+                case "--root" -> root = cwd.resolve(value(remaining, option));
                 case "--idle-seconds" -> {
                     try {
                         idleSeconds = Long.parseLong(value(remaining, option));
@@ -128,14 +130,20 @@ public final class Main {
                 default -> throw new IllegalArgumentException("unknown option: " + option);
             }
         }
-        configureLogging(json);
-        return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir);
+        configureLogging(json, cacheDir);
+        return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir, root);
     }
 
     /** Applies {@code logging.level} and {@code logging.file} from the configuration JSON to the engine log. */
     static void configureLogging(String json) {
+        configureLogging(json, null);
+    }
+
+    /** The same, with the daemon's cache directory, where a log file may live. */
+    static void configureLogging(String json, Path cacheDir) {
         String level = null;
         String file = null;
+        long rotateAt = org.groovyscope.engine.log.EngineLog.DEFAULT_MAX_BYTES;
         if (json != null && !json.isBlank()) {
             try {
                 com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(json);
@@ -148,11 +156,18 @@ public final class Main {
                     file = logging.has("file") && logging.get("file").isJsonPrimitive()
                             ? logging.get("file").getAsString() : null;
                 }
-            } catch (com.google.gson.JsonParseException | IllegalStateException e) {
+                com.google.gson.JsonObject daemon = parsed.isJsonObject() && parsed.getAsJsonObject().has("daemon")
+                        && parsed.getAsJsonObject().get("daemon").isJsonObject()
+                        ? parsed.getAsJsonObject().getAsJsonObject("daemon") : null;
+                if (daemon != null && daemon.has("logMaxBytes") && daemon.get("logMaxBytes").isJsonPrimitive()) {
+                    rotateAt = daemon.get("logMaxBytes").getAsLong();
+                }
+            } catch (com.google.gson.JsonParseException | IllegalStateException | NumberFormatException
+                    | UnsupportedOperationException e) {
                 // EngineConfig.fromJson reports a malformed configuration
             }
         }
-        org.groovyscope.engine.log.EngineLog.configure(level, file);
+        org.groovyscope.engine.log.EngineLog.configure(level, file, cacheDir, rotateAt);
         org.groovyscope.engine.log.EngineLog.info("engine %s, CodeNarc %s, Java %s (%s) at %s, log level %s",
                 EngineVersion.current(), EngineVersion.codenarc(), System.getProperty("java.version"),
                 System.getProperty("java.vendor"), System.getProperty("java.home"),
@@ -180,7 +195,7 @@ public final class Main {
         }
         CountDownLatch exited = new CountDownLatch(1);
         try (DaemonServer server = new DaemonServer(parsed.socket, parsed.config,
-                java.time.Duration.ofSeconds(parsed.idleSeconds), exited::countDown, parsed.cacheDir)) {
+                java.time.Duration.ofSeconds(parsed.idleSeconds), exited::countDown, parsed.cacheDir, parsed.root)) {
             server.start();
             Runtime.getRuntime().addShutdownHook(new Thread(server::close, "groovyscope-daemon-cleanup"));
             exited.await();

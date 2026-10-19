@@ -685,3 +685,8 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   check (FormatStringChecker needs groovy-macro's `withConstraints`, and the load failure is a message the
   analyser does not read); LSP4J leaves a running request open when its connection closes; CodeNarc's enhanced
   rules fire for JDK types but not workspace classes, and its Jenkins rules only in files named `Jenkinsfile`.
+- 2026-10-19: Phase 1 of `docs/improvement-plan.md`: security and fix safety. Repository settings that write
+  files, download a JDK or dump the heap are gated, heap and report paths capped; the agent's shell allowlist is a
+  fixed list of read-only commands and `trust` needs a person; fixes that change behaviour need `--code`; the
+  `@CompileStatic` verdict is per class and only from a check that ran; the formatter never edits inside strings;
+  a daemon serves one root; the shaded JAR keeps every Groovy extension module, so the shipped type check works.

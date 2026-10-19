@@ -37,10 +37,26 @@
   "toolsSettings": {
     "shell": {
       "allowedCommands": [
-        "\\./gradlew .*",
-        "groovyscope .*",
+        "groovyscope check(?: (?:--profile [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--include [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|--format (?:text|json|short|sarif)|--import-sarif [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope review(?: (?:--changed|--base [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--staged|--top [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope test-results(?: (?:--limit [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope explain(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope explain-code(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope naming(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope coverage(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope impact(?: (?:--change [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope callgraph(?: (?:--direction [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--depth [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope graph --format (?:mermaid|json)(?: (?:--path [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--kinds [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--depth [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--level [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--max-nodes [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope fix(?: (?:--code [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--changed|--base [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope format(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope checkup(?: (?:--agent|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope logs(?: (?:-n [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--lines [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|-f|--follow|--kiro|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope version",
+        "groovyscope doctor",
+        "groovyscope daemon status",
+        "\\./gradlew (?:test|check|jacocoTestReport)(?: --(?:offline|continue|info|quiet|warn|stacktrace|rerun-tasks|console=plain))*",
         "git status",
-        "git diff.*"
+        "git diff(?: (?:--stat|--name-only|--name-status|--cached|--staged|--no-color|--numstat|--shortstat|--|-U[0-9]+|--unified=[0-9]+|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*"
       ]
     }
   },

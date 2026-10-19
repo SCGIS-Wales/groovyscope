@@ -40,7 +40,7 @@ class DiagnosticsPublisherSpec extends Specification {
         client.received.size() == first
 
         when: 'one document changes'
-        services.workspace().open(clean, 'package sample\n\nclass Clean {\n    int half(int a, int b) { int r = a / b; return r }\n}\n')
+        services.workspace().open(clean, 'package sample\n\nclass Clean {\n    int half(int a, int b) { def r = a / b; return r }\n}\n')
         services.markDirty()
         publisher.publishNow()
 

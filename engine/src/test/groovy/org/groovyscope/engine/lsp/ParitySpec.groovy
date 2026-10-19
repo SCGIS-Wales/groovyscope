@@ -95,7 +95,7 @@ class ParitySpec extends Specification {
         Path file = temp.resolve('logs/engine.log')
 
         when:
-        EngineLog.configure('info', file.toString())
+        EngineLog.configure('info', file.toString(), temp, EngineLog.DEFAULT_MAX_BYTES)
         EngineLog.debug('hidden %s', 1)
         EngineLog.info('shown %s', 2)
         EngineLog.error(new IllegalStateException('boom'), 'failed')

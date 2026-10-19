@@ -148,6 +148,8 @@ class MainSpec extends Specification {
     def 'lsp options accept a cache directory'() {
         expect:
         Main.parseOptions(['--cache-dir', 'cache'], [:], temp).cacheDir() == temp.resolve('cache')
+        Main.parseOptions(['--root', 'ws'], [:], temp).root() == temp.resolve('ws')
+        Main.parseOptions([], [:], temp).root() == null
         Main.parseOptions([], [:], temp).idleSeconds() == Main.DEFAULT_IDLE_SECONDS
         run('lsp', '--stdio', '--cache-dir', temp.resolve('cache').toString()) == 0
     }

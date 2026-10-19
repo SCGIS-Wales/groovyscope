@@ -124,7 +124,7 @@ def apply_config_logging(obj: dict[str, Any], effective: dict[str, Any]) -> None
     "--log-file",
     type=click.Path(path_type=Path, dir_okay=False),
     default=None,
-    help="Also append log records to this file (the engine writes there too).",
+    help="Also append log records to this file (the engine too, when it is under the groovyscope cache).",
 )
 @click.pass_context
 def main(
@@ -743,7 +743,7 @@ def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, 
     """Start the workspace daemon when needed (replacing one from another engine version). Raises on failure."""
     socket_file, log_file, cache = daemon_paths(obj["root"])
     daemon_command = daemon_lifecycle.daemon_command(
-        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
+        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache, obj["root"]
     )
     status = daemon_lifecycle.ensure_running(
         daemon_command,
@@ -1744,6 +1744,9 @@ def fix(
     applied_codes = {uri_to_path(uri): codes for uri, codes in result.get("applied", {}).items()}
     fixed = counts_by_path(result.get("appliedCounts", {}))
     left = {shown_path(path, obj["root"]): counts for path, counts in counts_by_path(result.get("left", {})).items()}
+    review = {
+        shown_path(path, obj["root"]): counts for path, counts in counts_by_path(result.get("needsReview", {})).items()
+    }
     for edit in changed:
         if apply_changes and not write_if_unchanged(edit, refused):
             continue
@@ -1759,7 +1762,7 @@ def fix(
     rejected = {shown_path(uri_to_path(uri), obj["root"]): why for uri, why in result.get("rejected", {}).items()}
     rejected.update({shown_path(uri_to_path(uri), obj["root"]): "outside the workspace; refused" for uri in refused})
     if as_json:
-        click.echo(compact_json({"files": rows, "left": left, "rejected": rejected}))
+        click.echo(compact_json({"files": rows, "left": left, "needsReview": review, "rejected": rejected}))
     else:
         for row in rows:
             state = " (applied)" if row["applied"] else ""
@@ -1767,6 +1770,9 @@ def fix(
             click.echo(f"{row['path']}: {summary}, {row['lines']} line(s){state}")
         for path, counts in left.items():
             click.echo(f"{path}: left without a safe fix: {', '.join(f'{k} {v}' for k, v in counts.items())}")
+        for path, counts in review.items():
+            listed = ", ".join(f"{k} {v}" for k, v in counts.items())
+            click.echo(f"{path}: needs review, the fix changes behaviour (name it with --code to apply): {listed}")
         for skipped, why in rejected.items():
             click.echo(f"{skipped}: skipped, {why}")
         click.echo(f"{len(rows)} file(s) {'fixed' if apply_changes else 'with fixes available'}")
@@ -2150,18 +2156,48 @@ def profile_status(obj: dict[str, Any], path: Path, as_json: bool) -> None:
             click.echo(f"{key}: {value}")
 
 
+def stdin_is_terminal() -> bool:
+    return sys.stdin.isatty()
+
+
+_IS_TTY: Callable[[], bool] = stdin_is_terminal
+
+
 @main.command("trust")
 @click.option("--revoke", is_flag=True, help="Stop trusting the workspace.")
 @click.option("--list", "list_all", is_flag=True, help="List the trusted workspaces.")
+@click.option(
+    "--yes-i-am-the-user",
+    "confirmed",
+    is_flag=True,
+    help="Grant trust from a terminal that an agent session started (you typed this, not the agent).",
+)
 @click.pass_obj
-def trust_command(obj: dict[str, Any], revoke: bool, list_all: bool) -> None:
+def trust_command(obj: dict[str, Any], *, revoke: bool, list_all: bool, confirmed: bool) -> None:
     """Trust this workspace: its .groovyscope.yaml may then set workspace.trust (AST transformations from the
-    workspace classpath), jdk.home and CodeNarc rule sets, and its runtime profiles may load emulation jars."""
+    workspace classpath), jdk.home, CodeNarc rule sets, logging.file, JDK downloads and heap dumps, and its runtime
+    profiles may load emulation jars. Granting trust needs a terminal: an agent cannot grant it to itself."""
     home = Path.home()
     if list_all:
         for root in trust.trusted_roots(home):
             click.echo(root)
         return
+    if not revoke:
+        marker = trust.agent_session(os.environ)
+        if not _IS_TTY():
+            click.echo(
+                "groovyscope trust: refused without a terminal; trust lets this workspace run code, so run it "
+                "yourself in a terminal",
+                err=True,
+            )
+            sys.exit(2)
+        if marker is not None and not confirmed:
+            click.echo(
+                f"groovyscope trust: refused inside an agent session ({marker} is set); if you are typing this "
+                "yourself, add --yes-i-am-the-user",
+                err=True,
+            )
+            sys.exit(2)
     trust.set_trusted(obj["root"], home, trusted=not revoke)
     state = "no longer trusted" if revoke else "trusted"
     click.echo(f"{obj['root']} is {state}; run `groovyscope daemon restart` if a daemon is serving it")

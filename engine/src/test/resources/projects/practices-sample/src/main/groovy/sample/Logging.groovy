@@ -1,7 +1,7 @@
 package sample
 
 class Logging {
-    static final Object log = null
+    static final org.slf4j.Logger log = null
 
     void run(int count, String who) {
         log.info("Loaded ${count} rows for ${who}")

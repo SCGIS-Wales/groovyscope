@@ -86,7 +86,7 @@ class SingleFileCompileSpec extends Specification {
         services.compileOnly([uri(GREETER)]).present
 
         when:
-        services.workspace().open('file:///virtual/Added.groovy', 'class Added { }')
+        services.workspace().open(uri('src/main/groovy/app/Added.groovy'), 'class Added { }')
         services.markDirty()
 
         then: 'a document was added'

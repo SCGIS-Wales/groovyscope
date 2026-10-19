@@ -98,11 +98,28 @@ class WorkspaceModelSpec extends Specification {
         def model = new WorkspaceModel(temp, EngineConfig.DEFAULTS)
 
         when:
-        model.open('file:///virtual/New.groovy', 'class New {}')
-        model.open('file:///virtual/notes.txt', 'text')
+        model.open(temp.resolve('src/New.groovy').toUri().toString(), 'class New {}')
+        model.open(temp.resolve('src/notes.txt').toUri().toString(), 'text')
+        model.open('file:///elsewhere/Outside.groovy', 'class Outside {}')
+        model.open('untitled:Scratch.groovy', 'class Scratch {}')
 
-        then:
-        model.sources().keySet() == ['file:///virtual/New.groovy'] as Set
+        then: 'documents outside the workspace, or not files, are never analysed'
+        model.sources().keySet() == [temp.resolve('src/New.groovy').toUri().toString()] as Set
+        model.sourceUris() == [temp.resolve('src/New.groovy').toUri().toString()] as Set
+    }
+
+    def 'a source root outside the workspace is ignored'() {
+        given:
+        Path outside = Files.createDirectories(temp.resolve('outside/src'))
+        Files.writeString(outside.resolve('Leak.groovy'), 'class Leak {}')
+        Path workspace = Files.createDirectories(temp.resolve('ws'))
+        Files.createDirectories(workspace.resolve('src/main/groovy'))
+        Files.writeString(workspace.resolve('src/main/groovy/In.groovy'), 'class In {}')
+        def model = new WorkspaceModel(workspace,
+                EngineConfig.fromJson('{"workspace": {"sourceRoots": ["../outside/src", "../..", "src/main/groovy"]}}'))
+
+        expect:
+        model.sources().keySet()*.tokenize('/')*.last() == ['In.groovy']
     }
 
     def 'an open Java document stays in the compile and oversized open documents are left out'() {
@@ -110,13 +127,13 @@ class WorkspaceModelSpec extends Specification {
         def model = new WorkspaceModel(temp, EngineConfig.fromJson('{"workspace": {"maxFileBytes": 20}}'))
 
         when:
-        model.open('file:///virtual/Helper.java', 'class Helper {}')
-        model.open('file:///virtual/Huge.groovy', 'class Huge { /* ' + ('x' * 100) + ' */ }')
+        model.open(temp.resolve('Helper.java').toUri().toString(), 'class Helper {}')
+        model.open(temp.resolve('Huge.groovy').toUri().toString(), 'class Huge { /* ' + ('x' * 100) + ' */ }')
 
         then:
-        model.compileSources().keySet() == ['file:///virtual/Helper.java'] as Set
+        model.compileSources().keySet() == [temp.resolve('Helper.java').toUri().toString()] as Set
         model.sources().keySet().empty
-        model.sourceUris() == ['file:///virtual/Huge.groovy'] as Set
+        model.sourceUris() == [temp.resolve('Huge.groovy').toUri().toString()] as Set
     }
 
     def 'the classpath entries take part in the disk fingerprint'() {

@@ -15,10 +15,13 @@
  */
 package org.groovyscope.engine.format;
 
+import groovyjarjarantlr4.v4.runtime.CharStreams;
+import groovyjarjarantlr4.v4.runtime.Token;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.apache.groovy.parser.antlr4.GroovyLangLexer;
 import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.index.TextLines;
 import org.groovyscope.engine.model.Diagnostic;
@@ -45,18 +48,46 @@ public final class BasicFormatter {
     private BasicFormatter() {
     }
 
-    /** The formatted text. */
+    /** The formatted text; the document's line endings are kept (CRLF stays CRLF). */
     public static String format(String text, EngineConfig.Format settings, List<Diagnostic> lintFindings) {
+        List<String> formatted = formattedLines(text, settings, lintFindings);
+        List<String> endings = lineEndings(text);
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
         List<String> out = new ArrayList<>();
-        for (String line : formattedLines(text, settings, lintFindings)) {
-            if (line != null) {
-                out.add(line);
+        List<String> outEndings = new ArrayList<>();
+        for (int i = 0; i < formatted.size(); i++) {
+            if (formatted.get(i) != null) {
+                out.add(formatted.get(i));
+                outEndings.add(i < endings.size() && !endings.get(i).isEmpty() ? endings.get(i) : newline);
             }
         }
         while (!out.isEmpty() && out.get(out.size() - 1).isEmpty()) {
             out.remove(out.size() - 1);
+            outEndings.remove(outEndings.size() - 1);
         }
-        return out.isEmpty() ? "" : String.join("\n", out) + "\n";
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < out.size(); i++) {
+            result.append(out.get(i)).append(outEndings.get(i));
+        }
+        return result.toString();
+    }
+
+    /** Each line's terminator ({@code \r\n}, {@code \n}, or empty for a last line without one). */
+    static List<String> lineEndings(String text) {
+        List<String> endings = new ArrayList<>();
+        int start = 0;
+        while (start <= text.length()) {
+            int newline = text.indexOf('\n', start);
+            if (newline < 0) {
+                if (start < text.length()) {
+                    endings.add("");
+                }
+                break;
+            }
+            endings.add(newline > start && text.charAt(newline - 1) == '\r' ? "\r\n" : "\n");
+            start = newline + 1;
+        }
+        return endings;
     }
 
     /**
@@ -84,7 +115,12 @@ public final class BasicFormatter {
         return edits;
     }
 
-    /** Each input line formatted, or {@code null} where the line is dropped (a blank line over the limit). */
+    /**
+     * Each input line formatted, or {@code null} where the line is dropped (a blank line over the limit). The Groovy
+     * lexer marks strings and block comments: a line that starts inside one keeps its indentation and is never
+     * dropped, a line that ends inside one keeps its trailing whitespace, so no string changes value. When the text
+     * does not lex, every line is returned as it is.
+     */
     static List<String> formattedLines(String text, EngineConfig.Format settings, List<Diagnostic> lintFindings) {
         Set<Integer> semicolonLines = new HashSet<>();
         if (settings.removeSemicolons()) {
@@ -99,24 +135,32 @@ public final class BasicFormatter {
         if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
             lines.remove(lines.size() - 1);
         }
+        List<int[]> spans = protectedSpans(text);
         List<String> out = new ArrayList<>();
-        boolean inTripleString = false;
         int blankRun = 0;
+        int offset = 0;
         for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
-            if (line.endsWith("\r")) {
-                line = line.substring(0, line.length() - 1);
+            String raw = lines.get(i);
+            String line = raw.endsWith("\r") ? raw.substring(0, raw.length() - 1) : raw;
+            int start = offset;
+            int end = offset + line.length();
+            offset += raw.length() + 1;
+            if (spans == null) {
+                out.add(line);
+                continue;
             }
-            boolean insideString = inTripleString;
-            inTripleString = togglesTripleQuote(line, inTripleString);
-            if (!insideString) {
+            boolean startsInside = inside(spans, start);
+            boolean endsInside = inside(spans, end);
+            if (!startsInside) {
                 line = expandLeadingTabs(line, indent);
+            }
+            if (!endsInside) {
                 line = stripTrailing(line);
                 if (semicolonLines.contains(i)) {
                     line = removeTrailingSemicolon(line);
                 }
             }
-            if (line.isEmpty() && !insideString) {
+            if (line.isEmpty() && !startsInside && !endsInside) {
                 blankRun++;
                 if (blankRun > Math.max(0, settings.maxBlankLines())) {
                     out.add(null);
@@ -128,6 +172,68 @@ public final class BasicFormatter {
             out.add(line);
         }
         return out;
+    }
+
+    /** True when {@code offset} lies after the start of a span and no later than its end. */
+    static boolean inside(List<int[]> spans, int offset) {
+        for (int[] span : spans) {
+            if (span[0] < offset && offset <= span[1]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@code [start, end]} character offsets of every string literal, GString (from its start to its end, nested ones
+     * included) and block comment, from Groovy's own lexer; null when the text does not lex.
+     */
+    static List<int[]> protectedSpans(String text) {
+        List<int[]> spans = new ArrayList<>();
+        // The lexer counts code points; the line offsets are UTF-16 indices, so map each token's bounds across.
+        int[] utf16 = text.codePoints().count() == text.length() ? null : utf16Offsets(text);
+        try {
+            GroovyLangLexer lexer = new GroovyLangLexer(CharStreams.fromString(text));
+            lexer.removeErrorListeners();
+            int depth = 0;
+            int gstringStart = -1;
+            for (Token token : lexer.getAllTokens()) {
+                String name = lexer.getVocabulary().getSymbolicName(token.getType());
+                if ("GStringBegin".equals(name)) {
+                    if (depth++ == 0) {
+                        gstringStart = token.getStartIndex();
+                    }
+                } else if ("GStringEnd".equals(name) && depth > 0) {
+                    if (--depth == 0) {
+                        spans.add(span(utf16, gstringStart, token.getStopIndex()));
+                    }
+                } else if ("StringLiteral".equals(name) && depth == 0
+                        || token.getText().startsWith("/*") && depth == 0) {
+                    spans.add(span(utf16, token.getStartIndex(), token.getStopIndex()));
+                }
+            }
+        } catch (RuntimeException | AssertionError | StackOverflowError e) {
+            // the lexer reports an unclosed string as GroovySyntaxError, an AssertionError
+            return null;
+        }
+        return spans;
+    }
+
+    /** The UTF-16 index at which each code point starts, plus the text's length at the end. */
+    static int[] utf16Offsets(String text) {
+        int[] offsets = new int[(int) text.codePoints().count() + 1];
+        int index = 0;
+        for (int i = 0; i < offsets.length - 1; i++) {
+            offsets[i] = index;
+            index += Character.charCount(text.codePointAt(index));
+        }
+        offsets[offsets.length - 1] = index;
+        return offsets;
+    }
+
+    /** A span from code point bounds (the stop inclusive) to UTF-16 bounds (the last char unit inclusive). */
+    private static int[] span(int[] utf16, int start, int stop) {
+        return utf16 == null ? new int[] {start, stop} : new int[] {utf16[start], utf16[stop + 1] - 1};
     }
 
     /** A single whole-document edit when formatting changes anything; otherwise no edits. */
@@ -165,21 +271,4 @@ public final class BasicFormatter {
         return line;
     }
 
-    /** Whether the line leaves the reader inside a triple-quoted string (naive: ignores escapes in code). */
-    static boolean togglesTripleQuote(String line, boolean inside) {
-        boolean state = inside;
-        int i = 0;
-        while (i < line.length()) {
-            if (!state && line.startsWith("//", i)) {
-                break;
-            }
-            if (line.startsWith("'''", i) || line.startsWith("\"\"\"", i)) {
-                state = !state;
-                i += 3;
-                continue;
-            }
-            i++;
-        }
-        return state;
-    }
 }

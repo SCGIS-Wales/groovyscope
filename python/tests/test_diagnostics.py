@@ -111,3 +111,27 @@ def test_timed_tool_wrapper_logs_and_keeps_the_signature(caplog: pytest.LogCaptu
             wrapped(path="boom")
     assert any("answered in" in r.message for r in caplog.records)
     assert any("failed after" in r.message for r in caplog.records)
+
+
+def test_log_records_stay_on_one_line_and_a_bad_log_file_is_reported(tmp_path: Path) -> None:
+    log_file = tmp_path / "gs.log"
+    diagnostics.configure(logging.INFO, log_file)
+    logger = logging.getLogger("groovyscope.test")
+    logger.warning("checked %s", "a\nb.groovy")
+    try:
+        raise ValueError("bad\nline")
+    except ValueError:
+        logger.exception("failed on %s", "x\ry")
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    assert lines[0].endswith("checked a\\nb.groovy") and lines[1].endswith("failed on x\\ry")
+    assert "ValueError: bad\\nline" in lines[2] and "Traceback" in lines[2]
+    assert diagnostics.escape_controls("tab\there\x1b") == "tab\there\\x1b"
+    assert diagnostics.escape_controls("a\x85b\u2028c\u2029") == "a\\x85b\\u2028c\\u2029"
+    assert len(diagnostics.escape_controls("x\u2028y").splitlines()) == 1
+    blocked = tmp_path / "file"
+    blocked.write_text("x", encoding="utf-8")
+    diagnostics.configure(logging.WARNING, blocked / "sub" / "gs.log")
+    root = logging.getLogger(diagnostics.ROOT_LOGGER)
+    assert len(root.handlers) == 1
+    diagnostics.configure(logging.WARNING, None)
