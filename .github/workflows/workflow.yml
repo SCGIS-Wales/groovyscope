@@ -145,6 +145,9 @@ jobs:
           cp engine/build/libs/groovyscope-engine-*-all.jar release/
           cp engine/build/reports/cyclonedx/bom.json release/groovyscope-engine-sbom.cdx.json
           cp sbom/groovyscope-python-sbom.cdx.json release/
+          # The runtime dependencies with every hash, for installs that verify them (the Homebrew formula).
+          (cd python && uv export --frozen --no-dev --no-emit-project --format requirements-txt) \
+            > release/groovyscope-requirements.txt
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
 
@@ -189,6 +192,7 @@ jobs:
             release/*.jar
             release/SHA256SUMS.txt
             release/*.cdx.json
+            release/groovyscope-requirements.txt
 
   pypi:
     name: publish to PyPI (trusted publishing)
