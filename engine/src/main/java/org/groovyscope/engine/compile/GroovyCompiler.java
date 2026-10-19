@@ -32,6 +32,7 @@ import java.util.Set;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.classgen.VariableScopeVisitor;
+import org.codehaus.groovy.control.ClassNodeResolver;
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
@@ -92,6 +93,16 @@ public class GroovyCompiler {
      * @param trust whether transformations on the classpath may load and run
      */
     public CompilationResult compile(Map<String, String> sources, List<Path> classpath, boolean trust) {
+        return compile(sources, classpath, trust, Map.of());
+    }
+
+    /**
+     * The same, resolving the classes in {@code known} (by name) to the given trees instead of compiling them: a
+     * file checked after a write is compiled alone against the rest of the workspace as the last full compile left
+     * it. Names declared by {@code sources} themselves still resolve to their new trees.
+     */
+    public CompilationResult compile(Map<String, String> sources, List<Path> classpath, boolean trust,
+            Map<String, ClassNode> known) {
         Map<String, String> remaining = new LinkedHashMap<>(sources);
         Map<String, List<Diagnostic>> diagnostics = new HashMap<>();
         for (String uri : sources.keySet()) {
@@ -123,7 +134,7 @@ public class GroovyCompiler {
                 release(resolvedOnce);
                 throw new java.util.concurrent.CancellationException("compile cancelled after " + attempts + " round(s)");
             }
-            Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION);
+            Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION, known);
             attempts++;
             if (attempt == 0) {
                 deadline = started + RetryBudget.of(System.nanoTime() - started);
@@ -292,6 +303,11 @@ public class GroovyCompiler {
     }
 
     private Attempt compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, int throughPhase) {
+        return compileOnce(sources, classpath, trust, throughPhase, Map.of());
+    }
+
+    private Attempt compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, int throughPhase,
+            Map<String, ClassNode> known) {
         CompilerConfiguration configuration = new CompilerConfiguration();
         configuration.setSourceEncoding("UTF-8");
         configuration.setTolerance(Integer.MAX_VALUE);
@@ -309,6 +325,9 @@ public class GroovyCompiler {
                 : new GroovyClassLoader(parent, configuration);
 
         CompilationUnit unit = new CompilationUnit(configuration, null, resolutionLoader, transformLoader);
+        if (!known.isEmpty()) {
+            unit.setClassNodeResolver(new KnownClasses(known));
+        }
         Map<String, SourceUnit> units = new LinkedHashMap<>();
         for (Map.Entry<String, String> source : sources.entrySet()) {
             units.put(source.getKey(), unit.addSource(source.getKey(), source.getValue()));
@@ -567,5 +586,20 @@ public class GroovyCompiler {
     record Attempt(Map<String, ModuleNode> modules, Map<String, SourceUnit> units,
             Map<String, List<Diagnostic>> diagnostics, Set<String> brokenUris, int phaseReached, boolean failed,
             boolean crashed, GroovyClassLoader loader, CompilationUnit unit) {
+    }
+
+    /** Resolves workspace classes to the trees of the last full compile; everything else as usual. */
+    static final class KnownClasses extends ClassNodeResolver {
+        private final Map<String, ClassNode> known;
+
+        KnownClasses(Map<String, ClassNode> known) {
+            this.known = known;
+        }
+
+        @Override
+        public LookupResult resolveName(String name, CompilationUnit compilationUnit) {
+            ClassNode found = known.get(name);
+            return found != null ? new LookupResult(null, found) : super.resolveName(name, compilationUnit);
+        }
     }
 }
