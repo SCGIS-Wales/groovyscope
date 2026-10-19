@@ -328,6 +328,26 @@ def test_classpath_command_reloads_the_running_daemon_in_place(
     assert fallback.exit_code == 0 and "was stopped" in fallback.output and stopped
 
 
+def test_an_unchanged_classpath_keeps_the_daemon_running(
+    runner: CliRunner, tmp_path: Path, clean_env: dict[str, str], isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "settings.gradle").write_text("", encoding="utf-8")
+    trust.set_trusted(tmp_path, isolated_home, trusted=True)
+    monkeypatch.setattr(cli.classpath_export, "export", lambda *_a, **_k: EXPORT)
+    running = {"engine": "x", "configHash": ""}
+    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _t=5.0: running)
+    stopped: list[Path] = []
+    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
+    monkeypatch.setattr(cli, "_RPC", lambda *_a: pytest.fail("nothing to reload"))
+    first = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
+    obj = {"root": tmp_path.resolve(), "config_path": None}
+    cli.hand_over_config(obj, cli.load_config(tmp_path, None, dict(cli.os.environ)))
+    running["configHash"] = cli.config_hash(obj)  # the daemon already runs this very configuration
+    again = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
+    assert first.exit_code == 0 and again.exit_code == 0, again.output
+    assert "already runs this classpath" in again.output and stopped == [cli.daemon_paths(tmp_path)[0]]
+
+
 def test_a_configuration_push_on_a_dead_channel_reconnects_then_applies() -> None:
     sent: list[tuple[str, str]] = []
 

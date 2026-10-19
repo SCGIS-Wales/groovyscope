@@ -716,13 +716,21 @@ RELOAD_METHOD = "groovyscope/reloadConfig"
 RELOAD_TIMEOUT_SECONDS = 60.0
 
 
-def reload_if_stale(obj: dict[str, Any], socket_file: Path, status: dict[str, Any]) -> bool:
+RELOAD_UNCHANGED = "unchanged"
+RELOADED = "reloaded"
+RELOAD_FAILED = "failed"
+
+
+def reload_if_stale(obj: dict[str, Any], socket_file: Path, status: dict[str, Any]) -> str:
     """A daemon running another configuration (a re-exported classpath, an edited .groovyscope.yaml, changed
-    profiles) is handed the current one and applies it in place. True when a reload was sent and accepted; when
-    the engine cannot take it, the user is told how to restart instead."""
+    profiles) is handed the current one and applies it in place. ``unchanged`` when it already runs this one,
+    ``reloaded`` when a reload was sent and accepted, ``failed`` when the engine could not take it (the user is
+    told how to restart) or reports no configuration hash to compare."""
     running = status.get("configHash")
-    if not (isinstance(running, str) and running and running != config_hash(obj)):
-        return False
+    if not (isinstance(running, str) and running):
+        return RELOAD_FAILED
+    if running == config_hash(obj):
+        return RELOAD_UNCHANGED
     try:
         _RPC(socket_file, RELOAD_METHOD, {"config": str(obj.get("engine_config") or "")}, RELOAD_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, ValueError) as exc:
@@ -731,9 +739,9 @@ def reload_if_stale(obj: dict[str, Any], socket_file: Path, status: dict[str, An
             "run `groovyscope daemon restart` to apply it",
             err=True,
         )
-        return False
+        return RELOAD_FAILED
     LOG.info("daemon configuration reloaded in place")
-    return True
+    return RELOADED
 
 
 def config_source(obj: dict[str, Any]) -> Callable[[], tuple[str, str] | None]:
@@ -2119,8 +2127,11 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int | None
     status = daemon_lifecycle.probe(socket_file)
     if status is not None:
         hand_over_config(obj, load_config(obj["root"], obj["config_path"], dict(os.environ)))
-        if reload_if_stale(obj, socket_file, status):
+        outcome = reload_if_stale(obj, socket_file, status)
+        if outcome == RELOADED:
             click.echo("the running daemon reloaded the new classpath; the next request recompiles against it")
+        elif outcome == RELOAD_UNCHANGED:
+            click.echo("the running daemon already runs this classpath; nothing to reload")
         else:
             try:
                 daemon_lifecycle.stop(socket_file)
