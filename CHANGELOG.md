@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.0...v0.24.1) (2026-10-19)
+
+
+### Performance
+
+* **check:** compile a written file alone and lint alongside ([#104](https://github.com/SCGIS-Wales/groovyscope/issues/104)) ([e57d6d8](https://github.com/SCGIS-Wales/groovyscope/commit/e57d6d8dc7d655c445c8e29fb5c983f55b1f0c16))
+
 ## [0.24.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.23.1...v0.24.0) (2026-10-19)
 
 
