@@ -190,6 +190,8 @@ public final class BasicFormatter {
      */
     static List<int[]> protectedSpans(String text) {
         List<int[]> spans = new ArrayList<>();
+        // The lexer counts code points; the line offsets are UTF-16 indices, so map each token's bounds across.
+        int[] utf16 = text.codePoints().count() == text.length() ? null : utf16Offsets(text);
         try {
             GroovyLangLexer lexer = new GroovyLangLexer(CharStreams.fromString(text));
             lexer.removeErrorListeners();
@@ -203,11 +205,11 @@ public final class BasicFormatter {
                     }
                 } else if ("GStringEnd".equals(name) && depth > 0) {
                     if (--depth == 0) {
-                        spans.add(new int[] {gstringStart, token.getStopIndex()});
+                        spans.add(span(utf16, gstringStart, token.getStopIndex()));
                     }
                 } else if ("StringLiteral".equals(name) && depth == 0
                         || token.getText().startsWith("/*") && depth == 0) {
-                    spans.add(new int[] {token.getStartIndex(), token.getStopIndex()});
+                    spans.add(span(utf16, token.getStartIndex(), token.getStopIndex()));
                 }
             }
         } catch (RuntimeException | AssertionError | StackOverflowError e) {
@@ -216,6 +218,24 @@ public final class BasicFormatter {
         }
         return spans;
     }
+
+    /** The UTF-16 index at which each code point starts, plus the text's length at the end. */
+    static int[] utf16Offsets(String text) {
+        int[] offsets = new int[(int) text.codePoints().count() + 1];
+        int index = 0;
+        for (int i = 0; i < offsets.length - 1; i++) {
+            offsets[i] = index;
+            index += Character.charCount(text.codePointAt(index));
+        }
+        offsets[offsets.length - 1] = index;
+        return offsets;
+    }
+
+    /** A span from code point bounds (the stop inclusive) to UTF-16 bounds (the last char unit inclusive). */
+    private static int[] span(int[] utf16, int start, int stop) {
+        return utf16 == null ? new int[] {start, stop} : new int[] {utf16[start], utf16[stop + 1] - 1};
+    }
+
     /** A single whole-document edit when formatting changes anything; otherwise no edits. */
     public static List<TextEdit> edits(String text, EngineConfig.Format settings, List<Diagnostic> lintFindings) {
         String formatted = format(text, settings, lintFindings);

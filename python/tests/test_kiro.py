@@ -454,11 +454,25 @@ DANGEROUS_COMMANDS = (
     "git diff --output=x",
     "git diff --output x",
     "git diff --ext-diff",
+    # a glob the shell expands into options named by files in the repository (`--apply`, `--code=GS001`)
+    "groovyscope fix *",
+    "groovyscope fix [-]-apply",
+    "groovyscope checkup *",
+    "groovyscope check ?",
+    "git diff *",
+    # verify runs the project's build: the agent asks first
+    "groovyscope verify",
+    "groovyscope verify --failed",
+    # graph without a stdout format writes a draw.io file
+    "groovyscope graph Store",
+    "./gradlew test --scan",
+    "./gradlew test --write-locks",
+    "./gradlew test --init-script x.gradle",
 )
 SAFE_COMMANDS = (
     "groovyscope check src/main/groovy/A.groovy --format short",
     "groovyscope review --changed --base origin/main",
-    "groovyscope verify --failed --results build/artifacts.zip",
+    "groovyscope graph --format mermaid Store --depth 2",
     "groovyscope fix --changed --code GS001",
     "groovyscope explain-code Store#load",
     "groovyscope daemon status",
@@ -481,6 +495,8 @@ def test_the_agent_may_run_only_read_only_commands_and_tests() -> None:
     rules = kiro_agent.v3_rules()
     shell = next(rule for rule in rules if rule["capability"] == "shell")
     assert shell["match"] == list(tools_catalog.SAFE_SHELL_GLOBS)
+    # V3 matches globs and it is not known whether it splits `a; b` first: exact commands only, no wildcard
+    assert not any(set(glob) & set("*?[]{}") for glob in shell["match"])
     assert not any(
         glob.startswith(("groovyscope trust", "groovyscope classpath", "groovyscope fix")) for glob in shell["match"]
     )

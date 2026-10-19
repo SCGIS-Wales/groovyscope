@@ -38,13 +38,20 @@ class EngineLogSpec extends Specification {
         EngineLog.configure(null, null)
     }
 
-    def 'a file outside the cache and temp directories is refused'() {
+    def 'a file outside the cache directory is refused, the temporary directory included'() {
         when:
         EngineLog.configure('info', '~/.bashrc')
 
         then:
         EngineLog.file() == null
         captured.toString('UTF-8').contains('logging.file ~/.bashrc is refused')
+
+        when:
+        EngineLog.configure('info', temp.resolve('engine.log').toString(), temp.resolve('cache'), 1000)
+        EngineLog.configure('info', System.getProperty('java.io.tmpdir') + '/groovyscope-engine.log')
+
+        then: 'a refused reconfigure also stops writing to the previous file'
+        EngineLog.file() == null
     }
 
     def 'records are escaped onto one line, the file is private and rotated'() {
@@ -52,7 +59,7 @@ class EngineLogSpec extends Specification {
         Path log = temp.resolve('logs/engine.log')
 
         when:
-        EngineLog.configure('info', log.toString(), null, 300)
+        EngineLog.configure('info', log.toString(), temp, 300)
         EngineLog.info('checked %s', 'a\nb.groovy')
         EngineLog.error(new IllegalStateException('bad\r\nthing'), 'failed')
         EngineLog.info('after %s', 'rotation')
@@ -65,6 +72,7 @@ class EngineLogSpec extends Specification {
         previous.any { it.contains('checked a\\nb.groovy') } || previous.any { it.contains('IllegalStateException: bad\\r\\nthing') }
         PosixFilePermissions.toString(Files.getPosixFilePermissions(log)) == 'rw-------'
         EngineLog.escape('tab\there\u001b\u007f') == 'tab\there\\x1b\\x7f'
+        EngineLog.escape('a\u0085b\u2028c\u2029') == 'a\\u0085b\\u2028c\\u2029'
     }
 
     def 'a log file reached through a symbolic link is never written'() {
@@ -75,7 +83,7 @@ class EngineLogSpec extends Specification {
         Files.createSymbolicLink(link, outside)
 
         when:
-        EngineLog.configure('info', link.toString(), null, 1000)
+        EngineLog.configure('info', link.toString(), temp, 1000)
         EngineLog.info('injected')
 
         then:

@@ -43,7 +43,7 @@ import java.util.Set;
  * {@code logging.file} is set, appended to that file too. stdout is the LSP channel and is never used.
  * Configured from the {@code logging} section of the configuration (debug | info | warning | error).
  *
- * <p>The file must sit under the cache directory or the system temporary directory (anywhere else, such as a shell
+ * <p>The file must sit under the groovyscope cache directory (anywhere else, such as a shell
  * start-up file a hostile repository names, is refused), is never opened through a symbolic link, is created
  * readable by its owner only, stays open between records and is rotated past {@code daemon.logMaxBytes} (one
  * previous file kept). Control characters in a record (a file name with a newline in it) are escaped, so each record
@@ -59,6 +59,7 @@ public final class EngineLog {
     private static volatile Level threshold = Level.WARNING;
     private static volatile PrintStream stderr = System.err;
     private static Path file;
+    private static List<Path> bases = List.of();
     private static OutputStream stream;
     private static long size;
     private static long maxBytes = DEFAULT_MAX_BYTES;
@@ -78,21 +79,26 @@ public final class EngineLog {
     public static synchronized void configure(String level, String logFile, Path cacheDir, long rotateAt) {
         threshold = parse(level);
         closeFile();
+        file = null;
         maxBytes = rotateAt > 0 ? rotateAt : DEFAULT_MAX_BYTES;
         if (logFile == null || logFile.isBlank()) {
             return;
         }
         Path candidate = Path.of(logFile.replaceFirst("^~", System.getProperty("user.home"))).toAbsolutePath()
                 .normalize();
-        if (!allowed(candidate, allowedBases(cacheDir))) {
+        bases = allowedBases(cacheDir);
+        if (!allowed(candidate, bases)) {
             stderr.println("groovyscope-engine: logging.file " + escape(logFile) + " is refused: a log file must be "
-                    + "under the groovyscope cache or the temporary directory");
+                    + "under the groovyscope cache directory");
             return;
         }
         file = candidate;
     }
 
-    /** Where a log file may be written: the given cache directory, the default cache and the temporary directory. */
+    /**
+     * Where a log file may be written: the given cache directory and the default cache, both the user's own. The
+     * shared temporary directory is not one: another user could have placed the file, or a link, there first.
+     */
     static List<Path> allowedBases(Path cacheDir) {
         List<Path> bases = new ArrayList<>();
         if (cacheDir != null) {
@@ -102,7 +108,6 @@ public final class EngineLog {
         Path home = Path.of(System.getProperty("user.home"));
         bases.add(xdg != null && !xdg.isBlank() ? Path.of(xdg, "groovyscope") : home.resolve(".cache/groovyscope"));
         bases.add(home.resolve("Library/Caches/groovyscope"));
-        bases.add(Path.of(System.getProperty("java.io.tmpdir")));
         return bases;
     }
 
@@ -194,12 +199,14 @@ public final class EngineLog {
         }
     }
 
-    /** Control characters (CR, LF, the rest of C0 and DEL) as escapes; a tab stays. */
+    /** Control characters (CR, LF, the rest of C0, DEL, NEL and the Unicode line separators) as escapes; a tab stays. */
     public static String escape(String text) {
         StringBuilder out = new StringBuilder(text.length());
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            if (c == '\t' || (c >= 0x20 && c != 0x7f)) {
+            if (c == '\u0085' || c == '\u2028' || c == '\u2029') {
+                out.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+            } else if (c == '\t' || (c >= 0x20 && c != 0x7f)) {
                 out.append(c);
             } else if (c == '\n') {
                 out.append("\\n");
@@ -233,6 +240,10 @@ public final class EngineLog {
     }
 
     private static void open() throws IOException {
+        // checked again at each open: a folder on the way may have been swapped for a link since configure
+        if (!allowed(file, bases)) {
+            throw new IOException("the log file left the groovyscope cache directory");
+        }
         Files.createDirectories(file.getParent());
         Set<OpenOption> options = Set.of(StandardOpenOption.CREATE, StandardOpenOption.APPEND,
                 StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);

@@ -334,12 +334,14 @@ for the prompt and a server entry for `mcp.json`.
   `allowedTools`, `toolsSettings`): every tool and MCP server is available (`tools: ["*"]`); read, search,
   `code` and the read-only groovyscope MCP tools run without asking; the tools that change the workspace
   (`fix`, `rename` and `format` with `apply`, `refresh_classpath`, `relationship_graph` writing a draw.io
-  file), `write`, `shell` and other servers' tools ask, except a fixed list of read-only commands: `./gradlew test`,
-  `check` and `jacocoTestReport`, `git status`, `git diff` with plain options, and the groovyscope commands that
-  only read (`check`, `review`, `verify`, `fix` without `--apply`, `graph` to stdout and so on). Anything else,
-  `groovyscope trust` and `classpath` included, asks; arguments starting with `-` or holding shell
-  metacharacters never match. `groovyscope kiro repair` replaces the broad patterns earlier releases wrote
-  (`./gradlew .*`, `groovyscope .*`). Kiro ignores MCP's `readOnlyHint`, so the split is written into `allowedTools` (one
+  file), `write`, `shell` and other servers' tools ask, except a fixed list of commands: `./gradlew test`, `check` and
+  `jacocoTestReport` with a few plain flags (these run the project's build and tests), `git status`, `git diff`
+  with plain options, and the groovyscope commands that only read (`check`, `review`, `fix` without `--apply`,
+  `graph --format mermaid` or `json` and so on). Anything else asks, `groovyscope trust`, `classpath` and
+  `verify` included; arguments starting with `-` or holding shell metacharacters or globs never match. The V3
+  rules list exact commands only, since it is not confirmed that V3 splits `a; b` before matching a glob.
+  `groovyscope kiro repair` replaces the broad patterns earlier releases wrote (`./gradlew .*`,
+  `groovyscope .*`). Kiro ignores MCP's `readOnlyHint`, so the split is written into `allowedTools` (one
   `@groovyscope/<tool>` per read-only tool) and into the V3 `permissions.rules`. Releases up to
   0.6.x also wrote a `permissions` block, which makes Kiro CLI 2.32 treat the agent as V3-only and fall back
   to `kiro_default` ("agent groovy not found"); `groovyscope kiro repair` removes it. `kiro-cli agent list`

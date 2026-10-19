@@ -37,8 +37,7 @@ daemon:
   maxRestartsPerTenMinutes: 3  # daemon starts allowed in ten minutes; beyond that the front end stops restarting it
   heapDumpOnOutOfMemory: false # write a heap dump (the size of the heap) under the cache before exiting on OutOfMemoryError
   untrustedHeapCeiling: "4g"  # an untrusted workspace's .groovyscope.yaml cannot set daemon.heap or maxHeap above this
-  logMaxBytes: 5000000    # the engine's log file (logging.file) is rotated past this size, one previous file kept
-  logMaxBytes: 5000000    # the daemon log is rotated past this size
+  logMaxBytes: 5000000    # the daemon log and the engine's log file (logging.file) are rotated past this size
   logsKept: 3             # rotated daemon logs kept; `groovyscope checkup --fix` removes the rest
 mcp:
   requestTimeoutSeconds: 100  # budget per tool call, under Kiro's 120 s; over it the tool says "still running" and cancels

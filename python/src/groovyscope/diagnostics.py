@@ -30,6 +30,7 @@ ENV_KEYS = ("JAVA_HOME", "PATH", "KIRO_HOME", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME
 SECRET_HINTS = ("TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL")
 CONTROL_LIMIT = 0x20  # code points below are C0 control characters
 DELETE = 0x7F
+LINE_BREAKS = "\x85\u2028\u2029"  # NEL and the Unicode line and paragraph separators: str.splitlines breaks on them
 
 
 def level_of(name: str | None, default: int = logging.WARNING) -> int:
@@ -37,10 +38,12 @@ def level_of(name: str | None, default: int = logging.WARNING) -> int:
 
 
 def escape_controls(text: str) -> str:
-    """Control characters (CR, LF and the rest of C0, DEL) as escapes, so a file name or message read from the
-    workspace cannot start a line of its own in a log."""
+    """Control characters (CR, LF and the rest of C0, DEL, NEL and the Unicode line separators) as escapes, so a file
+    name or message read from the workspace cannot start a line of its own in a log."""
     return "".join(
-        ch if ch == "\t" or (ord(ch) >= CONTROL_LIMIT and ord(ch) != DELETE) else ch.encode("unicode_escape").decode()
+        ch
+        if ch == "\t" or (ord(ch) >= CONTROL_LIMIT and ord(ch) != DELETE and ch not in LINE_BREAKS)
+        else ch.encode("unicode_escape").decode()
         for ch in text
     )
 

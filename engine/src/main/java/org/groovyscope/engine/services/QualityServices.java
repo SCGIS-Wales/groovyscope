@@ -886,10 +886,19 @@ public final class QualityServices {
                 continue;
             }
             org.codehaus.groovy.ast.ModuleNode annotated = compiler.parseOnly(uri, candidate.getValue()).orElse(null);
+            if (annotated == null) {
+                // the trial text does not parse: no verdict rather than a failure for every class
+                continue;
+            }
             Set<String> failing = new java.util.HashSet<>();
             for (Diagnostic error : typed.diagnostics().getOrDefault(uri, List.of())) {
                 org.codehaus.groovy.ast.ClassNode holder = PracticeFixes.classOnLine(annotated,
                         error.range().start().line());
+                // An error in a nested or anonymous class counts against the enclosing class the annotation covers.
+                while (holder != null && !classes.get(uri).contains(holder.getName())
+                        && holder.getOuterClass() != null) {
+                    holder = holder.getOuterClass();
+                }
                 failing.add(holder == null ? "" : holder.getName());
             }
             Map<String, Boolean> perClass = new HashMap<>();

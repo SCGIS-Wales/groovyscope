@@ -58,6 +58,7 @@ import org.codehaus.groovy.ast.expr.TernaryExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
+import org.codehaus.groovy.ast.stmt.CatchStatement;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.ast.stmt.IfStatement;
 import org.codehaus.groovy.ast.stmt.ReturnStatement;
@@ -310,6 +311,7 @@ public final class PracticeFinder {
         private final Set<Expression> parsed = Collections.newSetFromMap(new IdentityHashMap<>());
         /** Divisions whose result is narrowed to an integral type (truncated anyway): not GS001 findings. */
         private final Set<Expression> narrowed = Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Set<Object> caught = Collections.newSetFromMap(new IdentityHashMap<>());
         private MethodNode currentMethod;
         private ClassNode currentClass;
         private boolean inSpock;
@@ -711,8 +713,12 @@ public final class PracticeFinder {
                 }
                 message.append(literal);
                 if (i < gstring.getValues().size()) {
-                    String value = source(gstring.getValue(i));
-                    if (value == null) {
+                    Expression interpolated = gstring.getValue(i);
+                    String value = source(interpolated);
+                    // A lazy ${-> x} would log the closure itself, and SLF4J takes a trailing Throwable as the
+                    // exception (a stack trace, and a literal {} left in the message).
+                    if (value == null || interpolated instanceof ClosureExpression
+                            || i == gstring.getValues().size() - 1 && mayBeThrowable(interpolated)) {
                         fixable = false;
                     }
                     arguments.add(value);
@@ -736,6 +742,26 @@ public final class PracticeFinder {
             report("GS005", gstring, "the GString is built even when " + name + " is disabled"
                     + (PLACEHOLDER_LIBRARIES.contains(library) ? "" : "; guard the call with the level check"),
                     PLACEHOLDER_LIBRARIES.contains(library) ? "Use {} placeholders" : null, fix);
+        }
+
+        /** True unless the value's declared type proves it is not a Throwable (a catch parameter always may be). */
+        private boolean mayBeThrowable(Expression value) {
+            if (value instanceof VariableExpression variable && caught.contains(variable.getAccessedVariable())) {
+                return true;
+            }
+            ClassNode type = typeOf(value);
+            if (type == null) {
+                return false;
+            }
+            String name = type.getName();
+            return type.isDerivedFrom(ClassHelper.make(Throwable.class)) || name.endsWith("Exception")
+                    || name.endsWith("Error") || name.endsWith("Throwable");
+        }
+
+        @Override
+        public void visitCatchStatement(CatchStatement statement) {
+            caught.add(statement.getVariable());
+            super.visitCatchStatement(statement);
         }
 
         /** The library of the logging annotation on the enclosing class, when the receiver is the field it adds. */

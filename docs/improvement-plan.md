@@ -442,3 +442,13 @@ New item for Phase 1:
 | 1.9 Daemon root | Confirmed. A daemon serves only the root it was started with. |
 | 1.10 Outside sources | Confirmed. Source roots and open documents outside the workspace are skipped. |
 | 1.11 Shaded JAR | Confirmed (probe 0.2). Service files and Groovy extension descriptors are merged; an integration test checks `Path.text` and `LocalDate + 1` through the JAR. The manual ELK provider registration stays: it costs nothing and keeps unshaded runs working. |
+
+Independent review of the Phase 1 diff (an `opus` subagent, without the author's notes), all acted on before merge:
+
+- The allowlist accepted globs (`groovyscope fix *` expands to a repository file named `--apply`), `verify` (runs the build), `graph` without a stdout format (writes a draw.io file) and any Gradle flag (`--scan` uploads). Globs, `verify` and other Gradle flags are gone; `graph` must name `--format mermaid|json`; the V3 rules are exact commands, since V3's handling of `a; b` is unconfirmed. `./gradlew test`, `check` and `jacocoTestReport` stay approved as section 4 decides, although they run the project's build scripts: **owner to confirm**.
+- `@CompileStatic` verdicts: a class right after the `package` line got its annotation above the inserted import (the trial did not parse and every class "failed"), and an error inside an anonymous class was charged to that class. Imports now always read before annotation lines, an unparsable trial gives no verdict, and an error counts against the enclosing class the annotation covers.
+- GS005's `{}` fix changed behaviour for a lazy `${-> x}` and a trailing Throwable (SLF4J takes it as the exception); neither gets the fix now.
+- The formatter's spans were in code points (the ANTLR stream) against UTF-16 line offsets, so an emoji earlier in the file shifted them; now mapped.
+- The engine log accepted the shared temporary directory, was not re-checked when reopened, and kept the previous file after a refused reconfigure; NEL and the Unicode line separators were not escaped (Python's `splitlines` breaks on them). All fixed; `daemon.logMaxBytes` was declared twice and is now the one key for both logs.
+- Any non syntax message was read as a checker that failed to load; now only a message about a type checking extension is, and a compile that stopped before static checking with nothing to show is a failed check, never a clean one.
+- Kept as is: Groovy 6.0.0's `FormatStringChecker` NPE appears only beside a real error and is reported as `typecheck-incomplete`.

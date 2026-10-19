@@ -238,7 +238,7 @@ public final class TypeCheckAnalyzer {
         // A checker extension that could not load means static checking did not run as asked: a failed check, not a
         // clean one. An exception while checking (a checker's own bug) leaves the errors found so far, marked
         // incomplete.
-        String unloaded = unloadedExtension(unit.getErrorCollector());
+        String unloaded = unloadedExtension(unit.getErrorCollector(), extensions);
         if (unloaded != null) {
             return new Pass(false, Set.of(), Map.of(), new IllegalStateException(unloaded), null);
         }
@@ -256,6 +256,12 @@ public final class TypeCheckAnalyzer {
                     broken.add(entry.getKey());
                 }
             }
+        }
+        if (!checked && broken.isEmpty() && incomplete == null) {
+            // stopped before static checking with nothing to show for it: a failed check, never a clean one
+            String other = otherError(unit.getErrorCollector());
+            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(other != null ? other
+                    : "the compile stopped before static checking"), null);
         }
         return new Pass(checked, broken, found, null, incomplete);
     }
@@ -294,7 +300,25 @@ public final class TypeCheckAnalyzer {
     }
 
     /** A checker extension the compiler could not load, as its message; null when every one loaded. */
-    static String unloadedExtension(ErrorCollector collector) {
+    static String unloadedExtension(ErrorCollector collector, List<String> extensions) {
+        String other = otherError(collector);
+        if (other == null) {
+            return null;
+        }
+        if (other.contains("type checking extension")) {
+            return other;
+        }
+        for (String extension : extensions) {
+            int arguments = extension.indexOf('(');
+            if (other.contains(arguments < 0 ? extension : extension.substring(0, arguments))) {
+                return other;
+            }
+        }
+        return null;
+    }
+
+    /** The first error that is neither a syntax error nor an exception, as text; null when there is none. */
+    static String otherError(ErrorCollector collector) {
         if (collector == null || collector.getErrors() == null) {
             return null;
         }

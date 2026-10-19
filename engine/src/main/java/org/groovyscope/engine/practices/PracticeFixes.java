@@ -402,8 +402,10 @@ public final class PracticeFixes {
         }
         List<TextEdit> ordered = new ArrayList<>(accepted);
         // Latest first; at the same start, the replacement before a zero-width insert, so offsets stay valid; of
-        // two inserts at one point the later one goes in first, so the text reads in list order.
+        // two inserts at one point the later one goes in first, so the text reads in list order, except that an
+        // import always reads before an annotation line (which would otherwise annotate the import).
         ordered.sort(Comparator.comparing((TextEdit e) -> e.range().start()).thenComparing(e -> e.range().end())
+                .thenComparing(e -> e.newText().strip().startsWith("import ") ? 0 : 1)
                 .thenComparing(accepted::indexOf).reversed());
         StringBuilder result = new StringBuilder(text);
         for (TextEdit edit : ordered) {

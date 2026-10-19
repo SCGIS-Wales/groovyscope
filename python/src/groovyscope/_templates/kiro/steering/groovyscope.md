@@ -55,7 +55,7 @@ inclusion: always
   silence unresolved library imports.
 - To verify a change, run `groovyscope verify` (shell) instead of choosing Gradle tasks by hand: it reviews the
   changed lines, then compiles the changed source sets and runs the tests the change reaches through the call
-  graph, Java tests included, in one Gradle command. Tests it lists as left to CI (integration tests that need
+  graph, Java tests included, in one Gradle command (it runs the build, so the user approves it). Tests it lists as left to CI (integration tests that need
   pipeline credentials) are not run locally; say so instead of running them. `--dry-run` shows the plan.
 - Test failures: read them with `groovyscope.test_results` (or `groovyscope test-results [folder or .zip]`), which
   finds every `TEST-*.xml` at any depth and inside archives such as a CI `artifacts.zip`; never write a script to

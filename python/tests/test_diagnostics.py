@@ -127,6 +127,8 @@ def test_log_records_stay_on_one_line_and_a_bad_log_file_is_reported(tmp_path: P
     assert lines[0].endswith("checked a\\nb.groovy") and lines[1].endswith("failed on x\\ry")
     assert "ValueError: bad\\nline" in lines[2] and "Traceback" in lines[2]
     assert diagnostics.escape_controls("tab\there\x1b") == "tab\there\\x1b"
+    assert diagnostics.escape_controls("a\x85b\u2028c\u2029") == "a\\x85b\\u2028c\\u2029"
+    assert len(diagnostics.escape_controls("x\u2028y").splitlines()) == 1
     blocked = tmp_path / "file"
     blocked.write_text("x", encoding="utf-8")
     diagnostics.configure(logging.WARNING, blocked / "sub" / "gs.log")

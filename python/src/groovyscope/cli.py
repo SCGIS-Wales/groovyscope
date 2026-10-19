@@ -124,7 +124,7 @@ def apply_config_logging(obj: dict[str, Any], effective: dict[str, Any]) -> None
     "--log-file",
     type=click.Path(path_type=Path, dir_okay=False),
     default=None,
-    help="Also append log records to this file (the engine writes there too).",
+    help="Also append log records to this file (the engine too, when it is under the groovyscope cache).",
 )
 @click.pass_context
 def main(

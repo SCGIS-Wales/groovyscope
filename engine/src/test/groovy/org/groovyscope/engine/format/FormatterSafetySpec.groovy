@@ -74,6 +74,19 @@ class FormatterSafetySpec extends Specification {
         !formatted.contains("'''  \n")
     }
 
+    def 'characters outside the basic plane earlier in the file do not shift the protected spans'() {
+        given:
+        String emoji = new String(Character.toChars(0x1F600))
+        String text = "// ${emoji * 5}\ndef s = \"\"\"\nfoo   \n\tbar   \n\t\"\"\"\n"
+
+        when:
+        String formatted = BasicFormatter.format(text, SETTINGS, [])
+
+        then:
+        formatted == text
+        constants(formatted) == constants(text)
+    }
+
     def 'CRLF line endings are kept, inside strings too'() {
         given:
         String crlf = "class A {\r\n\tString s = '''x  \r\n y'''   \r\n\r\n\r\n\r\n}\r\n"

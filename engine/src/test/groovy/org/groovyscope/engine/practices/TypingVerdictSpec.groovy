@@ -43,6 +43,28 @@ class TypingVerdictSpec extends Specification {
         result.left()[uri('Mixed.groovy')] == [CompileStatic: 1]
     }
 
+    def 'a class right after the package line is judged on the annotated text, imports first'() {
+        when:
+        def result = services.quality().fix([uri('Tight.groovy')], ['CompileStatic'] as Set)
+        String fixed = PracticeFixes.apply(Fixtures.text('typing-sample', 'src/main/groovy/sample/Tight.groovy'),
+                result.edits()[uri('Tight.groovy')]).text()
+
+        then:
+        fixed.startsWith('package sample\n\nimport groovy.transform.CompileStatic\n@CompileStatic\nclass Tight')
+        result.left()[uri('Tight.groovy')] == null
+    }
+
+    def 'an error inside an anonymous class counts against the class that holds it'() {
+        when:
+        def result = services.quality().fix([uri('Nested.groovy')], ['CompileStatic'] as Set)
+        String fixed = PracticeFixes.apply(Fixtures.text('typing-sample', 'src/main/groovy/sample/Nested.groovy'),
+                result.edits()[uri('Nested.groovy')]).text()
+
+        then:
+        !fixed.contains('@CompileStatic')
+        fixed.contains('@CompileDynamic // TODO justify why this class stays dynamic (it does not type-check)\nclass Outer')
+    }
+
     def 'a document the type checker could not check gets no annotation'() {
         when:
         def result = services.quality().fix([uri('Unresolved.groovy')], ['CompileStatic'] as Set)
@@ -68,5 +90,21 @@ class TypingVerdictSpec extends Specification {
         broken.diagnostics()[doc][0].message().contains('no.such.Checker')
         plain.status()[doc] == TypeCheckAnalyzer.Status.CHECKED
         plain.diagnostics()[doc]*.code() == ['typecheck']
+    }
+
+    def 'only a message about a checker extension counts as a checker that did not load'() {
+        given:
+        def collector = { String text ->
+            def errors = new org.codehaus.groovy.control.ErrorCollector(new org.codehaus.groovy.control.CompilerConfiguration())
+            errors.addErrorAndContinue(new org.codehaus.groovy.control.messages.SimpleMessage(text, null))
+            errors
+        }
+        List<String> extensions = ['groovy.typecheckers.NullChecker(strict: true)']
+
+        expect:
+        TypeCheckAnalyzer.unloadedExtension(collector('Static type checking extension \'x.Y\' was not found on the classpath.'),
+                extensions) != null
+        TypeCheckAnalyzer.unloadedExtension(collector('could not load groovy.typecheckers.NullChecker'), extensions) != null
+        TypeCheckAnalyzer.unloadedExtension(collector('Invalid duplicate class definition of class Foo'), extensions) == null
     }
 }

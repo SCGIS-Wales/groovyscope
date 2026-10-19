@@ -76,6 +76,30 @@ class Job {
         slf4jAnnotated[0].fix()*.newText() == ["'ran {}', n"]
     }
 
+    def 'no placeholder fix for a lazy closure value or a trailing Throwable, which SLF4J would treat differently'() {
+        when:
+        def found = gs005('''\
+class Job {
+    org.slf4j.Logger log
+    void run(int count, RuntimeException failure) {
+        log.info("lazy ${-> count}")
+        log.error("failed ${failure}")
+        try {
+            count++
+        } catch (e) {
+            log.warn("caught ${e}")
+        }
+        log.info("plain ${count}")
+    }
+}
+''')
+
+        then:
+        found.size() == 4
+        found[0..2].every { !it.fixable() }
+        found[3].fixable()
+    }
+
     def 'a receiver merely named log is not a logger'() {
         expect:
         gs005('''\
