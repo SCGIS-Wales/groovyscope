@@ -32,17 +32,18 @@ dependencies {
     }
     runtimeOnly("org.apache.groovy:groovy-xml:${libs.versions.groovy.get()}")
     runtimeOnly("org.apache.groovy:groovy-json:${libs.versions.groovy.get()}")
-    runtimeOnly("org.apache.groovy:groovy-templates:${libs.versions.groovy.get()}")
     runtimeOnly("org.apache.groovy:groovy-groovydoc:${libs.versions.groovy.get()}")
-    runtimeOnly("org.apache.groovy:groovy-ant:${libs.versions.groovy.get()}")
     // Groovy modules workspace code commonly uses without declaring them; visible through
-    // WorkspaceParentClassLoader so their types resolve and the Groovy 6 checkers can see them.
-    for (module in listOf("groovy-sql", "groovy-datetime", "groovy-nio", "groovy-dateutil", "groovy-test", "groovy-contracts")) {
+    // WorkspaceParentClassLoader so their types resolve and the Groovy 6 checkers can see them. The engine itself
+    // needs none of them (its tests pass without templates and ant): a script using SimpleTemplateEngine or
+    // AntBuilder would otherwise report unresolved classes when no classpath is configured.
+    for (module in listOf("groovy-sql", "groovy-datetime", "groovy-nio", "groovy-dateutil", "groovy-test", "groovy-contracts",
+            "groovy-templates", "groovy-ant")) {
         runtimeOnly("org.apache.groovy:$module:${libs.versions.groovy.get()}")
     }
 
     testImplementation(libs.spock.core)
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -77,7 +78,7 @@ tasks.test {
 }
 
 jacoco {
-    toolVersion = "0.8.14"
+    toolVersion = libs.versions.jacoco.get()
 }
 
 tasks.jacocoTestReport {

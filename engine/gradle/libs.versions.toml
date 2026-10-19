@@ -3,11 +3,11 @@
 groovy = "6.0.0"
 lsp4j = "1.0.0"
 codenarc = "4.0.0"  # pinned (Dependabot bumps it); the weekly canary builds with the latest stable release
-spotless = "4.10.4"
 sqlite-jdbc = "3.53.4.0"
 spock = "2.5-groovy-6.0"
 shadow = "9.6.1"
 cyclonedx = "3.5.1"
+jacoco = "0.8.14"
 elk = "0.12.0"
 xbase-lib = "2.44.0"  # ELK's generated option classes need it at run time; its POM does not say so
 guava = "33.7.2-jre"  # ELK asks for [15.0,); pinned so builds are reproducible
@@ -16,16 +16,15 @@ guava = "33.7.2-jre"  # ELK asks for [15.0,); pinned so builds are reproducible
 groovy = { module = "org.apache.groovy:groovy", version.ref = "groovy" }
 groovy-typecheckers = { module = "org.apache.groovy:groovy-typecheckers", version.ref = "groovy" }
 lsp4j = { module = "org.eclipse.lsp4j:org.eclipse.lsp4j", version.ref = "lsp4j" }
-# Declared now, wired in later stages (lint, format, daemon index persistence).
 codenarc = { module = "org.codenarc:CodeNarc", version.ref = "codenarc" }
-spotless-lib = { module = "com.diffplug.spotless:spotless-lib", version.ref = "spotless" }
-spotless-lib-extra = { module = "com.diffplug.spotless:spotless-lib-extra", version.ref = "spotless" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 # Eclipse Layout Kernel (EPL-2.0, like LSP4J): the layered layout and orthogonal edge routing behind draw.io diagrams.
 elk-layered = { module = "org.eclipse.elk:org.eclipse.elk.alg.layered", version.ref = "elk" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 xbase-lib = { module = "org.eclipse.xtext:org.eclipse.xtext.xbase.lib", version.ref = "xbase-lib" }
 spock-core = { module = "org.spockframework:spock-core", version.ref = "spock" }
+# Versionless on purpose: the JUnit BOM Spock brings aligns it with the platform engine.
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 
 [plugins]
 shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
