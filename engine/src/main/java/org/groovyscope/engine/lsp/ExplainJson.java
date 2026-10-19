@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.groovyscope.engine.explain.CodeFacts;
+import org.groovyscope.engine.explain.TestSeams;
 import org.groovyscope.engine.graph.RelationshipGraph;
 
 /** JSON shapes of the explainCode and graph requests. */
@@ -115,6 +116,38 @@ final class ExplainJson {
         json.put("throws", method.throwsTypes());
         json.put("catches", method.catches());
         json.put("externals", method.externals());
+        return json;
+    }
+
+    static Map<String, Object> seams(TestSeams.Seams seams) {
+        Map<String, Object> json = new LinkedHashMap<>();
+        List<Map<String, Object>> collaborators = new ArrayList<>();
+        for (TestSeams.Collaborator collaborator : seams.collaborators()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("target", collaborator.target());
+            entry.put("visibility", collaborator.visibility());
+            entry.put("static", collaborator.isStatic());
+            entry.put("compileStatic", collaborator.compileStatic());
+            entry.put("stub", collaborator.stub());
+            if (collaborator.stubbedAt() != null) {
+                entry.put("stubbedAt", collaborator.stubbedAt());
+                entry.put("example", collaborator.example());
+            }
+            collaborators.add(entry);
+        }
+        json.put("collaborators", collaborators);
+        List<Map<String, Object>> tests = new ArrayList<>();
+        for (TestSeams.TestClass test : seams.tests()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("class", test.name());
+            entry.put("uri", test.uri());
+            entry.put("helpers", test.helpers());
+            tests.add(entry);
+        }
+        json.put("tests", tests);
+        if (seams.direct() != null) {
+            json.put("direct", seams.direct());
+        }
         return json;
     }
 

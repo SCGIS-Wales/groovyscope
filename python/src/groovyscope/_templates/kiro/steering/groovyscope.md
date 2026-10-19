@@ -57,6 +57,13 @@ inclusion: always
   changed lines, then compiles the changed source sets and runs the tests the change reaches through the call
   graph, Java tests included, in one Gradle command. Tests it lists as left to CI (integration tests that need
   pipeline credentials) are not run locally; say so instead of running them. `--dry-run` shows the plan.
+- Writing Groovy tests: first `groovyscope.explain_code` on the method under test; its `testing` lists each
+  collaborator with how to replace it, where the tests already stub it, and the test class's helpers. A dynamic
+  Groovy test calls a private method directly, without reflection. Stub only package-private or public methods
+  (Mockito spy with `doReturn(..).when(spy)`, or Spock), never private ones, and never through `metaClass` on
+  `@CompileStatic` code or on a double; reuse the test class's helpers instead of new harness code.
+  `groovyscope.check` on the test file flags doubles that cannot take effect (GS013 to GS015) and tests that
+  assert nothing (GS016).
 - `classpath.state: stale` in an answer means a build file changed after the export: say so and offer
   `groovyscope.refresh_classpath` (trusted workspaces only) before judging unresolved classes; offer the
   same after you edit `build.gradle`, `pom.xml` or `libs.versions.toml`. Configuration and classpath changes

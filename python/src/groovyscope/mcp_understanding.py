@@ -94,6 +94,8 @@ def compact_explanation(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
         entry["class"] = item.get("class")
         if item.get("uri"):
             entry["path"] = relative_path(str(item["uri"]), root)
+        if item.get("testing"):
+            entry["testing"] = compact_testing(item["testing"], root)
         return entry
     if kind in {"field", "property"}:
         return {
@@ -106,6 +108,15 @@ def compact_explanation(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
             "static": item.get("static"),
         }
     return compact_class(item, root)
+
+
+def compact_testing(testing: Mapping[str, Any], root: Path) -> dict[str, Any]:
+    """A method's test seams with the test classes' URIs as workspace paths."""
+    tests = [
+        {"class": t.get("class"), "path": relative_path(str(t.get("uri") or ""), root), "helpers": t.get("helpers", [])}
+        for t in testing.get("tests", [])
+    ]
+    return {**testing, "tests": tests}
 
 
 def naming_facts(item: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:
@@ -191,7 +202,10 @@ def understanding_tools(
         receives, the fields it reads and writes, the exceptions it throws and catches, the external world it touches
         (http, file, sql, process, environment, clock, random, logging), public methods grouped by leading verb,
         and the classes it is used by and uses. SYMBOL: `Class`, `pkg.Class`, `Class.method` or `Class#method`;
-        PATH: every class of a file. Turn the facts into prose; do not guess from names."""
+        PATH: every class of a file. For a method, `testing` gives what a test needs in one answer: each
+        collaborator with its visibility and how to replace it (Mockito or Spock for package and public methods,
+        never private ones), the line where the tests already stub it, and the test classes that exercise the class
+        with their helpers. Turn the facts into prose; do not guess from names."""
         params: dict[str, Any] = {"root": str(root)}
         if symbol:
             params["symbol"] = symbol

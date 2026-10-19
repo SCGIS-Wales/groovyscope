@@ -145,11 +145,25 @@ def test_explain_code_compacts_class_and_method_facts(tools: dict[str, Any], eng
         "kind": "method",
         "class": "app.OrderService",
         "uri": CLASS_FACTS["uri"],
+        "testing": {
+            "collaborators": [{"target": "app.Repo.save", "visibility": "public", "stub": "spy"}],
+            "tests": [
+                {
+                    "class": "app.OrderServiceTest",
+                    "uri": "file:///ws/src/test/OrderServiceTest.groovy",
+                    "helpers": ["build() line 3"],
+                }
+            ],
+        },
     }
     engine["responses"]["groovyscope/explainCode"] = {"found": True, "items": [method_item]}
     by_path = tools["explain_code"](path="src/app/OrderService.groovy")
     assert engine["calls"][-1][1]["uri"] == "file:///ws/src/app/OrderService.groovy"
     assert by_path["items"][0]["kind"] == "method" and by_path["items"][0]["path"] == "src/app/OrderService.groovy"
+    assert by_path["items"][0]["testing"]["tests"] == [
+        {"class": "app.OrderServiceTest", "path": "src/test/OrderServiceTest.groovy", "helpers": ["build() line 3"]}
+    ]
+    assert by_path["items"][0]["testing"]["collaborators"][0]["target"] == "app.Repo.save"
     engine["responses"]["groovyscope/explainCode"] = {
         "found": True,
         "items": [
