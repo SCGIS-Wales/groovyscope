@@ -8,7 +8,7 @@ Use for "fix what is safe", "clean up my changes". Base branch: `$ARGUMENTS` whe
 
 ## Steps
 
-1. `groovyscope.review_changes(base)` for the changed files and their findings.
+1. `groovyscope.review_changes()` (base: the repository's default branch unless the user names one) for the changed files and their findings.
 2. `groovyscope.fix(paths=<changed files>, apply=true)`. Safe fixes never change behaviour: `intdiv`, typed
    parameter reads, `@CompileStatic` where the class then type-checks, unnecessary semicolons, Spock `with`.
 3. `groovyscope.review(paths=<changed files>)` again and fix every remaining error and warning by hand,

@@ -631,3 +631,10 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   fails. The steering now sends errors and findings to `groovyscope.check` or `review`, says there is no
   `get_diagnostics` tool, and warns against classpath-less compiles. Measured on the way: the write hook takes 4
   to 7 s on a 3,000-line file, most of it the workspace recompile behind `compile`; to be proposed.
+- 2026-10-19: from the owner's Kiro review of a branch, approved by the owner (items 1 to 3 of five). The agent
+  spent a call on `base: "main"` in a `master` repository, four more calls sorting about 960 warnings by hand, and
+  called several GS002 findings harmless itself. `review_changes` now defaults to the repository's default branch
+  (`origin/HEAD`, else `main` or `master`) and names it when a given base is unknown; its answer ranks the
+  changed-line findings in `triage` (risks, smells, noise) with the fixable count and the `groovyscope fix`
+  command; GS002 skips a default that is the same empty value (`?: ''`, `?: 0`, `?: []`, `?: [:]`); and the
+  bundled CodeNarc profile drops `VariableTypeRequired`, which reported every `def` a second time next to `NoDef`.

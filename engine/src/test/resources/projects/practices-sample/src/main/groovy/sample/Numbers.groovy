@@ -22,4 +22,20 @@ class Numbers {
         int n = items?.size()
         return n
     }
+
+    String plain(String given) {
+        return given ?: ''
+    }
+
+    List<String> none(List<String> given) {
+        return given ?: []
+    }
+
+    Map<String, String> options(Map<String, String> given) {
+        return given ?: [:]
+    }
+
+    long nothing(Long given) {
+        return given ?: 0L
+    }
 }

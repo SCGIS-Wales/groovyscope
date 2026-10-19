@@ -91,16 +91,34 @@ def parse_unified_diff(text: str) -> list[ChangedFile]:
     return files
 
 
+# Tried in order when no base is given and origin/HEAD names none: the usual default branch names.
+BASE_CANDIDATES = ("origin/main", "origin/master", "main", "master")
+
+
+def default_base(root: Path, runner: Runner) -> str | None:
+    """The repository's default branch: what ``origin/HEAD`` points at (``origin/master``), else the first of the
+    usual names that exists; None when there is none."""
+    code, output = runner(["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], root)
+    if code == 0 and output.strip():
+        return output.strip()
+    for candidate in BASE_CANDIDATES:
+        code, _ = runner(["git", "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"], root)
+        if code == 0:
+            return candidate
+    return None
+
+
 def changed_files(
     root: Path,
-    base: str = "main",
+    base: str | None = None,
     *,
     staged: bool = False,
     runner: Runner = default_runner,
     which: Which = shutil.which,
 ) -> ChangeSet:
-    """The reviewable files the branch (or the index, with ``staged``) changed against ``base``, with their changed
-    line ranges. Raises ``ValueError`` with a reason a person can act on."""
+    """The reviewable files the branch (or the index, with ``staged``) changed against ``base`` (the repository's
+    default branch when not given), with their changed line ranges. Raises ``ValueError`` with a reason a person
+    can act on."""
     if which("git") is None:
         msg = "git is not installed, so the changed files cannot be listed; pass paths to review instead"
         raise ValueError(msg)
@@ -109,13 +127,19 @@ def changed_files(
         msg = f"{root} is not inside a git repository ({output.strip()})"
         raise ValueError(msg)
     common = ["git", "diff", "--unified=0", "--no-color", "--no-ext-diff", "--no-renames", "--relative"]
+    detected = None if staged else default_base(root, runner)
+    chosen = base or detected or ""
     if staged:
         code, output = runner([*common, "--cached", "--"], root)
         mode = "staged"
     else:
-        code, merge_base = runner(["git", "merge-base", base, "HEAD"], root)
+        if not chosen:
+            msg = "no default branch found (no origin/HEAD, main or master); pass the branch the request targets"
+            raise ValueError(msg)
+        code, merge_base = runner(["git", "merge-base", chosen, "HEAD"], root)
         if code != 0:
-            msg = f"unknown base {base!r} ({merge_base.strip()}); try origin/main, or the branch the request targets"
+            hint = f"this repository's default branch is {detected}" if detected else "pass the branch it targets"
+            msg = f"unknown base {chosen!r} ({merge_base.strip()}); {hint}"
             raise ValueError(msg)
         code, output = runner([*common, merge_base.strip(), "--"], root)
         mode = "branch"
@@ -123,7 +147,7 @@ def changed_files(
         msg = f"git diff failed: {output.strip()}"
         raise ValueError(msg)
     files = [f for f in parse_unified_diff(output) if reviewable(f["path"])]
-    return {"base": base, "mode": mode, "files": files}
+    return {"base": chosen if mode == "branch" else "index", "mode": mode, "files": files}
 
 
 def in_ranges(line: int, ranges: Sequence[Sequence[int]]) -> bool:
@@ -193,6 +217,37 @@ def risky_in_change(
 ) -> list[dict[str, Any]]:
     """Structural matches (catch, def, return null) that sit on changed lines."""
     return [dict(m) for m in matches if in_ranges(int(m.get("line", 0)), ranges.get(str(m.get("path", "")), ()))]
+
+
+# Practice groups ranked for a reviewer: risks change behaviour, smells mislead the next reader, noise is style.
+RISK_GROUPS = frozenset({"security", "runtime", "truth", "numbers", "boundaries", "errors", "concurrency", "versions"})
+SMELL_GROUPS = frozenset({"naming", "immutability", "tests", "strings"})
+TIERS = ("risks", "smells", "noise")
+
+
+def tier_of(code: str) -> str:
+    group = practices.group_of(code)
+    return "risks" if group in RISK_GROUPS else "smells" if group in SMELL_GROUPS else "noise"
+
+
+def triage(findings: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, Any]:
+    """The changed-line findings ranked as a reviewer reads them: per tier the codes, most frequent first, with how
+    many of each the safe fixes repair, and the one command that applies them."""
+    per_code: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        code = str(finding.get("code") or "")
+        entry = per_code.setdefault(code, {"code": code, "group": practices.group_of(code), "count": 0, "fixable": 0})
+        entry["count"] += 1
+        entry["fixable"] += 1 if finding.get("fixable") else 0
+    tiers: dict[str, Any] = {}
+    for tier in TIERS:
+        codes = sorted((e for e in per_code.values() if tier_of(e["code"]) == tier), key=lambda e: -e["count"])
+        tiers[tier] = {"count": sum(e["count"] for e in codes), "codes": codes[:limit]}
+    fixable = sorted(code for code, e in per_code.items() if e["fixable"])
+    total = sum(e["fixable"] for e in per_code.values())
+    if fixable:
+        tiers["fix"] = {"count": total, "command": f"groovyscope fix --codes {','.join(fixable)}"}
+    return tiers
 
 
 def verdict(buckets: Mapping[str, Sequence[Any]], risky: Sequence[Any], impact: Sequence[Mapping[str, Any]]) -> str:

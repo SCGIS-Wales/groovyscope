@@ -87,7 +87,7 @@ file and its changed lines) or, when Kiro offers no questions, an answer that sa
 Report which. If the question appears: answer **no** first (`git status` in another terminal stays clean), then
 ask again and answer **yes**.
 
-The answer should list `fixed` (CompileStatic 1, NoDef and VariableTypeRequired 1 each) with about 4 changed
+The answer should list `fixed` (CompileStatic 1, NoDef 1) with about 4 changed
 lines, not 126, and `left` (the `def` locals whose type is unknown without a classpath) with a note to fix them
 by hand. `git diff` should show `import org.codenarc.rule.Rule` next to `Rule rule = violation.rule`.
 

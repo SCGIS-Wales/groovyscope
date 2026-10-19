@@ -863,13 +863,16 @@ def review_tools(
     """review_changes: the merge request review, composed from git, the build's reports and the other tools."""
     settings = report_settings or {}
 
-    def review_changes(base: str = "main", staged: bool = False, top: int = 8) -> dict[str, Any]:
-        """Review what this branch changed against BASE (or the index with STAGED) as a merge request reviewer:
+    def review_changes(base: str | None = None, staged: bool = False, top: int = 8) -> dict[str, Any]:
+        """Review what this branch changed against BASE (default: the repository's default branch, from origin/HEAD)
+        or the index with STAGED, as a merge request reviewer:
         the changed Groovy, Gradle and Jenkinsfile files, every finding on their changed lines grouped blocking,
         shouldFix and nits, pre-existing findings elsewhere in those files as counts, the impact of changed
-        declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), and a
-        one-sentence verdict, plus `comments` (path, line, body) ready to post as inline merge request discussions
-        and a `summaryComment` for the merge request itself. Nothing is run but git."""
+        declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), a
+        `triage` that ranks the changed-line findings into risks, smells and noise with how many the safe fixes
+        repair and the `groovyscope fix` command, and a one-sentence verdict, plus `comments` (path, line, body)
+        ready to post as inline merge request discussions and a `summaryComment` for the merge request itself.
+        Nothing is run but git."""
         try:
             change = changes.changed_files(root, base, staged=staged)
         except ValueError as exc:
@@ -879,9 +882,9 @@ def review_tools(
             {"path": f["path"], "status": f["status"], "changedLines": sum(e - s + 1 for s, e in f["ranges"])}
             for f in change["files"]
         ]
-        result: dict[str, Any] = {"base": base, "mode": change["mode"], "files": shown[:cap]}
+        result: dict[str, Any] = {"base": change["base"], "mode": change["mode"], "files": shown[:cap]}
         if not existing:
-            result["verdict"] = f"nothing to review: no Groovy, Gradle or Jenkinsfile changes against {base}"
+            result["verdict"] = f"nothing to review: no Groovy, Gradle or Jenkinsfile changes against {change['base']}"
             return result
         ranges = changes.ranges_by_path(change)
         paths = [f["path"] for f in existing]
@@ -941,6 +944,7 @@ def review_tools(
         result.update(
             {
                 "verdict": changes.verdict(buckets, risky, impact),
+                "triage": changes.triage(inside, limit=limit),
                 "blocking": buckets["blocking"][:limit],
                 "shouldFix": buckets["shouldFix"][:limit],
                 "nits": buckets["nits"][:limit],

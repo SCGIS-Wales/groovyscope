@@ -9,7 +9,7 @@ when given, else `main`; "only what is staged" means `staged: true`.
 
 ## Steps
 
-1. `groovyscope.review_changes(base)`: changed files and lines from git, every finding on the changed lines
+1. `groovyscope.review_changes()` (base: the repository's default branch unless the user names one): changed files and lines from git, every finding on the changed lines
    grouped `blocking`, `shouldFix` and `nits`, pre-existing findings as counts, `impact` of changed public
    declarations, `risky` constructs added, `uncovered` methods (when a JaCoCo report exists), a `verdict`.
 2. If `classpath.state` is `stale`, say so and offer `groovyscope.refresh_classpath` before judging

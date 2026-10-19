@@ -116,7 +116,38 @@ def test_changed_files_explains_every_failure(tmp_path: Path) -> None:
         }
     )
     with pytest.raises(ValueError, match="git diff failed: boom"):
-        changes.changed_files(tmp_path, runner=broken, which=lambda _n: git)
+        changes.changed_files(tmp_path, "main", runner=broken, which=lambda _n: git)
+    nothing = fake_runner({"git rev-parse --show-toplevel": (0, "/r")})
+    with pytest.raises(ValueError, match="no default branch found"):
+        changes.changed_files(tmp_path, runner=nothing, which=lambda _n: git)
+
+
+def test_the_default_base_is_the_repositorys_default_branch(tmp_path: Path) -> None:
+    git = "/usr/bin/git"
+    from_origin = fake_runner(
+        {
+            "git rev-parse --show-toplevel": (0, "/r"),
+            "git symbolic-ref --quiet": (0, "origin/master\n"),
+            "git merge-base origin/master": (0, "abc\n"),
+            "git diff --unified=0": (0, DIFF),
+        }
+    )
+    assert changes.changed_files(tmp_path, runner=from_origin, which=lambda _n: git)["base"] == "origin/master"
+
+    def local_master(command: Sequence[str], _cwd: Path) -> tuple[int, str]:
+        return (0, "") if list(command[-1:]) == ["master^{commit}"] else (1, "")
+
+    assert changes.default_base(tmp_path, local_master) == "master"
+    assert changes.default_base(tmp_path, lambda _c, _w: (1, "")) is None
+    wrong = fake_runner(
+        {
+            "git rev-parse --show-toplevel": (0, "/r"),
+            "git symbolic-ref --quiet": (0, "origin/master"),
+            "git merge-base main": (128, "fatal: Not a valid object name main"),
+        }
+    )
+    with pytest.raises(ValueError, match=r"unknown base 'main'.*default branch is origin/master"):
+        changes.changed_files(tmp_path, "main", runner=wrong, which=lambda _n: git)
 
 
 def test_default_runner_reports_missing_binaries(tmp_path: Path) -> None:
@@ -222,3 +253,26 @@ def test_summary_comment_matches_the_verdict() -> None:
         "approve with comments", {"blocking": 0, "shouldFix": 1, "nits": 0}, impact, 0, 1
     )
     assert "`app.A.total`" in with_impact and "Nothing blocks the merge." in with_impact
+
+
+def test_triage_ranks_risks_smells_and_noise_with_the_fix_command() -> None:
+    findings = [
+        {"code": "GS002", "fixable": True},
+        {"code": "GS002"},
+        {"code": "CatchException"},
+        {"code": "GS026"},
+        {"code": "NoDef", "fixable": True},
+        {"code": "LineLength"},
+        {"code": "LineLength"},
+    ]
+    triage = changes.triage(findings, limit=5)
+    assert triage["risks"]["count"] == 3 and triage["risks"]["codes"][0] == {
+        "code": "GS002",
+        "group": "truth",
+        "count": 2,
+        "fixable": 1,
+    }
+    assert [c["code"] for c in triage["smells"]["codes"]] == ["GS026"]
+    assert triage["noise"]["count"] == 3 and triage["noise"]["codes"][0]["code"] == "LineLength"
+    assert triage["fix"] == {"count": 2, "command": "groovyscope fix --codes GS002,NoDef"}
+    assert "fix" not in changes.triage([{"code": "LineLength"}], limit=5)

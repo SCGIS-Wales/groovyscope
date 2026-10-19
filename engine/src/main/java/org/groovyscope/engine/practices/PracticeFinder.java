@@ -43,6 +43,7 @@ import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.DeclarationExpression;
 import org.codehaus.groovy.ast.expr.ElvisOperatorExpression;
 import org.codehaus.groovy.ast.expr.Expression;
+import org.codehaus.groovy.ast.expr.ListExpression;
 import org.codehaus.groovy.ast.expr.FieldExpression;
 import org.codehaus.groovy.ast.expr.GStringExpression;
 import org.codehaus.groovy.ast.expr.MapEntryExpression;
@@ -242,6 +243,28 @@ public final class PracticeFinder {
                 || expression instanceof PropertyExpression || expression instanceof FieldExpression;
     }
 
+    /**
+     * A default that is the very empty value ?: would replace ({@code name ?: ''}, {@code count ?: 0},
+     * {@code items ?: []}, {@code options ?: [:]}): an empty value comes back unchanged, so only null is
+     * defaulted and nothing valid is lost.
+     */
+    static boolean sameEmpty(ClassNode type, Expression fallback) {
+        String name = type.getName();
+        boolean map = name.contains("Map");
+        boolean collection = map || name.contains("List") || name.contains("Collection") || name.contains("Set");
+        if (fallback instanceof ConstantExpression constant) {
+            Object value = constant.getValue();
+            if (name.contains("String") || name.contains("CharSequence")) {
+                return "".equals(value);
+            }
+            return !collection && value instanceof Number number && number.doubleValue() == 0;
+        }
+        if (fallback instanceof ListExpression list) {
+            return collection && !map && list.getExpressions().isEmpty();
+        }
+        return fallback instanceof MapExpression entries && map && entries.getMapEntryExpressions().isEmpty();
+    }
+
     private static final class Visitor extends ClassCodeVisitorSupport {
         private final String uri;
         private final ModuleNode module;
@@ -426,7 +449,7 @@ public final class PracticeFinder {
                 ClassNode type = typeOf(tested);
                 if (named(type, FILE_TYPES)) {
                     report("GS004", tested, "a File or Path is truthy only if it exists (Groovy 5)", null, List.of());
-                } else if (named(type, ELVIS_SENSITIVE)) {
+                } else if (named(type, ELVIS_SENSITIVE) && !sameEmpty(type, elvis.getFalseExpression())) {
                     String testedText = source(tested);
                     String fallback = source(elvis.getFalseExpression());
                     boolean fixable = testedText != null && fallback != null && tested instanceof VariableExpression
