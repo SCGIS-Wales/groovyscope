@@ -415,6 +415,8 @@ def stop(
 ) -> bool:
     """Ask a running daemon to exit and wait for its socket to go away. False when it was not running. Holds the
     start lock, so a start racing the stop never sees the old socket and keeps it."""
+    if not socket_file.parent.is_dir():
+        return False  # no socket folder yet: no daemon was ever started there
     with start_lock(socket_file):
         return stop_unlocked(socket_file, probe_fn=probe_fn, notify=notify, sleep=sleep, timeout=timeout)
 

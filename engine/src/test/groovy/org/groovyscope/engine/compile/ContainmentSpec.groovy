@@ -30,6 +30,7 @@ class ContainmentSpec extends Specification {
     static final String GOOD = 'file:///w/Good.groovy'
     static final String DEEP = 'file:///w/Deep.groovy'
     static final String BAD = 'file:///w/Bad.groovy'
+    static final long SMALL_STACK_BYTES = 256 * 1024
 
     def 'a cancel during the parse-only pass leaves no loader open; a kept loader closes with its result'() {
         given: 'a file with a syntax error is dropped, so the compile ends with a parse-only pass'
@@ -59,12 +60,18 @@ class ContainmentSpec extends Specification {
 
     def 'a file that crashes the type checker is isolated; the others are still checked'() {
         given:
-        String deep = '@groovy.transform.CompileStatic\nclass Deep { int v() { ' + ('1 + ' * 1500) + '1 } }'
+        String deep = '@groovy.transform.CompileStatic\nclass Deep { int v() { ' + ('1 + ' * 5000) + '1 } }'
         def sources = [(GOOD): '@groovy.transform.CompileStatic\nclass Good { int n() { "x".noSuch() } }', (DEEP): deep]
 
-        when:
-        def result = new TypeCheckAnalyzer().check(sources, [], false, TypeCheckAnalyzer.CORE_ONLY,
-                EngineConfig.DEFAULTS.groovy(), [] as Set)
+        when: 'checked on a thread with a small, fixed stack, so the deep file overflows on every platform'
+        def outcome = new java.util.concurrent.atomic.AtomicReference<TypeCheckAnalyzer.Result>()
+        def worker = new Thread(null, {
+            outcome.set(new TypeCheckAnalyzer().check(sources, [], false, TypeCheckAnalyzer.CORE_ONLY,
+                    EngineConfig.DEFAULTS.groovy(), [] as Set))
+        }, 'small-stack', SMALL_STACK_BYTES)
+        worker.start()
+        worker.join(120_000)
+        def result = outcome.get()
 
         then:
         result.status()[GOOD] == TypeCheckAnalyzer.Status.CHECKED

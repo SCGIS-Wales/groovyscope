@@ -378,3 +378,8 @@ def test_a_started_daemon_is_kept_and_reaped_once_it_exits(tmp_path: Path) -> No
     assert child in daemon._CHILDREN and daemon.reap_children() == 0
     child.code = 0  # the daemon exited (idle, or stopped)
     assert daemon.reap_children() == 1 and child not in daemon._CHILDREN
+
+
+def test_stop_with_no_socket_folder_is_a_no_op(tmp_path: Path) -> None:
+    # A fresh machine has no socket folder yet: no daemon can run there, and the lock file cannot be opened.
+    assert daemon.stop(tmp_path / "never-created" / "d.sock", probe_fn=lambda _p: None) is False
