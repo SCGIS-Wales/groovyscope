@@ -38,6 +38,13 @@ def test_schema_rejects_unknown_top_level_keys() -> None:
     assert errors and "bogus" in errors[0]
 
 
+def test_the_tool_budget_stays_under_the_clients_own() -> None:
+    defaults = load_defaults()
+    for budget, valid in ((1, True), (115, True), (0.5, False), (116, False), (600, False)):
+        errors = validate_config({**defaults, "mcp": {**defaults["mcp"], "requestTimeoutSeconds": budget}})
+        assert (errors == ()) is valid, budget
+
+
 @given(mappings)
 def test_deep_merge_identity(base: dict[str, object]) -> None:
     assert deep_merge(base, {}) == base

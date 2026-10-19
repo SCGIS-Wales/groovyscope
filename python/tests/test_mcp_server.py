@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -244,12 +245,9 @@ def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(mcp_server, "build_server", build)
     assert mcp_server.serve(ROOT, Path("/s.sock"), {"mcp": {"requestTimeoutSeconds": 90}}, {}) == 0
-    assert events == [
-        ("open", Path("/s.sock")),
-        ("run", "stdio"),
-        ("groovyscope/status", 90.0),
-        ("close", session),
-    ]
+    method, timeout = events[2]
+    assert method == "groovyscope/status" and 89.0 < timeout <= 90.0  # what is left of the call's one budget
+    assert [events[0], events[1], events[3]] == [("open", Path("/s.sock")), ("run", "stdio"), ("close", session)]
 
 
 def test_explain_review_and_fix(
@@ -447,8 +445,39 @@ def test_session_caller_runs_calls_concurrently_within_the_in_flight_limit() -> 
     for thread in threads:
         thread.join(10)
     assert sorted(r["params"]["n"] for r in results) == [0, 1, 2]
-    assert all(r["timeout"] == 30.0 for r in results)
+    assert all(0 < r["timeout"] <= 30.0 for r in results)  # each request gets what is left of its one budget
     close()
+
+
+def test_a_queued_call_never_takes_longer_than_its_one_budget() -> None:
+    release = threading.Event()
+    sent: list[str] = []
+
+    def dispatch(method: str, _params: dict[str, Any], _timeout: float | None = None) -> Any:
+        sent.append(method)
+        release.wait(5)  # an engine slow to stop: the slot stays taken past the next call's deadline
+        return {"ok": method}
+
+    call = mcp_server.single_flight(dispatch, budget=0.5, max_in_flight=1, progress_every=0.1)
+    def hold() -> None:
+        with pytest.raises(RuntimeError, match="did not answer within 0s"):
+            call("groovyscope/check", {"n": 1})
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    for _ in range(50):
+        if sent:
+            break
+        release.wait(0.01)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="waited 0s for a free slot"):
+        call("groovyscope/symbols", {})
+    assert time.monotonic() - started < 0.9  # one budget, not a slot wait and then a second budget
+    release.set()
+    holder.join(5)
+    # The pool's one thread takes the late call before this one: past its deadline, it is never sent.
+    assert call("groovyscope/hover", {}) == {"ok": "groovyscope/hover"}
+    assert sent == ["groovyscope/check", "groovyscope/hover"]
 
 
 def test_session_caller_joins_identical_calls_and_reports_a_timed_out_one() -> None:

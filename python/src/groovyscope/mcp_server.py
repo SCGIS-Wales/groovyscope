@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent import futures
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -1521,7 +1521,7 @@ DEFAULT_MAX_IN_FLIGHT = 4
 RELOAD_TIMEOUT_SECONDS = 60.0
 Opener = Callable[[Path], Any]
 EngineCall = Callable[..., Any]
-Dispatch = Callable[[str, dict[str, Any]], Any]
+Dispatch = Callable[[str, dict[str, Any], float | None], Any]
 
 
 def confirm_edits(policy: str, action: str, changed: Sequence[FileEdit], root: Path) -> str:
@@ -1632,12 +1632,13 @@ def engine_dispatcher(
                 state["applied"] = None
             return state["session"]
 
-    def dispatch(method: str, params: dict[str, Any]) -> Any:
+    def dispatch(method: str, params: dict[str, Any], timeout: float | None = None) -> Any:
+        deadline = time.monotonic() + (budget if timeout is None else timeout)
         with session_lock:
             session = state["session"]
         try:
             apply_configuration(session)
-            return engine(session, method, params, timeout=budget)
+            return engine(session, method, params, timeout=max(0.001, deadline - time.monotonic()))
         except TimeoutError:
             # TimeoutError is an OSError in Python 3, but a slow engine is alive: never reconnect for it, and never
             # send the request again (the channel already told the engine to stop it).
@@ -1649,7 +1650,7 @@ def engine_dispatcher(
                 raise
             session = replace(session, exc)
             apply_configuration(session)
-            return engine(session, method, params, timeout=budget)
+            return engine(session, method, params, timeout=max(0.001, deadline - time.monotonic()))
 
     return (dispatch, lambda: closer(state["session"]))
 
@@ -1661,56 +1662,51 @@ def single_flight(
     dispatch: Dispatch, budget: float, max_in_flight: int, progress_every: float = DEFAULT_PROGRESS_SECONDS
 ) -> Call:
     """``dispatch`` behind two guardrails: at most ``max_in_flight`` calls reach the engine at a time (the rest
-    wait within ``budget``), and a call identical to one still running joins it instead of doubling the work. A
-    leader over its budget has already told the engine to stop (``channel_call`` cancels); it and its followers
-    get a "still running" answer rather than a hang."""
-    gate = threading.BoundedSemaphore(max_in_flight)
+    queue), and a call identical to one still running joins it instead of doubling the work. Every call has one
+    deadline, ``budget`` from its arrival, shared by the wait for a slot and the engine request (which is sent with
+    the time left, so the engine is told to stop it at the deadline); past it the caller gets a "still running" or
+    "no free slot" answer rather than a hang. The requests run on a pool of ``max_in_flight`` threads."""
+    pool = ThreadPoolExecutor(max_workers=max_in_flight, thread_name_prefix="groovyscope-call")
     in_flight: dict[str, Future[Any]] = {}
+    begun: set[Future[Any]] = set()
     flight_lock = threading.Lock()
 
-    def lead(key: str, method: str, params: dict[str, Any], future: Future[Any]) -> None:
+    def lead(key: str, method: str, params: dict[str, Any], future: Future[Any], deadline: float) -> None:
         try:
-            if not gate.acquire(timeout=budget):
-                msg = (
-                    f"{method} waited {budget:.0f}s for a free slot: {max_in_flight} tool calls already run on the "
-                    "engine (mcp.maxInFlight); retry in a moment"
-                )
-                raise TimeoutError(msg)
-            try:
-                future.set_result(dispatch(method, params))
-            finally:
-                gate.release()
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError(slot_message(method, budget, max_in_flight))  # queued past its deadline
+            with flight_lock:
+                begun.add(future)
+            future.set_result(dispatch(method, params, left))
         except BaseException as exc:  # every outcome must reach the waiters
             future.set_exception(exc)
         finally:
             with flight_lock:
+                begun.discard(future)
                 if in_flight.get(key) is future:
                     del in_flight[key]
 
     def call(method: str, params: dict[str, Any]) -> Any:
         key = flight_key(method, params)
         own: Future[Any] = Future()
+        deadline = time.monotonic() + budget
         with flight_lock:
             future = in_flight.setdefault(key, own)
         leader = future is own
         if leader:
-            # The request runs on its own thread so this one stays free to tell the client it is still waiting.
-            threading.Thread(
-                target=lead, args=(key, method, params, future), name=f"groovyscope-call-{method}", daemon=True
-            ).start()
-        # The leader's request is bounded (a slot within the budget, then the engine within the budget); a
-        # follower waits one budget for someone else's work.
-        deadline = None if leader else time.monotonic() + budget
+            # The request runs on the pool so this thread stays free to tell the client it is still waiting.
+            pool.submit(lead, key, method, params, future, deadline)
         started = time.monotonic()
         while True:
-            left = None if deadline is None else deadline - time.monotonic()
-            if left is not None and left <= 0:
-                msg = (
-                    f"{method} did not answer within {budget:.0f}s; another call is still running it. "
-                    "Narrow the paths or retry in a moment"
-                )
-                raise RuntimeError(msg)
-            done, _ = futures.wait([future], timeout=progress_every if left is None else min(progress_every, left))
+            left = deadline - time.monotonic()
+            if left <= 0:
+                with flight_lock:
+                    sent = future in begun
+                if leader and not sent:
+                    raise RuntimeError(slot_message(method, budget, max_in_flight))
+                raise RuntimeError(late_message(method, budget, leader=leader))
+            done, _ = futures.wait([future], timeout=min(progress_every, left))
             if done:
                 break
             waited = time.monotonic() - started
@@ -1718,13 +1714,23 @@ def single_flight(
         try:
             return future.result()
         except TimeoutError as exc:
-            msg = (
-                f"{method} did not answer within {budget:.0f}s; the engine was told to stop it. "
-                "Narrow the paths or retry in a moment"
-            )
-            raise RuntimeError(msg) from exc
+            if str(exc).startswith(f"{method} waited"):
+                raise RuntimeError(str(exc)) from exc
+            raise RuntimeError(late_message(method, budget, leader=True)) from exc
 
     return call
+
+
+def slot_message(method: str, budget: float, max_in_flight: int) -> str:
+    return (
+        f"{method} waited {budget:.0f}s for a free slot: {max_in_flight} tool calls already run on the engine "
+        "(mcp.maxInFlight); retry in a moment"
+    )
+
+
+def late_message(method: str, budget: float, *, leader: bool) -> str:
+    who = "the engine was told to stop it" if leader else "another call is still running it"
+    return f"{method} did not answer within {budget:.0f}s; {who}. Narrow the paths or retry in a moment"
 
 
 def session_caller(

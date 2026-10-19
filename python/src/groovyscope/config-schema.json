@@ -526,7 +526,8 @@
       "properties": {
         "requestTimeoutSeconds": {
           "type": "number",
-          "exclusiveMinimum": 0
+          "minimum": 1,
+          "maximum": 115
         },
         "maxInFlight": {
           "type": "integer",

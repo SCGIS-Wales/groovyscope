@@ -40,7 +40,7 @@ daemon:
   logMaxBytes: 5000000    # the daemon log and the engine's log file (logging.file) are rotated past this size
   logsKept: 3             # rotated daemon logs kept; `groovyscope checkup --fix` removes the rest
 mcp:
-  requestTimeoutSeconds: 100  # budget per tool call, under Kiro's 120 s; over it the tool says "still running" and cancels
+  requestTimeoutSeconds: 100  # budget per tool call (1 to 115), under Kiro's 120 s; over it the tool says "still running"
   maxInFlight: 4          # tool calls the server runs on the engine at a time; the rest wait within the same budget
   confirmWrites: "auto"   # auto: fix, format and rename with apply, refresh_classpath and draw.io writes ask the user
                           # first when the client supports MCP elicitation; never: the client's own approval only
