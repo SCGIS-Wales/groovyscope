@@ -39,7 +39,9 @@ class TypeCheckAnalyzerSpec extends Specification {
         then:
         result[typed].any { it.message().contains('lenght') && it.source() == TypeCheckAnalyzer.SOURCE }
         result[typed].every { it.code() == 'typecheck' && it.uri() == typed }
-        result[messy].empty
+        // groovy-typecheckers 6.0.0's FormatStringChecker throws on this workspace; that used to be dropped silently
+        // and is now one warning on the first document instead of a clean-looking result.
+        result[messy].every { it.code() == 'typecheck-incomplete' && it.message().contains('NullPointerException') }
     }
 
     def 'only sources that mention static typing can need the type check'() {

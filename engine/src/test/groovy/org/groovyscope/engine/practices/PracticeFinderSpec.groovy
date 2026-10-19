@@ -172,8 +172,8 @@ class PracticeFinderSpec extends Specification {
         then: '@CompileDynamic is the default made explicit; @CompileStatic and GS011 change behaviour'
         annotation('Clean.groovy') == null
         result.needsReview()[uri('Clean.groovy')].CompileStatic == 1
-        annotation('Numbers.groovy') == '@CompileDynamic'
-        annotation('Logging.groovy') == '@CompileDynamic'
+        annotation('Numbers.groovy').startsWith('@CompileDynamic // TODO justify')
+        annotation('Logging.groovy').startsWith('@CompileDynamic')
         result.applied()[uri('ThingSpec.groovy')] == null
         result.needsReview()[uri('ThingSpec.groovy')] == [GS011: 1]
         result.needsReview()[uri('Numbers.groovy')].keySet().containsAll(['GS001', 'GS002', 'GS003'])
@@ -185,7 +185,7 @@ class PracticeFinderSpec extends Specification {
 
         then: '@CompileStatic only where the class then type-checks, and never in tests'
         namedAnnotation('Clean.groovy') == '@CompileStatic'
-        namedAnnotation('Numbers.groovy') == '@CompileDynamic'
+        namedAnnotation('Numbers.groovy').startsWith('@CompileDynamic')
         named.applied()[uri('ThingSpec.groovy')] == ['GS011']
 
         when: 'only some codes'

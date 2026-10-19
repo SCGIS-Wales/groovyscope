@@ -82,7 +82,19 @@ public final class PracticeFixes {
                 annotate(diagnostic, lines, module, target, "CompileDynamic", ADD_COMPILE_DYNAMIC));
     }
 
-    static ClassNode classOnLine(ModuleNode module, int line) {
+    /** The {@code @CompileDynamic} option with a reminder that the choice still needs its reason written down. */
+    public static CodeAction justifyDynamic(CodeAction dynamic) {
+        List<TextEdit> edits = new ArrayList<>();
+        for (TextEdit edit : dynamic.edits()) {
+            edits.add(edit.newText().endsWith("@CompileDynamic\n")
+                    ? new TextEdit(edit.range(), edit.newText().replace("@CompileDynamic\n",
+                            "@CompileDynamic // TODO justify why this class stays dynamic (it does not type-check)\n"))
+                    : edit);
+        }
+        return new CodeAction(dynamic.title(), dynamic.diagnostic(), edits);
+    }
+
+    public static ClassNode classOnLine(ModuleNode module, int line) {
         if (module == null) {
             return null;
         }

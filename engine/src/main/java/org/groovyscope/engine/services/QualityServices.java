@@ -718,7 +718,7 @@ public final class QualityServices {
         Map<String, Map<String, Integer>> left = new TreeMap<>();
         Map<String, String> rejected = new TreeMap<>();
         Map<String, Map<String, Integer>> needsReview = new TreeMap<>();
-        Map<String, Boolean> staticOk = staticVerdicts(targets, sources, codes);
+        Map<String, Map<String, Boolean>> staticOk = staticVerdicts(targets, sources, codes);
         for (String uri : targets) {
             org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             String text = sources.get(uri);
@@ -793,8 +793,8 @@ public final class QualityServices {
         return false;
     }
 
-    private List<CodeAction> chooseFixes(String uri, String text, Set<String> codes, Map<String, Boolean> staticOk,
-            Map<String, Integer> missed, List<int[]> only) {
+    private List<CodeAction> chooseFixes(String uri, String text, Set<String> codes,
+            Map<String, Map<String, Boolean>> staticOk, Map<String, Integer> missed, List<int[]> only) {
         TextLines lines = new TextLines(text);
         org.codehaus.groovy.ast.ModuleNode module = navigation.snapshot().result().modules().get(uri);
         List<CodeAction> chosen = new ArrayList<>();
@@ -810,7 +810,17 @@ public final class QualityServices {
             }
             List<CodeAction> options = PracticeFixes.lintFixes(diagnostic, lines, module);
             if ("CompileStatic".equals(diagnostic.code()) && options.size() == 2) {
-                chosen.add(staticOk.getOrDefault(uri, false) ? options.get(0) : options.get(1));
+                org.codehaus.groovy.ast.ClassNode target = PracticeFixes.classOnLine(module,
+                        diagnostic.range().start().line());
+                Boolean passes = target == null ? null : staticOk.getOrDefault(uri, Map.of()).get(target.getName());
+                if (passes == null) {
+                    missed.merge(diagnostic.code(), 1, Integer::sum); // not type-checked: no verdict, no annotation
+                } else if (passes) {
+                    chosen.add(options.get(0));
+                } else {
+                    chosen.add(PracticeFixes.justifyDynamic(options.get(1)));
+                    missed.merge(diagnostic.code(), 1, Integer::sum); // left dynamic, to justify
+                }
             } else if (!options.isEmpty()) {
                 chosen.add(options.get(0));
             } else if (FIXABLE_LINT_CODES.contains(diagnostic.code())) {
@@ -827,13 +837,16 @@ public final class QualityServices {
     }
 
     /**
-     * For every target document with a {@code CompileStatic} finding that offers the annotation as its first
-     * option: whether the document still passes the static type checker with that option applied. One
-     * whole-workspace type check for the whole {@code fix} call, with every candidate applied at once, instead
-     * of one per finding: the checker reports each class on its own, so the verdicts stay independent.
+     * For every class with a {@code CompileStatic} finding in the target documents: whether it passes Groovy's own
+     * static type checker once annotated (per document, then per class name). Every class of a document is annotated
+     * in one trial text, all documents are checked in one whole-workspace pass, and each error is charged to the class
+     * that holds it. A class is absent when its document could not be checked (unresolved, timed out, crashed): it
+     * gets no annotation either way.
      */
-    private Map<String, Boolean> staticVerdicts(Collection<String> uris, Map<String, String> sources, Set<String> codes) {
+    private Map<String, Map<String, Boolean>> staticVerdicts(Collection<String> uris, Map<String, String> sources,
+            Set<String> codes) {
         Map<String, String> candidates = new java.util.LinkedHashMap<>();
+        Map<String, Set<String>> classes = new HashMap<>();
         for (String uri : uris) {
             String text = sources.get(uri);
             if (text == null || WorkspaceModel.isJavaUri(uri)) {
@@ -841,15 +854,22 @@ public final class QualityServices {
             }
             TextLines lines = new TextLines(text);
             org.codehaus.groovy.ast.ModuleNode module = navigation.snapshot().result().modules().get(uri);
+            List<TextEdit> edits = new ArrayList<>();
             for (Diagnostic diagnostic : lint(uri, text, null)) {
                 if (!"CompileStatic".equals(diagnostic.code())
                         || (codes != null && !codes.isEmpty() && !codes.contains(diagnostic.code()))) {
                     continue;
                 }
                 List<CodeAction> options = PracticeFixes.lintFixes(diagnostic, lines, module);
-                if (options.size() == 2) {
-                    candidates.put(uri, PracticeFixes.apply(text, options.get(0).edits()).text());
+                org.codehaus.groovy.ast.ClassNode target = PracticeFixes.classOnLine(module,
+                        diagnostic.range().start().line());
+                if (options.size() == 2 && target != null) {
+                    options.get(0).edits().stream().filter(edit -> !edits.contains(edit)).forEach(edits::add);
+                    classes.computeIfAbsent(uri, k -> new java.util.LinkedHashSet<>()).add(target.getName());
                 }
+            }
+            if (!edits.isEmpty()) {
+                candidates.put(uri, PracticeFixes.apply(text, edits).text());
             }
         }
         if (candidates.isEmpty()) {
@@ -857,12 +877,26 @@ public final class QualityServices {
         }
         Map<String, String> trial = new java.util.LinkedHashMap<>(workspace.compileSources());
         trial.putAll(candidates);
-        Map<String, List<Diagnostic>> typed = typeChecker.analyze(trial, workspace.classpath(),
-                workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
-                navigation.snapshot().result().unresolvedUris());
-        Map<String, Boolean> verdicts = new HashMap<>();
-        for (String uri : candidates.keySet()) {
-            verdicts.put(uri, typed.getOrDefault(uri, List.of()).isEmpty());
+        TypeCheckAnalyzer.Result typed = typeChecker.check(trial, workspace.classpath(), workspace.config().trust(),
+                TypeCheckAnalyzer.CORE_ONLY, workspace.config().groovy(), navigation.snapshot().result().unresolvedUris());
+        Map<String, Map<String, Boolean>> verdicts = new HashMap<>();
+        for (Map.Entry<String, String> candidate : candidates.entrySet()) {
+            String uri = candidate.getKey();
+            if (typed.status().get(uri) != TypeCheckAnalyzer.Status.CHECKED) {
+                continue;
+            }
+            org.codehaus.groovy.ast.ModuleNode annotated = compiler.parseOnly(uri, candidate.getValue()).orElse(null);
+            Set<String> failing = new java.util.HashSet<>();
+            for (Diagnostic error : typed.diagnostics().getOrDefault(uri, List.of())) {
+                org.codehaus.groovy.ast.ClassNode holder = PracticeFixes.classOnLine(annotated,
+                        error.range().start().line());
+                failing.add(holder == null ? "" : holder.getName());
+            }
+            Map<String, Boolean> perClass = new HashMap<>();
+            for (String name : classes.get(uri)) {
+                perClass.put(name, !failing.contains(name) && !failing.contains(""));
+            }
+            verdicts.put(uri, perClass);
         }
         return verdicts;
     }
