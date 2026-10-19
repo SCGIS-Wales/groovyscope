@@ -23,6 +23,7 @@ import click
 
 from groovyscope import (
     __version__,
+    atomic,
     benchmark,
     changes,
     checks,
@@ -200,7 +201,7 @@ def config_hash_or_none(obj: dict[str, Any]) -> str | None:
     except (ValueError, OSError):
         return None
     hand_over_config(obj, effective)
-    return config_hash()
+    return config_hash(obj)
 
 
 @main.group("benchmark")
@@ -651,15 +652,49 @@ def discover_profiles(obj: dict[str, Any], effective: dict[str, Any]) -> profile
     return found
 
 
-def hand_over_config(obj: dict[str, Any], effective: dict[str, Any]) -> None:
-    """The engine reads the validated, effective configuration from the environment (see EngineConfig)."""
+def hand_over_config(obj: dict[str, Any], effective: dict[str, Any]) -> str:
+    """The validated, effective configuration for the engine (see EngineConfig), as JSON. It is kept in ``obj``
+    (never in this process's environment, which MCP threads share) and written, private and atomically, to the
+    file the engine is started with (``--config``): a long classpath would not fit in an environment variable."""
     found = discover_profiles(obj, effective)
     trusted = bool(effective["workspace"].get("trust"))
     if not trusted:
         for note in profiles.untrusted_jar_notes(found, obj["root"]):
             click.echo(f"groovyscope: {note}", err=True)
     runtime = profiles.engine_profiles(found, obj["root"], trusted=trusted)
-    os.environ[CONFIG_ENV] = json.dumps(engine_view(obj, effective, runtime), sort_keys=True)
+    text = json.dumps(engine_view(obj, effective, runtime), sort_keys=True)
+    target = engine_config_file(obj["root"], dict(os.environ))
+    daemon_lifecycle.secure_dir(target.parent)
+    atomic.write_text(target, text, mode=atomic.PRIVATE_MODE)
+    obj["engine_config"] = text
+    obj["engine_config_file"] = target
+    return text
+
+
+ENV_CONFIG_LIMIT_BYTES = 96 * 1024  # Linux refuses one environment string over 128 KiB (MAX_ARG_STRLEN)
+
+
+def engine_config_file(root: Path, environ: Mapping[str, str]) -> Path:
+    """Where the engine configuration of a workspace is written for the engine to read."""
+    return daemon_lifecycle.cache_dir(environ) / "config" / f"{daemon_lifecycle.workspace_key(root)}.json"
+
+
+def engine_environ(obj: dict[str, Any], environ: Mapping[str, str]) -> dict[str, str]:
+    """The environment for an engine process: ``environ`` with the configuration in GROOVYSCOPE_CONFIG_JSON when it
+    is small enough to fit (older engines read only that), and without it otherwise (``--config`` carries it)."""
+    env = dict(environ)
+    text = str(obj.get("engine_config") or "")
+    if text and len(text.encode("utf-8")) <= ENV_CONFIG_LIMIT_BYTES:
+        env[CONFIG_ENV] = text
+    else:
+        env.pop(CONFIG_ENV, None)
+    return env
+
+
+def config_arguments(obj: dict[str, Any]) -> list[str]:
+    """``--config <file>`` when the configuration was written, for the engine command line."""
+    target = obj.get("engine_config_file")
+    return ["--config", str(target)] if target else []
 
 
 def daemon_paths(root: Path) -> tuple[Path, Path, Path]:
@@ -672,24 +707,24 @@ def daemon_paths(root: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def config_hash() -> str:
+def config_hash(obj: dict[str, Any]) -> str:
     """SHA-256 of the configuration handed to the engine, as the engine reports it in its status."""
-    return hashlib.sha256(os.environ.get(CONFIG_ENV, "").encode("utf-8")).hexdigest()
+    return hashlib.sha256(str(obj.get("engine_config") or "").encode("utf-8")).hexdigest()
 
 
 RELOAD_METHOD = "groovyscope/reloadConfig"
 RELOAD_TIMEOUT_SECONDS = 60.0
 
 
-def reload_if_stale(socket_file: Path, status: dict[str, Any]) -> bool:
+def reload_if_stale(obj: dict[str, Any], socket_file: Path, status: dict[str, Any]) -> bool:
     """A daemon running another configuration (a re-exported classpath, an edited .groovyscope.yaml, changed
     profiles) is handed the current one and applies it in place. True when a reload was sent and accepted; when
     the engine cannot take it, the user is told how to restart instead."""
     running = status.get("configHash")
-    if not (isinstance(running, str) and running and running != config_hash()):
+    if not (isinstance(running, str) and running and running != config_hash(obj)):
         return False
     try:
-        _RPC(socket_file, RELOAD_METHOD, {"config": os.environ.get(CONFIG_ENV, "")}, RELOAD_TIMEOUT_SECONDS)
+        _RPC(socket_file, RELOAD_METHOD, {"config": str(obj.get("engine_config") or "")}, RELOAD_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(
             f"groovyscope: the daemon runs an older configuration and could not reload it ({exc}); "
@@ -727,13 +762,13 @@ def config_source(obj: dict[str, Any]) -> Callable[[], tuple[str, str] | None]:
             return value[0]
         try:
             effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
-            hand_over_config(obj, effective)
+            text = hand_over_config(obj, effective)
         except (ValueError, OSError) as exc:
             LOG.warning("configuration not reloaded: %s", exc)
             memo["stamp"] = stamp
             return value[0]
         memo.update({"stamp": stamp, "effective": effective})
-        value[0] = (config_hash(), os.environ[CONFIG_ENV])
+        value[0] = (config_hash(obj), text)
         return value[0]
 
     return current
@@ -743,17 +778,22 @@ def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, 
     """Start the workspace daemon when needed (replacing one from another engine version). Raises on failure."""
     socket_file, log_file, cache = daemon_paths(obj["root"])
     daemon_command = daemon_lifecycle.daemon_command(
-        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache, obj["root"]
+        command,
+        socket_file,
+        int(effective["daemon"]["idleTimeoutMinutes"]),
+        cache,
+        obj["root"],
+        config_file=obj.get("engine_config_file"),
     )
     status = daemon_lifecycle.ensure_running(
         daemon_command,
         socket_file,
         log_file,
-        dict(os.environ),
+        engine_environ(obj, os.environ),
         expected_engine=obj.get("engine_version"),
         settings=effective.get("daemon", {}),
     )
-    reload_if_stale(socket_file, status)
+    reload_if_stale(obj, socket_file, status)
     return (socket_file, status)
 
 
@@ -922,7 +962,16 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
         code = run_through_daemon(obj, command, effective)
         if code is not None:
             sys.exit(code)
-    _EXEC(command[0], [*command, "lsp", "--stdio", "--cache-dir", str(daemon_paths(obj["root"])[2])])
+    # The engine replaces this process, which only now runs no other thread: its environment is the engine's.
+    engine_env = engine_environ(obj, os.environ)
+    if CONFIG_ENV in engine_env:
+        os.environ[CONFIG_ENV] = engine_env[CONFIG_ENV]
+    else:
+        os.environ.pop(CONFIG_ENV, None)
+    _EXEC(
+        command[0],
+        [*command, "lsp", "--stdio", "--cache-dir", str(daemon_paths(obj["root"])[2]), *config_arguments(obj)],
+    )
 
 
 @main.command()
@@ -2032,7 +2081,7 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int) -> No
     status = daemon_lifecycle.probe(socket_file)
     if status is not None:
         hand_over_config(obj, load_config(obj["root"], obj["config_path"], dict(os.environ)))
-        if reload_if_stale(socket_file, status):
+        if reload_if_stale(obj, socket_file, status):
             click.echo("the running daemon reloaded the new classpath; the next request recompiles against it")
         else:
             try:

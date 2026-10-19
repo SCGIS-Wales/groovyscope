@@ -145,7 +145,8 @@ def test_engine_receives_discovered_profiles(
     engine["responses"]["groovyscope/check"] = {"diagnostics": {}, "summary": {}}
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "check"])
     assert "profile skipped" in result.output and "bad.yaml" in result.output
-    handed = json.loads(cli.os.environ[cli.CONFIG_ENV])
+    handed = json.loads(cli.engine_config_file(tmp_path, dict(cli.os.environ)).read_text(encoding="utf-8"))
+    assert cli.os.environ.get(cli.CONFIG_ENV, "") == ""  # the process environment is never written
     assert handed["profiles"] == [{"name": "p", "target": {"groovy": "5.1"}}]
 
 
