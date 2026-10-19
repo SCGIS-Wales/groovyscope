@@ -39,7 +39,12 @@ def read_message(stream: Any) -> dict[str, Any]:
 
 
 def engine_available() -> bool:
-    return locate_jar()["path"] is not None and discover_jdk() is not None
+    """Whether the engine tests can run; with GROOVYSCOPE_REQUIRE_ENGINE=1 (CI) a missing JAR or JDK fails the run
+    instead of skipping its integration tests."""
+    found = locate_jar()["path"] is not None and discover_jdk() is not None
+    if not found and os.environ.get("GROOVYSCOPE_REQUIRE_ENGINE") == "1":
+        pytest.fail("GROOVYSCOPE_REQUIRE_ENGINE=1, but no engine JAR or JDK was found", pytrace=False)
+    return found
 
 
 @pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
