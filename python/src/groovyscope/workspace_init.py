@@ -45,6 +45,32 @@ def detect_roots(root: Path) -> list[str]:
     return found
 
 
+SOURCE_SET_LANGUAGES = ("groovy", "java")
+
+
+def source_sets(root: Path) -> list[str]:
+    """``src/<set>/groovy`` and ``src/<set>/java`` for every Gradle source set on disk (``integrationTest``, ``it``,
+    ``testFixtures`` as well as ``main`` and ``test``), so tests outside the usual roots are analysed too."""
+    source = root / "src"
+    if not source.is_dir():
+        return []
+    return [
+        f"src/{folder.name}/{language}"
+        for folder in sorted(source.iterdir())
+        if folder.is_dir()
+        for language in SOURCE_SET_LANGUAGES
+        if (folder / language).is_dir()
+    ]
+
+
+def with_source_sets(root: Path, workspace: dict[str, Any]) -> dict[str, Any]:
+    """``workspace`` with the discovered source sets added to ``sourceRoots`` when ``sourceSets`` is on."""
+    if not workspace.get("sourceSets", True):
+        return workspace
+    roots = [str(r) for r in workspace.get("sourceRoots") or []]
+    return {**workspace, "sourceRoots": list(dict.fromkeys([*roots, *source_sets(root)]))}
+
+
 def detect_groovy_version(root: Path) -> str | None:
     """``5.1`` / ``6.0``: the major.minor of the Groovy dependency a build file declares, when one does."""
     for name in BUILD_FILES:

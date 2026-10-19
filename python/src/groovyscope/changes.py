@@ -20,7 +20,9 @@ Runner = Callable[[Sequence[str], Path], tuple[int, str]]
 Which = Callable[[str], str | None]
 
 GIT_TIMEOUT_SECONDS = 60
-REVIEWED_SUFFIXES = (".groovy", ".gvy", ".gy", ".gsh", ".gradle")
+# Java joins the review for the impact of its declarations and the tests a change reaches (src/it/java and the like);
+# the engine reports no lint findings on it.
+REVIEWED_SUFFIXES = (".groovy", ".gvy", ".gy", ".gsh", ".gradle", ".java")
 REVIEWED_NAMES = ("Jenkinsfile",)
 HUNK = re.compile(r"^@@ -(?P<old>\d+)(?:,(?P<old_count>\d+))? \+(?P<new>\d+)(?:,(?P<new_count>\d+))? @@")
 BLOCKING_GROUPS = frozenset({"security", "runtime"})

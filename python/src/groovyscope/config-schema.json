@@ -85,6 +85,9 @@
         "trust": {
           "type": "boolean"
         },
+        "sourceSets": {
+          "type": "boolean"
+        },
         "javaSources": {
           "type": "boolean"
         },
@@ -438,6 +441,23 @@
         "sharedHelperCallers": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runTasks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_:-]*$"
+          }
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 10
         }
       }
     },

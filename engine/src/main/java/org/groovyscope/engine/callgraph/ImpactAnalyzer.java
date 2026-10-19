@@ -40,6 +40,7 @@ import org.groovyscope.engine.semantics.Members;
 import org.groovyscope.engine.semantics.Resolution;
 import org.groovyscope.engine.semantics.Resolver;
 import org.groovyscope.engine.semantics.Symbols;
+import org.groovyscope.engine.workspace.TestSources;
 
 /**
  * Turns the call graph into an answer to "what breaks if I change this?". Name-only matches are reported
@@ -195,9 +196,8 @@ public final class ImpactAnalyzer {
         String uri = location.uri();
         String container = site.caller().container() == null ? "" : site.caller().container();
         String name = site.caller().name() == null ? "" : site.caller().name();
-        return uri.contains("/src/test/") || uri.contains("/test/groovy/")
-                || container.endsWith("Spec") || container.endsWith("Test")
-                || name.endsWith("Spec") || name.endsWith("Test");
+        return uri.contains("/src/test/") || uri.contains("/test/groovy/") || TestSources.isTestPath(uri)
+                || TestSources.isTestName(container) || name.endsWith("Spec") || name.endsWith("Test");
     }
 
     static int score(ASTNode declaration, Change change, List<CallSite> direct, List<CallSite> transitive,

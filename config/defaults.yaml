@@ -11,6 +11,7 @@ jdk:
   vendor: "temurin"       # JDK autoProvision downloads: temurin (Eclipse Temurin) | corretto (Amazon Corretto)
 workspace:
   sourceRoots: ["src/main/groovy", "src/test/groovy", "src/main/java", "src/test/java", "vars"]
+  sourceSets: true        # also every src/<set>/groovy and src/<set>/java (integrationTest, it, testFixtures, ...)
   javaSources: true       # compile .java files under the roots too, so Groovy code resolves the project's Java classes
   classpath: []           # jars/dirs added to the analysis classpath; never inferred silently
   classpathFile: ".groovyscope/classpath.txt"  # written by `groovyscope classpath`; its entries join `classpath`
@@ -84,6 +85,9 @@ duplicates:
   minStatements: 3        # ... and in statements
 diagram:
   sharedHelperCallers: 5  # relationship_graph: a node called from this many others is drawn once ("called from N") and named inside its callers' boxes instead of a line each; 0 draws every line
+verify:
+  runTasks: ["test"]      # test tasks `groovyscope verify` runs; affected tests of other tasks (integrationTest) are listed for CI
+  timeoutSeconds: 1800    # the Gradle run's budget
 reports:
   sarif: []               # SARIF logs merged into check and review (SpotBugs, other SAST); empty = build/reports/spotbugs/*.sarif* when present
   jacoco: "build/reports/jacoco/test/jacocoTestReport.xml"  # read by coverage_gaps and `groovyscope coverage`

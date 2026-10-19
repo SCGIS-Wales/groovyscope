@@ -38,6 +38,7 @@ from groovyscope import (
     reports,
     rpc,
     trust,
+    verify,
     workspace_init,
 )
 from groovyscope import classpath as classpath_export
@@ -627,7 +628,7 @@ def engine_view(
         if lint.get("jenkinsRuleset")
         else str(bundled_config("codenarc/jenkins.groovy"))
     )
-    workspace = dict(effective.get("workspace", {}))
+    workspace = workspace_init.with_source_sets(Path(obj["root"]), dict(effective.get("workspace", {})))
     listed = workspace.get("classpathFile")
     if listed:
         exported = classpath_export.read_file(Path(obj["root"]) / Path(listed).expanduser())
@@ -1100,6 +1101,67 @@ def review_command(
         sys.exit(1)
 
 
+def run_build(command: Sequence[str], cwd: Path, timeout: int) -> tuple[int, str]:
+    """Run the project's build (``groovyscope verify``); the exit code and the combined output."""
+    try:
+        done = subprocess.run(list(command), cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
+    except FileNotFoundError as exc:
+        return (-1, f"cannot run {command[0]}: {exc}")
+    except subprocess.TimeoutExpired:
+        return (-2, f"the build ran longer than {timeout}s (verify.timeoutSeconds) and was stopped")
+    return (done.returncode, (done.stdout or "") + (done.stderr or ""))
+
+
+_VERIFY_RUNNER: Callable[[Sequence[str], Path, int], tuple[int, str]] = run_build
+
+
+@main.command("verify")
+@click.option("--base", default=None, help="Base branch (default: the repository's default branch).")
+@click.option("--staged", is_flag=True, help="Verify the index instead of the branch.")
+@click.option("--dry-run", is_flag=True, help="Print the plan and the Gradle command without running it.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def verify_command(obj: dict[str, Any], *, base: str | None, staged: bool, dry_run: bool, as_json: bool) -> None:
+    """Verify the change in one step: review the changed lines, then compile the changed source sets and run the
+    tests the change reaches (through the call graph) with one Gradle command. Tests of tasks outside
+    `verify.runTasks` (integration tests that need CI credentials) are listed, not run. Exit 1 on a failed build
+    or test, or a blocking finding."""
+    socket_file, effective = daemon_socket_for(obj)
+    tools = workspace_tools(obj, socket_file, effective)
+    result = tools["review_changes"](base, staged, 8)
+    if result.get("error"):
+        click.echo(f"groovyscope: {result['error']}", err=True)
+        sys.exit(1)
+    plan_result = result.get("tests") or {}
+    lines = [f"verify against {result.get('base')}: {result.get('verdict')}"]
+    lines += triage_lines(result.get("triage") or {})
+    lines += verify.test_lines(plan_result)
+    gradle: dict[str, Any] | None = None
+    args = plan_result.get("commandArgs")
+    if args and not dry_run:
+        timeout = int((effective.get("verify") or {}).get("timeoutSeconds", 1800))
+        code, output = _VERIFY_RUNNER(args, obj["root"], timeout)
+        gradle = {"exitCode": code, "failed": verify.failed_tests(output)}
+        if code == 0:
+            lines.append("build: passed")
+        else:
+            gradle["tail"] = verify.tail(output)
+            lines.append(f"build: FAILED (exit {code})")
+            lines += [f"  failed: {name}" for name in gradle["failed"]]
+            lines += [f"  {line}" for line in gradle["tail"] if not gradle["failed"]]
+    elif args:
+        lines.append("dry run: nothing was built")
+    blocking = int((result.get("counts") or {}).get("blocking", 0))
+    if as_json:
+        keys = ("base", "mode", "verdict", "triage", "tests", "counts", "files")
+        click.echo(compact_json({**{k: result.get(k) for k in keys}, "build": gradle}))
+    else:
+        for line in lines:
+            click.echo(line)
+    if blocking or (gradle is not None and gradle["exitCode"] != 0):
+        sys.exit(1)
+
+
 def tool_settings(effective: Mapping[str, Any], classpath: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """What the MCP tools read beyond the output section: duplicate thresholds, the build's reports and the
     classpath file to watch."""
@@ -1108,6 +1170,7 @@ def tool_settings(effective: Mapping[str, Any], classpath: Mapping[str, Any] | N
         "duplicates": effective.get("duplicates", {}),
         "diagram": effective.get("diagram", {}),
         "reports": reports.reports_settings(effective),
+        "verify": effective.get("verify", {}),
         "classpath": dict(classpath or {}),
         "mcp": dict(effective.get("mcp") or {}),
     }
@@ -1168,6 +1231,7 @@ def render_review(result: dict[str, Any]) -> list[str]:
             if items:
                 lines.append(f"{title} ({result['counts'][name]}):")
                 lines += [f"  {f['path']}:{f['line']}: [{f.get('code')}] {f.get('message')}" for f in items]
+        lines += verify.test_lines(result.get("tests") or {})
         for report in result.get("impact", []):
             lines.append(
                 f"impact: {report['symbol']} ({report['kind']}, {report['path']}) risk {report['riskLevel']}, "

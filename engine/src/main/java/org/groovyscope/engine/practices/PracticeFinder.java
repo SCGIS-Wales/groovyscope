@@ -70,6 +70,7 @@ import org.groovyscope.engine.model.Diagnostic.Severity;
 import org.groovyscope.engine.model.Range;
 import org.groovyscope.engine.model.TextEdit;
 import org.groovyscope.engine.semantics.Members;
+import org.groovyscope.engine.workspace.TestSources;
 
 /**
  * groovyscope's own practice diagnostics, GS001 to GS012 (docs/practices.md, section 16). Each one reports only
@@ -281,7 +282,8 @@ public final class PracticeFinder {
             this.lines = lines;
             this.config = config;
             this.out = out;
-            this.production = !uri.contains("/src/test/") && !uri.contains("/test/groovy/");
+            this.production = !uri.contains("/src/test/") && !uri.contains("/test/groovy/")
+                    && !TestSources.isTestPath(uri);
         }
 
         @Override

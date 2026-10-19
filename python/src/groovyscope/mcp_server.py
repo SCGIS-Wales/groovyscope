@@ -31,6 +31,7 @@ from groovyscope import (
     reports,
     rpc,
     skills,
+    verify,
 )
 from groovyscope import classpath as classpath_export
 from groovyscope.edits import (
@@ -859,6 +860,7 @@ def review_tools(
     *,
     others: Mapping[str, Callable[..., Any]],
     report_settings: Mapping[str, Any] | None = None,
+    verify_settings: Mapping[str, Any] | None = None,
 ) -> dict[str, Callable[..., Any]]:
     """review_changes: the merge request review, composed from git, the build's reports and the other tools."""
     settings = report_settings or {}
@@ -870,7 +872,9 @@ def review_tools(
         shouldFix and nits, pre-existing findings elsewhere in those files as counts, the impact of changed
         declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), a
         `triage` that ranks the changed-line findings into risks, smells and noise with how many the safe fixes
-        repair and the `groovyscope fix` command, and a one-sentence verdict, plus `comments` (path, line, body)
+        repair and the `groovyscope fix` command, `tests`: the test methods the change reaches (through the call
+        graph, Java tests included) with the Gradle command that compiles and runs them (`groovyscope verify` runs
+        it), and a one-sentence verdict, plus `comments` (path, line, body)
         ready to post as inline merge request discussions and a `summaryComment` for the merge request itself.
         Nothing is run but git."""
         try:
@@ -884,7 +888,9 @@ def review_tools(
         ]
         result: dict[str, Any] = {"base": change["base"], "mode": change["mode"], "files": shown[:cap]}
         if not existing:
-            result["verdict"] = f"nothing to review: no Groovy, Gradle or Jenkinsfile changes against {change['base']}"
+            result["verdict"] = (
+                f"nothing to review: no Groovy, Java, Gradle or Jenkinsfile changes against {change['base']}"
+            )
             return result
         ranges = changes.ranges_by_path(change)
         paths = [f["path"] for f in existing]
@@ -900,12 +906,15 @@ def review_tools(
         buckets = changes.bucket(inside)
         limit = max(1, min(top, cap))
         impact: list[dict[str, Any]] = []
+        reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
         for file in existing[:cap]:
+            if len(reports) >= verify.MAX_DECLARATIONS:
+                break
             outline = flat_outline(
                 call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
             )
-            for declaration in changes.touched_declarations(outline, file["ranges"], limit=limit):
-                if len(impact) >= limit:
+            for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
+                if len(reports) >= verify.MAX_DECLARATIONS:
                     break
                 container, _, member = declaration["symbol"].rpartition(".")
                 target = (
@@ -917,6 +926,9 @@ def review_tools(
                 if not report.get("found"):
                     continue
                 first = report["reports"][0]
+                reports.append(first)
+                if len(impact) >= limit:
+                    continue
                 impact.append(
                     {
                         **declaration,
@@ -945,6 +957,7 @@ def review_tools(
             {
                 "verdict": changes.verdict(buckets, risky, impact),
                 "triage": changes.triage(inside, limit=limit),
+                "tests": verify.plan(root, reports, paths, verify_settings or {}, limit=limit),
                 "blocking": buckets["blocking"][:limit],
                 "shouldFix": buckets["shouldFix"][:limit],
                 "nits": buckets["nits"][:limit],
@@ -1005,7 +1018,12 @@ def build_tools(
         ),
         **practice_tools(root, call, cap, clip_at, report_settings, confirm_policy=policy),
     }
-    tools.update(review_tools(root, call, cap, clip_at, others=tools, report_settings=report_settings))
+    verify_settings: Mapping[str, Any] = output.get("verify") or {}
+    tools.update(
+        review_tools(
+            root, call, cap, clip_at, others=tools, report_settings=report_settings, verify_settings=verify_settings
+        )
+    )
     diagram_settings: Mapping[str, Any] = output.get("diagram") or {}
     shared_callers = int(diagram_settings.get("sharedHelperCallers", 5))
     tools.update(
