@@ -115,3 +115,22 @@ groovyscope coverage                        # what coverage_gaps sees (after ./g
 | `groovyscope review --changed` | a blocking finding on a changed line, or git could not describe the change |
 | `groovyscope review` (whole workspace or paths) | an error-level group |
 | `groovyscope coverage` | no JaCoCo report, or an unreadable one |
+
+## Repository settings for maintainers
+
+The workflows enforce what they can; these settings are clicked by an owner of `SCGIS-Wales/groovyscope` and
+complete the release chain.
+
+- **Ruleset on `main`** (Settings, Rules, Rulesets): require a pull request before merging, linear history, and
+  these status checks: `build (ubuntu-latest)`, `build (macos-latest)`, `python 3.13`, `python 3.14`,
+  `python 3.15`, `engine on temurin 17`, `engine on temurin 21`, `engine on corretto 21`, `engine on temurin 25`,
+  `analyze (python)`, `analyze (java-kotlin)`, `analyze (actions)`, `dependency review`,
+  `audit the workflows (zizmor)` and `Conventional Commit title`. Approvals are optional: requiring one, or a
+  code owner review (`.github/CODEOWNERS`), means an owner approves every PR, the release PRs included.
+- **`pypi` environment** (Settings, Environments): deployment branches and tags limited to tags matching `v*`,
+  so only a release tag can publish; `workflow.yml` checks the same and also that the tag's commit passed CI.
+- **Release App** (optional, preferred over a personal token): create a GitHub App with contents and pull
+  requests set to read and write, install it on this repository only, then add its ID as the variable
+  `RELEASE_APP_ID` and a private key as the secret `RELEASE_APP_PRIVATE_KEY`. `release-please.yml` then opens and
+  merges release PRs with short-lived installation tokens and the `RELEASE_PLEASE_TOKEN` secret can be deleted.
+- **Allow auto-merge** (Settings, General): lets the release PR merge itself once its checks pass.
