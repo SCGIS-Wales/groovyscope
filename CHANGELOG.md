@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.1...v0.24.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* phase 1 security and fix safety of the improvement plan ([#107](https://github.com/SCGIS-Wales/groovyscope/issues/107)) ([fcfdeed](https://github.com/SCGIS-Wales/groovyscope/commit/fcfdeed7c6b0394be3fd138288ea572b4aa2a097))
+
 ## [0.24.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.0...v0.24.1) (2026-10-19)
 
 
