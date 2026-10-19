@@ -309,6 +309,16 @@ def test_review_changed_renders_a_merge_request_review(
     assert "impact: A#run (method, src/A.groovy) risk high" in result.output or "impact: A.run" in result.output
     assert "added catch: src/A.groovy:4 catch (Exception e)" in result.output
     assert "pre-existing in these files: 1" in result.output
+    assert "(against develop)" in result.output and "risks (1): GS006 1" in result.output
+    assert cli.triage_lines(
+        {
+            "noise": {"count": 2, "codes": [{"code": "NoDef", "count": 2, "fixable": 2}]},
+            "fix": {"count": 2, "command": "groovyscope fix --codes NoDef"},
+        }
+    ) == [
+        "noise (2): NoDef 2 (2 fixable)",
+        "safe fixes for 2: `groovyscope fix --codes NoDef`",
+    ]
     assert calls[:2] == ["groovyscope/check", "groovyscope/documentSymbols"]
     as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "--changed", "--staged", "--json"])
     payload = json.loads(as_json.output)

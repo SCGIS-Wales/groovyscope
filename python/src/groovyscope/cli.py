@@ -1063,13 +1063,20 @@ def hook_check_rows(
 @main.command("review")
 @click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
 @click.option("--changed", is_flag=True, help="Review what this branch changed against --base, as a merge request.")
-@click.option("--base", default="main", show_default=True, help="Base branch for --changed.")
+@click.option("--base", default=None, help="Base branch for --changed (default: the repository's default branch).")
 @click.option("--staged", is_flag=True, help="With --changed: review the index instead of the branch.")
 @click.option("--top", default=8, show_default=True, help="Findings shown per group.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_obj
 def review_command(
-    obj: dict[str, Any], *, paths: tuple[Path, ...], changed: bool, base: str, staged: bool, top: int, as_json: bool
+    obj: dict[str, Any],
+    *,
+    paths: tuple[Path, ...],
+    changed: bool,
+    base: str | None,
+    staged: bool,
+    top: int,
+    as_json: bool,
 ) -> None:
     """Review PATHS (or the whole workspace) against the practices checklist, or with --changed review the
     branch's changed Groovy files as a merge request reviewer: blocking, should fix, by design, impact, verdict."""
@@ -1129,6 +1136,23 @@ def classpath_settings(obj: dict[str, Any], effective: Mapping[str, Any]) -> dic
     }
 
 
+def triage_lines(triage: Mapping[str, Any]) -> list[str]:
+    """``risks: GS002 78 (12 fixable), CatchException 46 · smells: ... · noise: ...`` and the fix command."""
+    lines: list[str] = []
+    for tier in ("risks", "smells", "noise"):
+        found = triage.get(tier) or {}
+        if found.get("count"):
+            codes = ", ".join(
+                f"{c['code']} {c['count']}" + (f" ({c['fixable']} fixable)" if c["fixable"] else "")
+                for c in found["codes"]
+            )
+            lines.append(f"{tier} ({found['count']}): {codes}")
+    fix = triage.get("fix")
+    if fix:
+        lines.append(f"safe fixes for {fix['count']}: `{fix['command']}`")
+    return lines
+
+
 def render_review(result: dict[str, Any]) -> list[str]:
     """The review as text: verdict first, then the groups a reviewer reads in order."""
     if result.get("error"):
@@ -1137,7 +1161,8 @@ def render_review(result: dict[str, Any]) -> list[str]:
     if "verdict" in result:
         lines.append(f"verdict: {result['verdict']}")
         shown = ", ".join(f"{f['path']} ({f['status']}, {f['changedLines']} lines)" for f in result.get("files", []))
-        lines.append(f"changed: {shown or 'nothing reviewable'}")
+        lines.append(f"changed: {shown or 'nothing reviewable'} (against {result.get('base')})")
+        lines += triage_lines(result.get("triage") or {})
         for name, title in (("blocking", "blocking"), ("shouldFix", "should fix"), ("nits", "nits")):
             items = result.get(name, [])
             if items:

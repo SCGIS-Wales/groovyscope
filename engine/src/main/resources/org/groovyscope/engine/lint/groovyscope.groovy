@@ -15,6 +15,7 @@ ruleset {
         exclude 'ImplicitReturnStatement'             // contradicts UnnecessaryReturnKeyword; neither is enforced
         exclude 'StaticMethodsBeforeInstanceMethods'
         exclude 'PublicMethodsBeforeNonPublicMethods'
+        exclude 'VariableTypeRequired'                // the same `def` NoDef already reports (and fixes)
     }
     ruleset('rulesets/design.xml') {
         exclude 'Instanceof'

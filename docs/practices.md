@@ -105,7 +105,9 @@ class Pricing {
 ### 2.5 Groovy truth, Elvis and safe navigation
 - **Falsy values:** `0`, `''`, empty collections and maps, and `null`.
 - **Groovy 5 change:** a `File` or `Path` is truthy only if it exists on disk (GROOVY-10949). `-Dgroovy.truth.file.exists.enabled=false` (from 5.0.7) restores the old behaviour.\[1\] When you mean "is set", write `!= null`.\[6\]
-- **Elvis uses Groovy truth,** so `count ?: 10` replaces a valid `0`.
+- **Elvis uses Groovy truth,** so `count ?: 10` replaces a valid `0`. GS002 leaves `name ?: ''`, `count ?: 0`,
+  `items ?: []` and `options ?: [:]` alone: the default is the same empty value, so only null changes. Its safe fix
+  (`x != null ? x : default`) applies when the tested value is a plain variable.
 - **Safe navigation into a primitive** fails when the receiver is null. Supply a default: `int n = list?.size() ?: 0`.
 
 ```groovy

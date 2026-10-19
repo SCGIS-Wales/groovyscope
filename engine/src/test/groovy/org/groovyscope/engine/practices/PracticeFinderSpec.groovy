@@ -54,6 +54,27 @@ class PracticeFinderSpec extends Specification {
         fixed('Numbers.groovy', 'GS003').contains('int n = items?.size() ?: 0')
     }
 
+    def 'a default that is the same empty value is not an Elvis pitfall'() {
+        given:
+        def string = org.codehaus.groovy.ast.ClassHelper.STRING_TYPE
+        def list = org.codehaus.groovy.ast.ClassHelper.LIST_TYPE
+        def map = org.codehaus.groovy.ast.ClassHelper.MAP_TYPE
+        def number = org.codehaus.groovy.ast.ClassHelper.Integer_TYPE
+        def constant = { new org.codehaus.groovy.ast.expr.ConstantExpression(it) }
+
+        expect:
+        PracticeFinder.sameEmpty(string, constant(''))
+        !PracticeFinder.sameEmpty(string, constant('none'))
+        PracticeFinder.sameEmpty(number, constant(0))
+        !PracticeFinder.sameEmpty(number, constant(50))
+        PracticeFinder.sameEmpty(list, new org.codehaus.groovy.ast.expr.ListExpression())
+        !PracticeFinder.sameEmpty(list, new org.codehaus.groovy.ast.expr.ListExpression([constant('x')]))
+        !PracticeFinder.sameEmpty(list, constant(0))
+        PracticeFinder.sameEmpty(map, new org.codehaus.groovy.ast.expr.MapExpression())
+        !PracticeFinder.sameEmpty(map, new org.codehaus.groovy.ast.expr.ListExpression())
+        !PracticeFinder.sameEmpty(string, new org.codehaus.groovy.ast.expr.VariableExpression('other'))
+    }
+
     def 'File and Path truthiness becomes an explicit null comparison'() {
         expect:
         found('Files.groovy') == [['GS004', 5], ['GS004', 8]]
