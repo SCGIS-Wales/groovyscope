@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import tarfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -83,9 +84,54 @@ def test_provision_unpacks_verifies_and_is_discovered(tmp_path: Path, mac_layout
         None, {"PATH": "/nonexistent"}, platform="linux", which=lambda _n: None, provisioned=[home], scan=False
     )
     assert found is not None and found["source"] == "provisioned" and found["version"] == 21
-    # Installing again replaces the previous unpack instead of failing.
+    # Installing again finds the release installed: nothing is downloaded and nothing removed.
     again = provision.provision_jdk(install_dir, feature=21, downloader=download, system="linux", machine="x86_64")
     assert again["home"] == installed["home"]
+    assert seen.count("https://example.test/jdk.tar.gz") == 1
+
+
+def test_two_installs_at_once_download_once(tmp_path: Path) -> None:
+    tarball = jdk_tarball(tmp_path, mac_layout=False)
+    download, seen = fake_adoptium(tarball)
+    downloading = threading.Event()
+    release = threading.Event()
+
+    def slow(url: str) -> bytes:
+        if url == "https://example.test/jdk.tar.gz":
+            downloading.set()
+            release.wait(10)
+        return download(url)
+
+    install_dir = tmp_path / "cache" / "jdk"
+    results: list[provision.ProvisionedJdk] = []
+
+    def install() -> None:
+        results.append(
+            provision.provision_jdk(install_dir, feature=21, downloader=slow, system="linux", machine="x86_64")
+        )
+
+    first = threading.Thread(target=install)
+    first.start()
+    assert downloading.wait(10)
+    second = threading.Thread(target=install)
+    second.start()  # waits on the install lock while the first one downloads
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert len(results) == 2 and results[0]["home"] == results[1]["home"]
+    assert seen.count("https://example.test/jdk.tar.gz") == 1
+
+
+def test_a_broken_folder_under_the_release_name_is_set_aside_not_deleted(tmp_path: Path) -> None:
+    tarball = jdk_tarball(tmp_path, mac_layout=False)
+    download, _ = fake_adoptium(tarball)
+    install_dir = tmp_path / "jdk"
+    (install_dir / "jdk-21.0.9+10" / "lib").mkdir(parents=True)
+    (install_dir / "jdk-21.0.9+10" / "lib" / "keep.txt").write_text("x")
+    done = provision.provision_jdk(install_dir, feature=21, downloader=download, system="linux", machine="x86_64")
+    assert Path(done["home"], "bin", "java").is_file()
+    aside = [p for p in install_dir.iterdir() if p.name.startswith("jdk-21.0.9+10.incomplete-")]
+    assert len(aside) == 1 and (aside[0] / "lib" / "keep.txt").read_text() == "x"
 
 
 def test_provision_rejects_a_bad_checksum(tmp_path: Path) -> None:
