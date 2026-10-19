@@ -35,7 +35,7 @@
 <rect x="349" y="214" width="41" height="24" rx="12" fill="#E0F2FE"/>
 <text x="369.5" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A6E">LSP</text>
 <rect x="398" y="214" width="111" height="24" rx="12" fill="#E0F2FE"/>
-<text x="453.5" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A6E">MCP · 27 tools</text>
+<text x="453.5" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A6E">MCP · 29 tools</text>
 <rect x="349" y="246" width="41" height="24" rx="12" fill="#E0F2FE"/>
 <text x="369.5" y="262" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A6E">CLI</text>
 <rect x="625" y="48" width="250" height="232" rx="20" fill="#FFFFFF" stroke="#E2E8F0" filter="url(#shadow)"/>

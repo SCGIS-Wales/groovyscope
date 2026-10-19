@@ -35,7 +35,7 @@ Then open any Groovy project:
 cd your-groovy-project
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
-> /mcp                            # expect: groovyscope running 28 tools
+> /mcp                            # expect: groovyscope running 29 tools
 ```
 
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it

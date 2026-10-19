@@ -88,6 +88,7 @@ diagram:
 verify:
   runTasks: ["test"]      # test tasks `groovyscope verify` runs; affected tests of other tasks (integrationTest) are listed for CI
   timeoutSeconds: 1800    # the Gradle run's budget
+  coverageTask: "jacocoTestReport"  # `verify --coverage` adds it when the build applies JaCoCo, then reads reports.jacoco
 reports:
   sarif: []               # SARIF logs merged into check and review (SpotBugs, other SAST); empty = build/reports/spotbugs/*.sarif* when present
   jacoco: "build/reports/jacoco/test/jacocoTestReport.xml"  # read by coverage_gaps and `groovyscope coverage`

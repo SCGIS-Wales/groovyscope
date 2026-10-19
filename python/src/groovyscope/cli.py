@@ -37,6 +37,7 @@ from groovyscope import (
     relay,
     reports,
     rpc,
+    test_results,
     trust,
     verify,
     workspace_init,
@@ -1115,50 +1116,196 @@ def run_build(command: Sequence[str], cwd: Path, timeout: int) -> tuple[int, str
 _VERIFY_RUNNER: Callable[[Sequence[str], Path, int], tuple[int, str]] = run_build
 
 
+def report_mtime(label: str) -> float:
+    return Path(label).stat().st_mtime
+
+
+def run_tests(command: Sequence[str], root: Path, timeout: int) -> dict[str, Any]:
+    """Run the Gradle command (with the init script when it filters tests) and read the JUnit XML reports this run
+    wrote: the exit code, the failed test names Gradle printed, the results and, on a failure without reports,
+    the output's tail."""
+    with tempfile.TemporaryDirectory(prefix="groovyscope-verify-") as folder:
+        script = Path(folder) / "verify.init.gradle"
+        script.write_text(verify.INIT_SCRIPT, encoding="utf-8")
+        started = time.time() - 1  # file systems with one second timestamps
+        code, output = _VERIFY_RUNNER(verify.with_init_script(command, script), root, timeout)
+    results = test_results.summarise([root], keep=verify.written_since(started, report_mtime))
+    gradle: dict[str, Any] = {"exitCode": code, "failed": verify.failed_tests(output), "results": results}
+    if code != 0 and not results["failed"]:
+        gradle["tail"] = verify.tail(output)
+    return gradle
+
+
+def build_lines(gradle: Mapping[str, Any], command: Sequence[str], limit: int) -> list[str]:
+    """``build: passed`` or ``build: FAILED``, the results with each failure's message and place, and a note when
+    the filters matched no test."""
+    results = gradle["results"]
+    lines = ["build: passed" if gradle["exitCode"] == 0 else f"build: FAILED (exit {gradle['exitCode']})"]
+    if results["reports"]:
+        lines += test_results.lines(results, limit)
+    elif "--tests" in command and gradle["exitCode"] == 0:
+        lines.append("  note: no test report was written; the --tests filters may have matched no test")
+    if not results["failed"]:
+        lines += [f"  failed: {name}" for name in gradle["failed"]]
+        lines += [f"  {line}" for line in gradle.get("tail", []) if not gradle["failed"]]
+    if results["reports"] and not results["tests"] and "--tests" in command:
+        lines.append("  note: the --tests filters matched no test; run the classes instead")
+    return lines
+
+
+def changed_uncovered(root: Path, effective: Mapping[str, Any], base: str | None, *, staged: bool) -> dict[str, Any]:
+    """Changed methods the run's JaCoCo report says no test executed."""
+    configured = reports.reports_settings(effective)["jacoco"]
+    report = reports.jacoco_file(root, configured)
+    if report is None:
+        return {"error": f"no JaCoCo report at {configured or reports.DEFAULT_JACOCO} after the run"}
+    try:
+        ranges = changes.ranges_by_path(changes.changed_files(root, base, staged=staged))
+        gaps = reports.read_jacoco(report, root)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    uncovered = verify.uncovered_in_change(gaps, ranges)
+    return {"report": shown_path(report, root), "uncovered": uncovered, "count": len(uncovered)}
+
+
+def shown_limit(effective: Mapping[str, Any]) -> int:
+    return int((effective.get("output") or {}).get("maxResults", 20))
+
+
+def coverage_lines(coverage: Mapping[str, Any]) -> list[str]:
+    if coverage.get("error"):
+        return [f"coverage: {coverage['error']}"]
+    if not coverage["count"]:
+        return ["coverage: the tests ran every changed method"]
+    lines = [f"coverage: {coverage['count']} changed method(s) no test executed"]
+    return lines + [f"  {g['path']}:{g['line']}: {g['name']}" for g in coverage["uncovered"]]
+
+
 @main.command("verify")
 @click.option("--base", default=None, help="Base branch (default: the repository's default branch).")
 @click.option("--staged", is_flag=True, help="Verify the index instead of the branch.")
+@click.option(
+    "--failed",
+    is_flag=True,
+    help="Run again only the tests that failed in the last JUnit XML reports (the workspace, or --results).",
+)
+@click.option(
+    "--results",
+    "results_from",
+    multiple=True,
+    type=click.Path(path_type=Path),
+    help="With --failed: folders or ZIP archives (a CI artifacts.zip) holding TEST-*.xml.",
+)
+@click.option("--coverage", is_flag=True, help="Also build the JaCoCo report and list changed methods no test ran.")
 @click.option("--dry-run", is_flag=True, help="Print the plan and the Gradle command without running it.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_obj
-def verify_command(obj: dict[str, Any], *, base: str | None, staged: bool, dry_run: bool, as_json: bool) -> None:
+def verify_command(
+    obj: dict[str, Any],
+    *,
+    base: str | None,
+    staged: bool,
+    failed: bool,
+    results_from: tuple[Path, ...],
+    coverage: bool,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
     """Verify the change in one step: review the changed lines, then compile the changed source sets and run the
-    tests the change reaches (through the call graph) with one Gradle command. Tests of tasks outside
-    `verify.runTasks` (integration tests that need CI credentials) are listed, not run. Exit 1 on a failed build
-    or test, or a blocking finding."""
+    test methods the change reaches (through the call graph) with one Gradle command, and read the JUnit XML
+    reports the run wrote. Tests of tasks outside `verify.runTasks` (integration tests that need CI credentials)
+    are listed, not run. Exit 1 on a failed build or test, or a blocking finding."""
+    if failed:
+        verify_failed(obj, results_from, dry_run=dry_run, as_json=as_json)
+        return
     socket_file, effective = daemon_socket_for(obj)
     tools = workspace_tools(obj, socket_file, effective)
     result = tools["review_changes"](base, staged, 8)
     if result.get("error"):
         click.echo(f"groovyscope: {result['error']}", err=True)
         sys.exit(1)
+    settings = effective.get("verify") or {}
     plan_result = result.get("tests") or {}
     lines = [f"verify against {result.get('base')}: {result.get('verdict')}"]
     lines += triage_lines(result.get("triage") or {})
+    args = list(plan_result.get("commandArgs") or [])
+    if coverage and args:
+        if plan_result.get("coverageTask"):
+            args = verify.with_coverage(args, plan_result["coverageTask"])
+            plan_result = {**plan_result, "commandArgs": args, "command": verify.quoted(args)}
+        else:
+            plan_result = {**plan_result, "note": "the build does not apply JaCoCo: --coverage has nothing to read"}
     lines += verify.test_lines(plan_result)
     gradle: dict[str, Any] | None = None
-    args = plan_result.get("commandArgs")
+    uncovered: dict[str, Any] | None = None
     if args and not dry_run:
-        timeout = int((effective.get("verify") or {}).get("timeoutSeconds", 1800))
-        code, output = _VERIFY_RUNNER(args, obj["root"], timeout)
-        gradle = {"exitCode": code, "failed": verify.failed_tests(output)}
-        if code == 0:
-            lines.append("build: passed")
-        else:
-            gradle["tail"] = verify.tail(output)
-            lines.append(f"build: FAILED (exit {code})")
-            lines += [f"  failed: {name}" for name in gradle["failed"]]
-            lines += [f"  {line}" for line in gradle["tail"] if not gradle["failed"]]
+        gradle = run_tests(args, obj["root"], int(settings.get("timeoutSeconds", 1800)))
+        lines += build_lines(gradle, args, shown_limit(effective))
+        if coverage and plan_result.get("coverageTask"):
+            uncovered = changed_uncovered(obj["root"], effective, base, staged=staged)
+            lines += coverage_lines(uncovered)
     elif args:
         lines.append("dry run: nothing was built")
     blocking = int((result.get("counts") or {}).get("blocking", 0))
     if as_json:
-        keys = ("base", "mode", "verdict", "triage", "tests", "counts", "files")
-        click.echo(compact_json({**{k: result.get(k) for k in keys}, "build": gradle}))
+        keys = ("base", "mode", "verdict", "triage", "counts", "files")
+        payload = {**{k: result.get(k) for k in keys}, "tests": plan_result, "build": gradle}
+        click.echo(compact_json({**payload, "coverage": uncovered} if coverage else payload))
     else:
         for line in lines:
             click.echo(line)
     if blocking or (gradle is not None and gradle["exitCode"] != 0):
+        sys.exit(1)
+
+
+def verify_failed(obj: dict[str, Any], sources: Sequence[Path], *, dry_run: bool, as_json: bool) -> None:
+    """``verify --failed``: the failures of the last reports run again, one ``--tests`` filter each."""
+    try:
+        effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    except (ValueError, OSError) as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    root = obj["root"]
+    last = test_results.summarise(test_results.default_sources(root, [str(p.resolve()) for p in sources]))
+    wrapper = "./gradlew" if (root / "gradlew").is_file() else "gradle"
+    command, unplaced = verify.rerun_command(wrapper, last["failed"])
+    lines = [f"{len(last['failed'])} failed test(s) in {last['reports']} report(s)"]
+    lines += [f"  not from a Gradle test task, run it with its own build: {name}" for name in unplaced]
+    lines += [f"  note: {note}" for note in last["notes"]]
+    gradle: dict[str, Any] | None = None
+    if command:
+        lines.append(f"run: {verify.quoted(command)}")
+        if dry_run:
+            lines.append("dry run: nothing was built")
+        else:
+            timeout = int((effective.get("verify") or {}).get("timeoutSeconds", 1800))
+            gradle = run_tests(command, root, timeout)
+            lines += build_lines(gradle, command, shown_limit(effective))
+    if as_json:
+        click.echo(compact_json({"last": last, "command": command, "unplaced": unplaced, "build": gradle}))
+    else:
+        for line in lines:
+            click.echo(line)
+    if gradle is not None and gradle["exitCode"] != 0:
+        sys.exit(1)
+
+
+@main.command("test-results")
+@click.argument("sources", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--limit", default=20, show_default=True, type=click.IntRange(min=1), help="Failures shown.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def test_results_command(obj: dict[str, Any], *, sources: tuple[Path, ...], limit: int, as_json: bool) -> None:
+    """Failing tests from JUnit XML reports (TEST-*.xml at any depth) under SOURCES: folders or ZIP archives such as
+    a CI pipeline's artifacts.zip (default: the workspace). Each failure with its message, the first frame in the
+    project's code and in the test. Exit 1 when a test failed or no report was found."""
+    summary = test_results.summarise(test_results.default_sources(obj["root"], [str(p.resolve()) for p in sources]))
+    if as_json:
+        click.echo(compact_json(summary))
+    else:
+        for line in test_results.lines(summary, limit):
+            click.echo(line)
+    if summary["failed"] or not summary["reports"]:
         sys.exit(1)
 
 

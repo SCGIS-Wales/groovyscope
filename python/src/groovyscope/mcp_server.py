@@ -34,6 +34,7 @@ from groovyscope import (
     verify,
 )
 from groovyscope import classpath as classpath_export
+from groovyscope import test_results as test_results_module
 from groovyscope.edits import (
     FileChangedError,
     FileEdit,
@@ -644,6 +645,19 @@ def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dic
     return {"coverage_gaps": coverage_gaps}
 
 
+def test_tools(root: Path, cap: int) -> dict[str, Callable[..., Any]]:
+    """test_results: the JUnit XML reports of the last test run (or of a CI archive), summarised."""
+
+    def test_results(sources: list[str] | None = None, limit: int | None = None) -> dict[str, Any]:
+        """Failing tests from TEST-*.xml at any depth under SOURCES (folders or .zip archives; default the
+        workspace): message and the first frames in the code and the test."""
+        summary = test_results_module.summarise(test_results_module.default_sources(root, sources))
+        shown = max(1, min(limit or cap, cap))
+        return {**summary, "failed": summary["failed"][:shown], "failedCount": len(summary["failed"])}
+
+    return {"test_results": test_results}
+
+
 def practice_tools(
     root: Path,
     call: Call,
@@ -852,6 +866,14 @@ def flat_outline(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
     return flat
 
 
+def impact_target(declaration: Mapping[str, Any]) -> str:
+    """``Class#member`` for a member, the qualified name for a type: what ``impact_of`` takes."""
+    container, _, member = str(declaration["symbol"]).rpartition(".")
+    if container and declaration["kind"] not in {"class", "interface", "trait", "enum", "record"}:
+        return f"{container}#{member}"
+    return str(declaration["symbol"])
+
+
 def review_tools(
     root: Path,
     call: Call,
@@ -907,6 +929,7 @@ def review_tools(
         limit = max(1, min(top, cap))
         impact: list[dict[str, Any]] = []
         reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
+        touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
         for file in existing[:cap]:
             if len(reports) >= verify.MAX_DECLARATIONS:
                 break
@@ -914,15 +937,10 @@ def review_tools(
                 call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
             )
             for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
+                touched.append({**declaration, "path": file["path"]})
                 if len(reports) >= verify.MAX_DECLARATIONS:
                     break
-                container, _, member = declaration["symbol"].rpartition(".")
-                target = (
-                    f"{container}#{member}"
-                    if container and declaration["kind"] not in {"class", "interface", "trait", "enum", "record"}
-                    else declaration["symbol"]
-                )
-                report = others["impact_of"](target, "signature")
+                report = others["impact_of"](impact_target(declaration), "signature")
                 if not report.get("found"):
                     continue
                 first = report["reports"][0]
@@ -957,7 +975,7 @@ def review_tools(
             {
                 "verdict": changes.verdict(buckets, risky, impact),
                 "triage": changes.triage(inside, limit=limit),
-                "tests": verify.plan(root, reports, paths, verify_settings or {}, limit=limit),
+                "tests": verify.plan(root, reports, paths, verify_settings or {}, limit=limit, touched=touched),
                 "blocking": buckets["blocking"][:limit],
                 "shouldFix": buckets["shouldFix"][:limit],
                 "nits": buckets["nits"][:limit],
@@ -1017,6 +1035,7 @@ def build_tools(
             confirm_policy=policy,
         ),
         **practice_tools(root, call, cap, clip_at, report_settings, confirm_policy=policy),
+        **test_tools(root, cap),
     }
     verify_settings: Mapping[str, Any] = output.get("verify") or {}
     tools.update(
