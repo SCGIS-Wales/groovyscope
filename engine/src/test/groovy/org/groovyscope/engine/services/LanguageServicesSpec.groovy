@@ -270,7 +270,7 @@ class LanguageServicesSpec extends Specification {
     def 'an edit that arrives during a compile is not lost'() {
         given: 'a fresh workspace with an open virtual document'
         def fresh = Fixtures.services('basic-app')
-        String virtual = 'file:///virtual/Later.groovy'
+        String virtual = Fixtures.uri('basic-app', 'src/main/groovy/app/Later.groovy')
         fresh.workspace().open(virtual, 'class Later { }')
         fresh.markDirty()
 
