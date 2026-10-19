@@ -16,6 +16,8 @@
 package org.groovyscope.engine.practices;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -100,6 +102,12 @@ public final class PracticeFinder {
             "java.lang.Float", "java.math.BigDecimal", "java.math.BigInteger", "java.lang.Number", "java.lang.String",
             "java.lang.CharSequence", "groovy.lang.GString", "java.util.List", "java.util.Collection", "java.util.Map",
             "java.util.Set", "java.util.ArrayList", "java.util.LinkedHashMap", "java.util.HashMap");
+    /**
+     * Parsers that reject an empty input ({@code readTree('')} throws): an Elvis passed straight to one defaults
+     * empty and null alike on purpose, so GS002 leaves it alone.
+     */
+    static final Set<String> EMPTY_REJECTING_PARSERS = Set.of("readTree", "readValue", "parseText", "parse",
+            "parseInt", "parseLong", "parseDouble", "parseFloat", "parseShort", "parseByte", "fromJson");
     static final Set<String> PRIMITIVE_DEFAULTS = Set.of("int", "long", "short", "byte", "double", "float", "boolean",
             "char");
     static final Set<String> FILE_TYPES = Set.of("java.io.File", "java.nio.file.Path");
@@ -273,6 +281,8 @@ public final class PracticeFinder {
         private final EngineConfig config;
         private final List<Practice> out;
         private final boolean production;
+        /** Elvis expressions passed straight to an empty-rejecting parser (identity, not equality). */
+        private final Set<Expression> parsed = Collections.newSetFromMap(new IdentityHashMap<>());
         private boolean inSpock;
         private String block = "";
 
@@ -451,7 +461,8 @@ public final class PracticeFinder {
                 ClassNode type = typeOf(tested);
                 if (named(type, FILE_TYPES)) {
                     report("GS004", tested, "a File or Path is truthy only if it exists (Groovy 5)", null, List.of());
-                } else if (named(type, ELVIS_SENSITIVE) && !sameEmpty(type, elvis.getFalseExpression())) {
+                } else if (named(type, ELVIS_SENSITIVE) && !sameEmpty(type, elvis.getFalseExpression())
+                        && !parsed.contains(elvis)) {
                     String testedText = source(tested);
                     String fallback = source(elvis.getFalseExpression());
                     boolean fixable = testedText != null && fallback != null && tested instanceof VariableExpression
@@ -460,7 +471,8 @@ public final class PracticeFinder {
                             ? List.of(replace(elvis, testedText + " != null ? " + testedText + " : " + fallback))
                             : List.of();
                     report("GS002", elvis, "?: also replaces " + emptyValue(type) + ", which is a valid "
-                            + type.getNameWithoutPackage(), "Compare with null", fix);
+                            + type.getNameWithoutPackage() + "; a defect only where that empty value is a real input, "
+                            + "distinct from absent", "Compare with null", fix);
                 }
             } else {
                 checkTruthiness(expression.getBooleanExpression());
@@ -511,6 +523,9 @@ public final class PracticeFinder {
         @Override
         public void visitMethodCallExpression(MethodCallExpression call) {
             String name = call.getMethodAsString();
+            if (name != null && EMPTY_REJECTING_PARSERS.contains(name)) {
+                parserArguments(call.getArguments());
+            }
             if (name != null) {
                 checkLogging(call, name);
                 checkEvaluation(call, name);
@@ -522,8 +537,22 @@ public final class PracticeFinder {
             super.visitMethodCallExpression(call);
         }
 
+        /** Remembers the Elvis expressions passed directly as arguments to an empty-rejecting parser. */
+        private void parserArguments(Expression arguments) {
+            if (arguments instanceof TupleExpression tuple) {
+                for (Expression argument : tuple.getExpressions()) {
+                    if (argument instanceof ElvisOperatorExpression elvis) {
+                        parsed.add(elvis);
+                    }
+                }
+            }
+        }
+
         @Override
         public void visitStaticMethodCallExpression(StaticMethodCallExpression call) {
+            if (EMPTY_REJECTING_PARSERS.contains(call.getMethod())) {
+                parserArguments(call.getArguments());
+            }
             if (call.getOwnerType().getName().equals("groovy.util.Eval") && EVAL_METHODS.contains(call.getMethod())
                     && firstArgumentIsNotConstant(call.getArguments())) {
                 report("GS006", call, "Eval." + call.getMethod() + " runs its argument as code", null, List.of());

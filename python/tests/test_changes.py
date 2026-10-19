@@ -204,6 +204,12 @@ def test_touched_declarations_and_risky_sites() -> None:
         {"path": "src/C.groovy", "line": 4},
     ]
     assert changes.risky_in_change(matches, {"src/A.groovy": [[4, 5]]}) == [{"path": "src/A.groovy", "line": 4}]
+    catches = [
+        {"path": "src/A.groovy", "line": 4, "handling": handling}
+        for handling in ("swallowed", "returns-default", "logged", "rethrows", "other")
+    ]
+    kept = changes.risky_in_change(catches, {"src/A.groovy": [[4, 4]]})
+    assert [c["handling"] for c in kept] == ["swallowed", "returns-default"]
 
 
 def test_draft_comments_are_ordered_capped_and_friendly() -> None:
@@ -275,10 +281,11 @@ def test_triage_ranks_risks_smells_and_noise_with_the_fix_command() -> None:
     }
     assert [c["code"] for c in triage["smells"]["codes"]] == ["GS026"]
     assert triage["noise"]["count"] == 3 and triage["noise"]["codes"][0]["code"] == "LineLength"
-    assert triage["fix"] == {"count": 2, "command": "groovyscope fix --code GS002 --code NoDef"}
+    assert triage["fix"] == {"count": 2, "command": "groovyscope fix --changed --code GS002 --code NoDef"}
     assert "fix" not in changes.triage([{"code": "LineLength"}], limit=5)
     # The suggested command parses with the real CLI (it once said `--codes`, which `fix` does not have).
     words = triage["fix"]["command"].split()
     assert words[:2] == ["groovyscope", "fix"]
     parsed = cli.main.get_command(click.Context(cli.main), "fix").make_context("fix", words[2:])  # type: ignore[union-attr]
     assert parsed.params["codes"] == ("GS002", "NoDef") and parsed.params["apply_changes"] is False
+    assert parsed.params["only_changed"] is True

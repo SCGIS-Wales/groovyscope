@@ -152,6 +152,17 @@ def changed_files(
     return {"base": chosen if mode == "branch" else "index", "mode": mode, "files": files}
 
 
+def fix_scope(root: Path, change: ChangeSet) -> dict[str, Any]:
+    """The ``uris`` and ``lines`` (per URI, 1-based inclusive ranges) of a change set, for ``groovyscope/fix``:
+    safe fixes only on the lines the branch changed, so existing code is never touched."""
+    lines = {
+        (root / f["path"]).resolve().as_uri(): [list(r) for r in f["ranges"]]
+        for f in change["files"]
+        if f["status"] != "deleted" and not f["path"].endswith(".java")
+    }
+    return {"uris": list(lines), "lines": lines}
+
+
 def in_ranges(line: int, ranges: Sequence[Sequence[int]]) -> bool:
     return any(start <= line <= end for start, end in ranges)
 
@@ -214,11 +225,22 @@ def touched_declarations(
     return found
 
 
+# A catch is risky only when the failure disappears: an empty block, or a default returned in its place without a
+# log. A catch that logs, rethrows or reacts otherwise is deliberate handling a reviewer need not question.
+RISKY_HANDLING = frozenset({"swallowed", "returns-default"})
+
+
 def risky_in_change(
     matches: Sequence[Mapping[str, Any]], ranges: Mapping[str, Sequence[Sequence[int]]]
 ) -> list[dict[str, Any]]:
-    """Structural matches (catch, def, return null) that sit on changed lines."""
-    return [dict(m) for m in matches if in_ranges(int(m.get("line", 0)), ranges.get(str(m.get("path", "")), ()))]
+    """Structural matches (catch, def, return null) that sit on changed lines; catches only when they hide the
+    failure (see :data:`RISKY_HANDLING`)."""
+    return [
+        dict(m)
+        for m in matches
+        if in_ranges(int(m.get("line", 0)), ranges.get(str(m.get("path", "")), ()))
+        and (m.get("handling") is None or m.get("handling") in RISKY_HANDLING)
+    ]
 
 
 # Practice groups ranked for a reviewer: risks change behaviour, smells mislead the next reader, noise is style.
@@ -250,7 +272,7 @@ def triage(findings: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, An
     if fixable:
         # The CLI's option is `--code`, repeated; `fix` only reports until `--apply` is added.
         options = " ".join(f"--code {code}" for code in fixable)
-        tiers["fix"] = {"count": total, "command": f"groovyscope fix {options}"}
+        tiers["fix"] = {"count": total, "command": f"groovyscope fix --changed {options}"}
     return tiers
 
 

@@ -253,7 +253,11 @@ def test_serve_opens_a_session_and_closes_it(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_explain_review_and_fix(
-    tools: dict[str, Any], local_tools: dict[str, Any], engine: dict[str, Any], tmp_path: Path
+    tools: dict[str, Any],
+    local_tools: dict[str, Any],
+    engine: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine["responses"]["groovyscope/explain"] = {"code": "GS001", "title": "Integer division with /", "why": "w"}
     assert tools["explain"]("GS001") == {"found": True, "code": "GS001", "title": "Integer division with /", "why": "w"}
@@ -320,6 +324,18 @@ def test_explain_review_and_fix(
     local_tools["fix"](paths=["Fix.groovy"], codes=["GS001"], apply=True)
     assert target.read_text(encoding="utf-8") == "int x = a.intdiv(b)\n"
     assert engine["calls"][-1][1]["codes"] == ["GS001"]
+    change = {
+        "base": "main",
+        "mode": "branch",
+        "files": [{"path": "Fix.groovy", "status": "modified", "ranges": [[1, 1]]}],
+    }
+    monkeypatch.setattr(mcp_server.changes, "changed_files", lambda _root, _base: change)
+    local_tools["fix"](changed_only=True)
+    assert engine["calls"][-1][1]["lines"] == {target.resolve().as_uri(): [[1, 1]]}
+    change["files"] = []
+    assert local_tools["fix"](changed_only=True)["note"] == "no changed Groovy lines to fix"
+    monkeypatch.setattr(mcp_server.changes, "changed_files", lambda *_a: (_ for _ in ()).throw(ValueError("no git")))
+    assert local_tools["fix"](changed_only=True) == {"error": "no git"}
 
 
 def test_profile_status_and_review_notes(tools: dict[str, Any], engine: dict[str, Any]) -> None:

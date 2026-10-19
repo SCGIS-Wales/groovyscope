@@ -1689,14 +1689,34 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
 @click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
 @click.option("--code", "codes", multiple=True, help="Only these codes (GS001, CompileStatic, ...); repeatable.")
 @click.option("--apply", "apply_changes", is_flag=True, help="Write the fixes; otherwise only report them.")
+@click.option("--changed", "only_changed", is_flag=True, help="Only the lines this branch changed (against --base).")
+@click.option("--base", default=None, help="Base branch for --changed (default: the repository's default branch).")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_obj
 def fix(
-    obj: dict[str, Any], paths: tuple[Path, ...], codes: tuple[str, ...], apply_changes: bool, as_json: bool
+    obj: dict[str, Any],
+    paths: tuple[Path, ...],
+    *,
+    codes: tuple[str, ...],
+    apply_changes: bool,
+    only_changed: bool,
+    base: str | None,
+    as_json: bool,
 ) -> None:
-    """Apply groovyscope's safe fixes (practice findings and mechanical lint fixes); exits 1 when fixes remain."""
+    """Apply groovyscope's safe fixes (practice findings and mechanical lint fixes); exits 1 when fixes remain.
+    With --changed, only on the lines this branch changed, so existing code is left as it is."""
+    params: dict[str, Any] = {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths), "codes": list(codes)}
+    if only_changed:
+        try:
+            scope = changes.fix_scope(obj["root"], changes.changed_files(obj["root"], base))
+        except ValueError as exc:
+            click.echo(f"groovyscope: {exc}", err=True)
+            sys.exit(1)
+        if not scope["uris"]:
+            click.echo("no changed Groovy lines to fix")
+            return
+        params.update(scope)
     socket_file, _ = daemon_socket_for(obj)
-    params = {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths), "codes": list(codes)}
     result = engine_call(socket_file, "groovyscope/fix", params)
     rows: list[dict[str, Any]] = []
     changed, refused = file_edits(result.get("edits", {}), obj["root"])
