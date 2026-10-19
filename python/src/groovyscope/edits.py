@@ -4,13 +4,12 @@ inside the workspace, atomically, keeping the file's line endings."""
 from __future__ import annotations
 
 import difflib
-import os
-import shutil
-import tempfile
 import urllib.parse
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
+
+from groovyscope import atomic
 
 # Files the engine may hand back edits for; anything else is refused.
 BMP_MAX = 0xFFFF  # characters above this take two UTF-16 code units
@@ -115,26 +114,30 @@ class FileChangedError(OSError):
 def write_document(path: Path, text: str, *, expected: str | None = None) -> None:
     """Replace the file atomically (temporary file, then rename), keeping its mode and line endings. With
     ``expected`` (the text the edit was computed from), a file that reads differently now is left alone and
-    :class:`FileChangedError` is raised: an edit never overwrites a save it did not see."""
-    if expected is not None and read_document(path) != expected:
+    :class:`FileChangedError` is raised: an edit never overwrites a save it did not see, also one that lands while
+    the new text is being written (the file's stamp is checked again just before the rename). A symbolic link is
+    followed: the file it points to is replaced, and the link stays a link."""
+    target = path.resolve()
+    stamp = file_stamp(target)
+    if expected is not None and read_document(target) != expected:
         msg = "changed on disk since it was read; not written"
         raise FileChangedError(msg)
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        newline="",
-        dir=path.parent,
-        prefix=f".{path.name}.",
-        suffix=".groovyscope-tmp",
-        delete=False,
-    ) as handle:
-        handle.write(text)
-        temporary = Path(handle.name)
+
+    def unchanged() -> None:
+        if expected is not None and file_stamp(target) != stamp:
+            msg = "changed on disk while the edit was being written; not written"
+            raise FileChangedError(msg)
+
+    atomic.write_text(target, text, guard=unchanged)
+
+
+def file_stamp(path: Path) -> tuple[int, int] | None:
+    """``(mtime_ns, size)``, or None for a file that is not there."""
     try:
-        shutil.copymode(path, temporary)
-        os.replace(temporary, path)  # noqa: PTH105 - os.replace keeps the intent (atomic rename) explicit
-    finally:
-        temporary.unlink(missing_ok=True)
+        info = path.stat()
+    except FileNotFoundError:
+        return None
+    return (info.st_mtime_ns, info.st_size)
 
 
 def file_edits(edits_by_uri: dict[str, Any], root: Path) -> tuple[list[FileEdit], list[str]]:
