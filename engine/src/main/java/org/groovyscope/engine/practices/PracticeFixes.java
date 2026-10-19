@@ -25,6 +25,7 @@ import org.codehaus.groovy.ast.ClassCodeVisitorSupport;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.ModuleNode;
+import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.DeclarationExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.ast.expr.GStringExpression;
@@ -50,7 +51,6 @@ public final class PracticeFixes {
     static final Set<String> AUTO_IMPORTED = Set.of("java.lang", "java.util", "java.io", "java.net", "java.math",
             "groovy.lang", "groovy.util");
     static final Pattern DEF_WITH_TYPE = Pattern.compile("\\bdef\\s+(?=[A-Z][\\w.<>, ?\\[\\]]*\\s+\\w)");
-    static final Pattern DOUBLE_QUOTED = Pattern.compile("\"([^\"'\\\\$]*)\"");
 
     private PracticeFixes() {
     }
@@ -66,7 +66,7 @@ public final class PracticeFixes {
             case "CompileStatic" -> compileChoice(diagnostic, lines, module);
             case "UnnecessaryDefInVariableDeclaration", "UnnecessaryDefInMethodDeclaration",
                  "UnnecessaryDefInFieldDeclaration" -> removeDef(diagnostic, line, text);
-            case "UnnecessaryGString" -> singleQuotes(diagnostic, line, text);
+            case "UnnecessaryGString" -> singleQuotes(diagnostic, line, module, lines);
             case "GStringAsMapKey" -> mapKeyToString(diagnostic, line, module, lines);
             case "NoDef", "VariableTypeRequired" -> inferType(diagnostic, line, module, lines);
             default -> List.of();
@@ -159,14 +159,70 @@ public final class PracticeFixes {
         return List.of(new CodeAction("Remove def", diagnostic, List.of(new TextEdit(range, ""))));
     }
 
-    private static List<CodeAction> singleQuotes(Diagnostic diagnostic, int line, String text) {
-        Matcher matcher = DOUBLE_QUOTED.matcher(text);
-        if (!matcher.find()) {
+    /**
+     * Every plain double-quoted string (no interpolation) on the finding's line, requoted from its value: the AST says
+     * exactly where each one is, so no other text on the line is touched, and the value is escaped for single quotes
+     * so the string means the same. Triple-quoted, slashy and dollar-slashy strings are left alone.
+     */
+    private static List<CodeAction> singleQuotes(Diagnostic diagnostic, int line, ModuleNode module, TextLines lines) {
+        List<TextEdit> edits = new ArrayList<>();
+        visit(module, new ClassCodeVisitorSupport() {
+            @Override
+            protected SourceUnit getSourceUnit() {
+                return module.getContext();
+            }
+
+            @Override
+            public void visitGStringExpression(GStringExpression expression) {
+                for (Expression value : expression.getValues()) {
+                    value.visit(this); // the literal parts are not strings of their own
+                }
+            }
+
+            @Override
+            public void visitConstantExpression(ConstantExpression constant) {
+                Range range = AstRanges.rangeOf(constant);
+                if (constant.getValue() instanceof String value && range != null && range.start().line() == line
+                        && range.end().line() == line) {
+                    String source = lines.slice(range);
+                    if (source.length() >= 2 && source.startsWith("\"") && source.endsWith("\"")
+                            && !source.startsWith("\"\"\"") && !source.contains("$")) {
+                        edits.add(new TextEdit(range, singleQuoted(value)));
+                    }
+                }
+                super.visitConstantExpression(constant);
+            }
+        });
+        if (edits.isEmpty()) {
             return List.of();
         }
-        Range range = new Range(new Position(line, matcher.start()), new Position(line, matcher.end()));
-        return List.of(new CodeAction("Use single quotes", diagnostic,
-                List.of(new TextEdit(range, "'" + matcher.group(1) + "'"))));
+        edits.sort(Comparator.comparing((TextEdit edit) -> edit.range().start()));
+        return List.of(new CodeAction("Use single quotes", diagnostic, edits));
+    }
+
+    /** {@code value} as a single-quoted Groovy string literal with the same value. */
+    static String singleQuoted(String value) {
+        StringBuilder out = new StringBuilder("'");
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '\'' -> out.append("\\'");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                case '\b' -> out.append("\\b");
+                case '\f' -> out.append("\\f");
+                default -> {
+                    if (c < 0x20 || c == 0x7f) {
+                        out.append(String.format(java.util.Locale.ROOT, "\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        return out.append('\'').toString();
     }
 
     private static List<CodeAction> mapKeyToString(Diagnostic diagnostic, int line, ModuleNode module, TextLines lines) {
@@ -183,8 +239,9 @@ public final class PracticeFixes {
                 Range range = AstRanges.rangeOf(key);
                 if (actions.isEmpty() && key instanceof GStringExpression && range != null
                         && range.start().line() == line) {
+                    // A map key that is a method call must be parenthesised: `"${k}".toString(): v` does not parse.
                     actions.add(new CodeAction("Call toString() on the key", diagnostic,
-                            List.of(new TextEdit(range, lines.slice(range) + ".toString()"))));
+                            List.of(new TextEdit(range, "(" + lines.slice(range) + ".toString())"))));
                 }
                 super.visitMapEntryExpression(entry);
             }
