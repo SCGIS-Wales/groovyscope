@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import cli
+from groovyscope import cli, process
 
 
 @pytest.fixture
@@ -554,6 +556,37 @@ def test_explain_code_graph_and_naming_commands(
     assert "src/A.groovy:2:5: info [GS023] says nothing" in naming.output and "by code: {'GS023': 1}" in naming.output
     facts_json = runner.invoke(cli.main, ["--root", str(tmp_path), "naming", "src/A.groovy", "--json"])
     assert json.loads(facts_json.output)["declarations"][0]["name"] == "A"
+
+
+def test_a_hook_never_fails_the_session_even_on_a_broken_configuration(runner: CliRunner, tmp_path: Path) -> None:
+    (tmp_path / ".groovyscope.yaml").write_text("hooks: [unclosed\n", encoding="utf-8")
+    payload = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "write", "tool_input": {"path": "A.groovy"}})
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert result.exit_code == 0
+    assert "groovyscope: hook skipped" in result.output
+
+
+def test_the_session_start_records_the_stop_gate_baseline(
+    runner: CliRunner, tmp_path: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "Old.groovy").write_text("class Old { broken")
+    monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, "?? Old.groovy\0"))
+    off = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--event", "agentSpawn"], input="{}")
+    assert off.exit_code == 0 and not cli.session_baseline_file(tmp_path).exists()  # stopGate is off by default
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  stopGate: true\n")
+    on = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--event", "agentSpawn"], input="{}")
+    assert on.exit_code == 0
+    assert json.loads(cli.session_baseline_file(tmp_path).read_text())  # Old.groovy recorded
+    settings = cli.hooks.settings(cli.load_config(tmp_path, None, {}))
+    assert cli.hook_targets(tmp_path, "stop", {}, settings) == []  # the agent changed nothing yet
+
+
+def test_output_that_is_not_utf8_is_read_without_failing() -> None:
+    done = process.run_text(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'caf\\xe9.groovy')"], timeout=30
+    )
+    assert done.returncode == 0 and done.stdout == "caf\udce9.groovy"  # kept as a surrogate escape, not an error
+    assert os.fsencode(done.stdout) == b"caf\xe9.groovy"
 
 
 def test_hook_command_checks_written_files_and_gates_stop(

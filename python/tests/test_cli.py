@@ -153,8 +153,12 @@ def test_lsp_execs_the_engine(
     assert all(flag in argv for flag in SAFETY_FLAGS)
     assert OOM_FLAG in argv
     assert not any(flag.startswith("-XX:+HeapDumpOnOutOfMemoryError") for flag in argv)
-    assert argv[-6:-2] == ["-jar", str(jar), "lsp", "--stdio"]
-    assert argv[-2] == "--cache-dir"
+    assert argv[-8:-4] == ["-jar", str(jar), "lsp", "--stdio"]
+    assert argv[-4] == "--cache-dir"
+    assert argv[-2] == "--config"
+    config_file = Path(argv[-1])
+    assert json.loads(config_file.read_text(encoding="utf-8")) == handed_over
+    assert config_file.stat().st_mode & 0o777 == 0o600
     assert "-Xshare:auto" in argv
 
 
@@ -223,6 +227,98 @@ def test_exec_process_replaces_the_process(monkeypatch: pytest.MonkeyPatch) -> N
     assert calls == [("/bin/true", ["/bin/true", "x"])]
 
 
+def test_a_classpath_too_long_for_the_environment_reaches_the_daemon_through_its_file(
+    runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
+    monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
+    entries = [str(tmp_path / "libs" / f"library-with-a-long-name-{index:04d}-1.2.3.jar") for index in range(2000)]
+    (tmp_path / "libs").mkdir()
+    for entry in entries:
+        Path(entry).touch()
+    (tmp_path / ".groovyscope").mkdir()
+    (tmp_path / ".groovyscope" / "classpath.txt").write_text("\n".join(entries) + "\n", encoding="utf-8")
+    (tmp_path / ".groovyscope.yaml").write_text(
+        "workspace:\n  classpathFile: .groovyscope/classpath.txt\n", encoding="utf-8"
+    )
+    started: list[tuple[list[str], dict[str, str]]] = []
+    monkeypatch.setattr(
+        cli.daemon_lifecycle,
+        "ensure_running",
+        lambda cmd, _s, _l, env, **_k: started.append((cmd, dict(env))) or {"engine": "x"},
+    )
+    monkeypatch.setattr(cli, "_RELAY", lambda _socket: 0)
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
+    assert result.exit_code == 0, result.output
+    command, env = started[0]
+    assert cli.CONFIG_ENV not in env  # over Linux's 128 KiB per variable: the file carries it
+    handed = json.loads(Path(command[command.index("--config") + 1]).read_text(encoding="utf-8"))
+    assert len(handed["workspace"]["classpath"]) == 2000
+    assert sum(len(value) for value in env.values()) < cli.ENV_CONFIG_LIMIT_BYTES
+
+
+def daemon_env(tmp_path: Path, fake_jdk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    jar = tmp_path / "engine.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
+    monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
+    monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
+    monkeypatch.setenv("GROOVYSCOPE_DAEMON__HEAP", "1g")
+
+
+def test_a_crash_loop_refusal_starts_no_engine_and_says_why(
+    runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon_env(tmp_path, fake_jdk, monkeypatch)
+    reason = "the daemon was started 3 times in the last ten minutes and keeps exiting"
+
+    def refuse(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise cli.daemon_lifecycle.CrashLoopRefusedError(reason)
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", refuse)
+    monkeypatch.setattr(cli, "_EXEC", lambda _p, _a: pytest.fail("no JVM after a crash loop refusal"))
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
+    assert result.exit_code == 1 and reason in result.output
+    served: list[str] = []
+
+    def serve(_root: Path, _socket: Path, _settings: Any, _env: Any, reconnect: Any, **_k: Any) -> int:
+        try:
+            reconnect()
+        except ConnectionError as exc:
+            served.append(str(exc))
+        return 0
+
+    monkeypatch.setattr(cli, "_MCP_SERVE", serve)
+    monkeypatch.setattr(
+        cli, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", cli.load_config(tmp_path, None, {}))
+    )
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "mcp"]).exit_code == 0
+    assert served and reason in served[0]  # the agent reads the refusal's own reason
+
+
+def test_an_engine_started_without_the_daemon_keeps_the_grown_heap(
+    runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon_env(tmp_path, fake_jdk, monkeypatch)
+    log_file = cli.daemon_paths(tmp_path)[1]
+    state = selfheal.started(selfheal.empty_state(), "1536m", selfheal.EXIT_OOM, 0, 1.0, configured="1g")
+    selfheal.save_state(selfheal.state_path(log_file), state)
+
+    def unavailable(*_a: Any, **_k: Any) -> dict[str, Any]:
+        msg = "daemon on x did not answer within 30s"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", unavailable)
+    captured: list[Sequence[str]] = []
+    monkeypatch.setattr(cli, "_EXEC", lambda _p, argv: captured.append(argv))
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
+    assert result.exit_code == 0, result.output
+    assert "-Xmx1536m" in captured[0] and "-Xmx1g" not in captured[0]
+
+
 def test_lsp_relays_through_the_daemon(
     runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -243,9 +339,10 @@ def test_lsp_relays_through_the_daemon(
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
     assert relayed == [cli.daemon_lifecycle.socket_path(tmp_path, dict(os.environ))]
-    assert ensured[0][-9:-5] == ["daemon", "--socket", str(relayed[0]), "--idle-seconds"]
-    assert ensured[0][-4] == "--cache-dir"
-    assert ensured[0][-2:] == ["--root", str(tmp_path.resolve())]
+    assert ensured[0][-11:-7] == ["daemon", "--socket", str(relayed[0]), "--idle-seconds"]
+    assert ensured[0][-6] == "--cache-dir"
+    assert ensured[0][-4:-2] == ["--root", str(tmp_path.resolve())]
+    assert ensured[0][-2] == "--config" and Path(ensured[0][-1]).is_file()
     assert "-XX:+AutoCreateSharedArchive" in ensured[0]
 
 

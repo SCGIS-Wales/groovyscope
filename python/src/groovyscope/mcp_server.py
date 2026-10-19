@@ -13,9 +13,9 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent import futures
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -426,6 +426,7 @@ def quality_tools(
     """check, format, find_dynamic_code, coverage_gaps, refresh_classpath and workspace_status."""
     settings = report_settings or {}
     classpath = classpath_settings or {}
+    export_job = new_export_job()
 
     def check(
         *,
@@ -516,9 +517,7 @@ def quality_tools(
             "engine": status,
         }
         result.update(client_entry())
-        state = classpath_state(root, classpath)
-        if state is not None:
-            result["classpath"] = state
+        result.update(classpath_report(root, classpath, export_job))
         return result
 
     return {
@@ -527,7 +526,7 @@ def quality_tools(
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
         **coverage_tools(root, paged, settings),
-        **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy),
+        **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy, job=export_job),
     }
 
 
@@ -549,6 +548,56 @@ def classpath_state(root: Path, settings: Mapping[str, Any]) -> dict[str, Any] |
         return {"state": "unknown", "entries": 0, "message": f"classpath file unreadable: {exc}"}
 
 
+class ExportJob(TypedDict):
+    """The classpath export the MCP server runs in the background: the build outlives one tool call's budget."""
+
+    lock: threading.Lock
+    thread: threading.Thread | None
+    started: float
+    outcome: dict[str, Any] | None
+    reported: bool
+
+
+DEFAULT_EXPORT_WAIT_SECONDS = 90.0
+
+
+def new_export_job() -> ExportJob:
+    return {"lock": threading.Lock(), "thread": None, "started": 0.0, "outcome": None, "reported": True}
+
+
+def export_status(job: ExportJob, clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
+    """``running`` with the seconds so far, the last outcome not yet read, or None when no export ran."""
+    with job["lock"]:
+        thread, outcome = job["thread"], job["outcome"]
+        if thread is not None and thread.is_alive():
+            return {"state": "running", "elapsedSeconds": round(clock() - job["started"])}
+        if outcome is None:
+            return None
+        return {"state": "failed" if "error" in outcome else "finished", **outcome}
+
+
+def classpath_report(root: Path, settings: Mapping[str, Any], job: ExportJob) -> dict[str, Any]:
+    """workspace_status's ``classpath`` (does it still match the build) and ``classpathExport`` (a background
+    export running, or its outcome), each only when there is something to say."""
+    report: dict[str, Any] = {}
+    state = classpath_state(root, settings)
+    if state is not None:
+        report["classpath"] = state
+    export = export_status(job)
+    if export is not None:
+        report["classpathExport"] = export
+    return report
+
+
+def still_running(job: ExportJob, clock: Callable[[], float] = time.monotonic) -> dict[str, Any]:
+    return {
+        "state": "running",
+        "elapsedSeconds": round(clock() - job["started"]),
+        "note": "the build still runs in the background; call refresh_classpath again, or workspace_status, for its "
+        "result (check keeps working against the previous classpath meanwhile)",
+    }
+
+
 def classpath_tools(
     root: Path,
     environ: Mapping[str, str],
@@ -556,15 +605,30 @@ def classpath_tools(
     *,
     clip_at: int = MESSAGE_CHARS,
     confirm_policy: str = interaction.POLICY_AUTO,
+    job: ExportJob | None = None,
 ) -> dict[str, Callable[..., Any]]:
-    """refresh_classpath: the build's classpath exported again after dependencies changed."""
+    """refresh_classpath: the build's classpath exported again after dependencies changed, in the background, so
+    the tool answers within its budget however long the build runs."""
+    export_job = job if job is not None else new_export_job()
+    limit = max(1, int(settings.get("timeoutSeconds") or classpath_export.DEFAULT_TIMEOUT_SECONDS))
+    wait_for = max(0.0, float(settings.get("waitSeconds", DEFAULT_EXPORT_WAIT_SECONDS)))
+    every = max(0.5, float(settings.get("progressSeconds", DEFAULT_PROGRESS_SECONDS)))
 
-    def refresh_classpath(timeout: int = classpath_export.DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
+    def refresh_classpath(timeout: int | None = None) -> dict[str, Any]:
         """Export the compile and test classpath again from the project's Gradle or Maven build, after a
         dependency changed in build.gradle, pom.xml or libs.versions.toml (check and workspace_status say
         `classpath.state: stale`); the engine picks the new classpath up on its next request, no restart. Runs
         the build, which can take minutes, and only in a trusted workspace: otherwise ask the user to run
-        `groovyscope trust` and `groovyscope classpath`."""
+        `groovyscope trust` and `groovyscope classpath`. When the build outlasts this call the answer says
+        `state: running`; call again (or workspace_status) for the result. TIMEOUT is capped at
+        classpath.timeoutSeconds."""
+        with export_job["lock"]:
+            thread = export_job["thread"]
+            if thread is not None and thread.is_alive():
+                return still_running(export_job)
+            if export_job["outcome"] is not None and not export_job["reported"]:
+                export_job["reported"] = True  # the export the agent started earlier finished: its result
+                return dict(export_job["outcome"])
         if not settings.get("file"):
             return {"error": "no classpath settings in this session; run `groovyscope classpath` in a terminal"}
         # Read now, not when the session started: `groovyscope trust --revoke` takes effect at once.
@@ -587,36 +651,70 @@ def classpath_tools(
         if not env.get("JAVA_HOME") and settings.get("javaHome"):
             env["JAVA_HOME"] = str(settings["javaHome"])
         target = Path(str(settings["file"]))
+        seconds = min(limit, max(1, int(timeout))) if timeout else limit
 
-        def waiting(elapsed: float) -> None:
-            interaction.progress(elapsed, None, f"{build} build running ({elapsed:.0f}s)")
+        def run() -> None:
+            outcome = export_outcome(root, env, target, seconds, decision=decision, clip_at=clip_at)
+            with export_job["lock"]:
+                export_job["outcome"] = outcome
 
+        worker = threading.Thread(target=run, name="groovyscope-classpath-export", daemon=True)
+        with export_job["lock"]:
+            export_job["thread"] = worker
+            export_job["started"] = time.monotonic()
+            export_job["outcome"] = None
+            export_job["reported"] = False
         interaction.progress(0, None, f"starting the {build} build")
-        try:
-            with classpath_export.exclusive(target):
-                export = classpath_export.export(
-                    root,
-                    env,
-                    timeout=max(1, int(timeout)),
-                    runner=functools.partial(classpath_export.default_runner, on_wait=waiting),
-                )
-                classpath_export.write_file(target, export, fingerprint=classpath_export.build_fingerprint(root))
-        except ValueError as exc:
-            return {"error": clip(str(exc), clip_at)}
-        except OSError as exc:
-            return {"error": f"the classpath could not be written to {target}: {exc}"}
-        return with_decision(
-            {
-                "tool": export["tool"],
-                "entries": len(export["paths"]),
-                "missing": len(export["missing"]),
-                "file": relative_path(target.resolve().as_uri(), root),
-                "note": "the engine reloads the classpath on its next request",
-            },
-            decision,
-        )
+        worker.start()
+        return await_export(export_job, worker, wait_for, every, build)
 
     return {"refresh_classpath": refresh_classpath}
+
+
+def export_outcome(
+    root: Path, env: Mapping[str, str], target: Path, seconds: int, *, decision: str, clip_at: int
+) -> dict[str, Any]:
+    """Runs the export under its lock and writes the file; the answer refresh_classpath gives for it."""
+    try:
+        with classpath_export.exclusive(target):
+            export = classpath_export.export(
+                root,
+                env,
+                timeout=seconds,
+                # the build runs on its own thread; the caller's thread reports progress while it waits
+                runner=functools.partial(classpath_export.default_runner, on_wait=lambda _elapsed: None),
+            )
+            classpath_export.write_file(target, export, fingerprint=classpath_export.build_fingerprint(root))
+    except ValueError as exc:
+        return {"error": clip(str(exc), clip_at)}
+    except OSError as exc:
+        return {"error": f"the classpath could not be written to {target}: {exc}"}
+    return with_decision(
+        {
+            "tool": export["tool"],
+            "entries": len(export["paths"]),
+            "missing": len(export["missing"]),
+            "file": relative_path(target.resolve().as_uri(), root),
+            "note": "the engine reloads the classpath on its next request",
+        },
+        decision,
+    )
+
+
+def await_export(job: ExportJob, worker: threading.Thread, wait_for: float, every: float, build: str) -> dict[str, Any]:
+    """Waits up to ``wait_for`` seconds for the export, with a progress note every ``every`` seconds; its outcome
+    when it finished, else "still running" (the build goes on and a later call or workspace_status reports it)."""
+    deadline = time.monotonic() + wait_for
+    while worker.is_alive() and time.monotonic() < deadline:
+        worker.join(min(every, max(0.0, deadline - time.monotonic())))
+        if worker.is_alive():
+            elapsed = time.monotonic() - job["started"]
+            interaction.progress(elapsed, None, f"{build} build running ({elapsed:.0f}s)")
+    with job["lock"]:
+        if worker.is_alive() or job["outcome"] is None:
+            return still_running(job)
+        job["reported"] = True
+        return dict(job["outcome"])
 
 
 def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:
@@ -1423,7 +1521,7 @@ DEFAULT_MAX_IN_FLIGHT = 4
 RELOAD_TIMEOUT_SECONDS = 60.0
 Opener = Callable[[Path], Any]
 EngineCall = Callable[..., Any]
-Dispatch = Callable[[str, dict[str, Any]], Any]
+Dispatch = Callable[[str, dict[str, Any], float | None], Any]
 
 
 def confirm_edits(policy: str, action: str, changed: Sequence[FileEdit], root: Path) -> str:
@@ -1489,48 +1587,70 @@ def engine_dispatcher(
     budget: float,
 ) -> tuple[Dispatch, Callable[[], None]]:
     """One engine channel with a configuration that follows the files on disk and a reconnect-and-retry when the
-    engine went away (daemon stopped, JVM killed, upgraded). The lock is held only to swap the channel or to send
-    a configuration, never for the duration of a request."""
-    state: dict[str, Any] = {"session": opener(socket_file), "applied": None}
+    engine went away (daemon stopped, JVM killed, upgraded). The lock is held only to read or swap the channel and
+    to claim a configuration push, never while a request or a reload runs: a reload is sent by one caller while the
+    others carry on, and it counts as applied only when the channel it went to is still the current one."""
+    state: dict[str, Any] = {"session": opener(socket_file), "applied": None, "sending": None}
     session_lock = threading.Lock()
 
-    def apply_configuration() -> None:
+    def apply_configuration(session: Any) -> None:
         current = configuration() if configuration is not None else None
-        if current is None or current[0] == state["applied"]:
+        if current is None:
             return
         digest, document = current
+        with session_lock:
+            sending = state["sending"]
+            if (
+                state["session"] is not session
+                or state["applied"] == digest
+                or (sending is not None and sending[0] is session and sending[1] == digest)
+            ):
+                return
+            state["sending"] = (session, digest)
         try:
-            reply = engine(state["session"], RELOAD_METHOD, {"config": document}, timeout=RELOAD_TIMEOUT_SECONDS)
+            reply = engine(session, RELOAD_METHOD, {"config": document}, timeout=RELOAD_TIMEOUT_SECONDS)
         except RuntimeError as exc:  # the engine refused the document; the old configuration stays in force
             LOG.warning("engine kept its configuration: %s", exc)
+        except BaseException:
+            with session_lock:
+                state["sending"] = None
+            raise
         else:
             if isinstance(reply, Mapping) and reply.get("reloaded"):
                 LOG.info("engine configuration reloaded (%s)", digest[:12])
-        state["applied"] = digest
-
-    def dispatch(method: str, params: dict[str, Any]) -> Any:
         with session_lock:
-            apply_configuration()
+            if state["session"] is session:  # compare and swap: a reload sent to a replaced channel counts for nothing
+                state["applied"] = digest
+            state["sending"] = None
+
+    def replace(session: Any, exc: BaseException) -> Any:
+        with session_lock:
+            if state["session"] is session:  # the first caller to notice replaces it; the others reuse it
+                LOG.info("engine session lost (%s); reconnecting", exc)
+                closer(session)
+                state["session"] = opener(reconnect()) if reconnect is not None else session
+                state["applied"] = None
+            return state["session"]
+
+    def dispatch(method: str, params: dict[str, Any], timeout: float | None = None) -> Any:
+        deadline = time.monotonic() + (budget if timeout is None else timeout)
+        with session_lock:
             session = state["session"]
         try:
-            return engine(session, method, params, timeout=budget)
+            apply_configuration(session)
+            return engine(session, method, params, timeout=max(0.001, deadline - time.monotonic()))
         except TimeoutError:
             # TimeoutError is an OSError in Python 3, but a slow engine is alive: never reconnect for it, and never
             # send the request again (the channel already told the engine to stop it).
             raise
         except (OSError, ValueError) as exc:
-            # The socket died or the stream is out of frame: only a fresh channel can answer.
+            # The socket died, the stream is out of frame, a write broke or the daemon is exiting: only a fresh
+            # channel can answer.
             if reconnect is None:
                 raise
-            with session_lock:
-                if state["session"] is session:  # the first caller to notice replaces it; the others reuse it
-                    LOG.info("engine session lost (%s); reconnecting", exc)
-                    closer(session)
-                    state["session"] = opener(reconnect())
-                    state["applied"] = None
-                    apply_configuration()
-                session = state["session"]
-            return engine(session, method, params, timeout=budget)
+            session = replace(session, exc)
+            apply_configuration(session)
+            return engine(session, method, params, timeout=max(0.001, deadline - time.monotonic()))
 
     return (dispatch, lambda: closer(state["session"]))
 
@@ -1542,56 +1662,51 @@ def single_flight(
     dispatch: Dispatch, budget: float, max_in_flight: int, progress_every: float = DEFAULT_PROGRESS_SECONDS
 ) -> Call:
     """``dispatch`` behind two guardrails: at most ``max_in_flight`` calls reach the engine at a time (the rest
-    wait within ``budget``), and a call identical to one still running joins it instead of doubling the work. A
-    leader over its budget has already told the engine to stop (``channel_call`` cancels); it and its followers
-    get a "still running" answer rather than a hang."""
-    gate = threading.BoundedSemaphore(max_in_flight)
+    queue), and a call identical to one still running joins it instead of doubling the work. Every call has one
+    deadline, ``budget`` from its arrival, shared by the wait for a slot and the engine request (which is sent with
+    the time left, so the engine is told to stop it at the deadline); past it the caller gets a "still running" or
+    "no free slot" answer rather than a hang. The requests run on a pool of ``max_in_flight`` threads."""
+    pool = ThreadPoolExecutor(max_workers=max_in_flight, thread_name_prefix="groovyscope-call")
     in_flight: dict[str, Future[Any]] = {}
+    begun: set[Future[Any]] = set()
     flight_lock = threading.Lock()
 
-    def lead(key: str, method: str, params: dict[str, Any], future: Future[Any]) -> None:
+    def lead(key: str, method: str, params: dict[str, Any], future: Future[Any], deadline: float) -> None:
         try:
-            if not gate.acquire(timeout=budget):
-                msg = (
-                    f"{method} waited {budget:.0f}s for a free slot: {max_in_flight} tool calls already run on the "
-                    "engine (mcp.maxInFlight); retry in a moment"
-                )
-                raise TimeoutError(msg)
-            try:
-                future.set_result(dispatch(method, params))
-            finally:
-                gate.release()
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError(slot_message(method, budget, max_in_flight))  # queued past its deadline
+            with flight_lock:
+                begun.add(future)
+            future.set_result(dispatch(method, params, left))
         except BaseException as exc:  # every outcome must reach the waiters
             future.set_exception(exc)
         finally:
             with flight_lock:
+                begun.discard(future)
                 if in_flight.get(key) is future:
                     del in_flight[key]
 
     def call(method: str, params: dict[str, Any]) -> Any:
         key = flight_key(method, params)
         own: Future[Any] = Future()
+        deadline = time.monotonic() + budget
         with flight_lock:
             future = in_flight.setdefault(key, own)
         leader = future is own
         if leader:
-            # The request runs on its own thread so this one stays free to tell the client it is still waiting.
-            threading.Thread(
-                target=lead, args=(key, method, params, future), name=f"groovyscope-call-{method}", daemon=True
-            ).start()
-        # The leader's request is bounded (a slot within the budget, then the engine within the budget); a
-        # follower waits one budget for someone else's work.
-        deadline = None if leader else time.monotonic() + budget
+            # The request runs on the pool so this thread stays free to tell the client it is still waiting.
+            pool.submit(lead, key, method, params, future, deadline)
         started = time.monotonic()
         while True:
-            left = None if deadline is None else deadline - time.monotonic()
-            if left is not None and left <= 0:
-                msg = (
-                    f"{method} did not answer within {budget:.0f}s; another call is still running it. "
-                    "Narrow the paths or retry in a moment"
-                )
-                raise RuntimeError(msg)
-            done, _ = futures.wait([future], timeout=progress_every if left is None else min(progress_every, left))
+            left = deadline - time.monotonic()
+            if left <= 0:
+                with flight_lock:
+                    sent = future in begun
+                if leader and not sent:
+                    raise RuntimeError(slot_message(method, budget, max_in_flight))
+                raise RuntimeError(late_message(method, budget, leader=leader))
+            done, _ = futures.wait([future], timeout=min(progress_every, left))
             if done:
                 break
             waited = time.monotonic() - started
@@ -1599,13 +1714,23 @@ def single_flight(
         try:
             return future.result()
         except TimeoutError as exc:
-            msg = (
-                f"{method} did not answer within {budget:.0f}s; the engine was told to stop it. "
-                "Narrow the paths or retry in a moment"
-            )
-            raise RuntimeError(msg) from exc
+            if str(exc).startswith(f"{method} waited"):
+                raise RuntimeError(str(exc)) from exc
+            raise RuntimeError(late_message(method, budget, leader=True)) from exc
 
     return call
+
+
+def slot_message(method: str, budget: float, max_in_flight: int) -> str:
+    return (
+        f"{method} waited {budget:.0f}s for a free slot: {max_in_flight} tool calls already run on the engine "
+        "(mcp.maxInFlight); retry in a moment"
+    )
+
+
+def late_message(method: str, budget: float, *, leader: bool) -> str:
+    who = "the engine was told to stop it" if leader else "another call is still running it"
+    return f"{method} did not answer within {budget:.0f}s; {who}. Narrow the paths or retry in a moment"
 
 
 def session_caller(

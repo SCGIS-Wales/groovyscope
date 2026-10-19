@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -94,3 +96,30 @@ async def test_relay_uses_a_connection_opened_before_stdin_is_touched(short_dir:
     await server.wait_closed()
     with pytest.raises(OSError):
         await relay.run(short_dir / "nobody.sock")
+
+
+@pytest.mark.asyncio
+async def test_a_slow_client_holds_the_relay_back_instead_of_filling_memory() -> None:
+    read_end, write_end = os.pipe()
+    with os.fdopen(write_end, "wb", buffering=0) as pipe:
+        write_out, close_out = await relay.output_pipe(pipe)
+        chunk = b"x" * relay.CHUNK
+
+        async def flood() -> None:
+            for _ in range(64):  # 4 MiB the client never reads
+                await write_out(chunk)
+
+        task = asyncio.create_task(flood())
+        done, _ = await asyncio.wait([task], timeout=0.5)
+        assert not done  # the writer waits for the reader instead of buffering it all
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await close_out()
+    os.close(read_end)
+
+
+def test_a_lost_connection_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR, logger="groovyscope.relay"):
+        assert relay.lost(ConnectionResetError("reset")) == 1
+    assert "connection to the daemon lost (reset)" in caplog.text

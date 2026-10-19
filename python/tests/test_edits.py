@@ -50,3 +50,32 @@ def test_write_document_refuses_a_file_that_changed_since_it_was_read(tmp_path: 
     assert target.read_text() == "class A { int x }\n"
     edits_module.write_document(target, "class C {}\n")  # without an expectation the write is unconditional
     assert target.read_text() == "class C {}\n"
+
+
+def test_write_document_keeps_a_symbolic_link_and_writes_through_it(tmp_path: Path) -> None:
+    real = tmp_path / "src" / "A.groovy"
+    real.parent.mkdir()
+    real.write_text("class A {}\r\n")
+    real.chmod(0o640)
+    link = tmp_path / "Linked.groovy"
+    link.symlink_to(real)
+    edits_module.write_document(link, "class A { }\r\n", expected="class A {}\r\n")
+    assert link.is_symlink() and real.read_bytes() == b"class A { }\r\n"
+    assert real.stat().st_mode & 0o777 == 0o640
+
+
+def test_a_save_that_lands_while_the_edit_is_written_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "A.groovy"
+    target.write_text("class A {}\n")
+    reading = edits_module.read_document
+
+    def read_then_someone_saves(path: Path) -> str:
+        text = reading(path)
+        target.write_text("class A { int saved }\n")  # the editor saves right after the check
+        return text
+
+    monkeypatch.setattr(edits_module, "read_document", read_then_someone_saves)
+    with pytest.raises(edits_module.FileChangedError, match="while the edit was being written"):
+        edits_module.write_document(target, "class B {}\n", expected="class A {}\n")
+    assert target.read_text() == "class A { int saved }\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["A.groovy"]

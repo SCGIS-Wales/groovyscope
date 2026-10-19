@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import difflib
 import json
-import os
 import re
-import shutil
-import tempfile
 from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from groovyscope import __version__, kiro_agent, skills
+from groovyscope import __version__, atomic, kiro_agent, skills
 from groovyscope.config import deep_merge
 
 # (template name inside the package, destination relative to the workspace root)
@@ -276,34 +273,9 @@ def unified_diff(change: KiroChange) -> str:
 
 
 def write_atomically(destination: Path, text: str) -> None:
-    """Write via a temporary file in the same folder and an atomic rename, so a crash never leaves half a file."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # A unique name per writer: two sessions repairing the same file at once never rename each other's half.
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=destination.parent,
-        prefix=f".{destination.name}.",
-        suffix=".groovyscope-tmp",
-        delete=False,
-    ) as handle:
-        handle.write(text)
-        temporary = Path(handle.name)
-    try:
-        if destination.exists():
-            shutil.copymode(destination, temporary)
-        else:
-            temporary.chmod(0o666 & ~current_umask())
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def current_umask() -> int:
-    """The process umask (os.umask can only be read by setting it)."""
-    mask = os.umask(0)
-    os.umask(mask)
-    return mask
+    """Write via a temporary file in the same folder and an atomic rename, so a crash never leaves half a file; an
+    existing file keeps its mode (see atomic.write_text)."""
+    atomic.write_text(destination, text)
 
 
 def backup_path(destination: Path) -> Path:

@@ -112,6 +112,28 @@ def test_changed_groovy_files_from_git_status(tmp_path: Path) -> None:
     assert hooks.changed_groovy_files(tmp_path, lambda _c, _d: (128, "not a repository")) == []
 
 
+def test_the_stop_gate_holds_the_agent_to_files_changed_since_the_session_started(tmp_path: Path) -> None:
+    before = tmp_path / "Before.groovy"
+    mine = tmp_path / "Mine.groovy"
+    before.write_text("class Before { broken")
+    status = ["?? Before.groovy\0"]
+
+    def runner(_command: list[str], _cwd: Path) -> tuple[int, str]:
+        return (0, status[0])
+
+    baseline = tmp_path / "cache" / "baseline.json"
+    assert hooks.changed_since_baseline([before], baseline) == [before]  # no baseline: every changed file counts
+    assert hooks.record_baseline(tmp_path, runner, baseline) == 1
+    mine.write_text("class Mine {}")
+    status[0] = "?? Before.groovy\0?? Mine.groovy\0"
+    changed = hooks.changed_groovy_files(tmp_path, runner)
+    assert hooks.changed_since_baseline(changed, baseline) == [mine]  # earlier work in progress is not the agent's
+    before.write_text("class Before { still broken, now edited }")
+    assert hooks.changed_since_baseline(changed, baseline) == [before, mine]
+    baseline.write_text("[1]")
+    assert hooks.changed_since_baseline(changed, baseline) == [before, mine]
+
+
 def test_stop_decision_blocks_on_compile_errors_only() -> None:
     clean = [{"path": "A.groovy", "line": 1, "level": 2, "message": "warn"}]
     assert hooks.stop_decision(clean, 5) is None

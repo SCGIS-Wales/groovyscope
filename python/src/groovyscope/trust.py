@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from groovyscope import atomic
 from groovyscope.selfheal import format_heap, parse_heap
 
 TRUST_FILE = Path(".groovyscope") / "trusted-workspaces.json"
@@ -76,10 +77,7 @@ def set_trusted(root: Path, home: Path, *, trusted: bool) -> list[str]:
         roots.append(resolved)
     target = trust_file(home)
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".tmp")
-    temporary.write_text(json.dumps({"workspaces": sorted(roots)}, indent=2) + "\n", encoding="utf-8")
-    temporary.chmod(0o600)
-    temporary.replace(target)
+    atomic.write_text(target, json.dumps({"workspaces": sorted(roots)}, indent=2) + "\n", mode=atomic.PRIVATE_MODE)
     return sorted(roots)
 
 

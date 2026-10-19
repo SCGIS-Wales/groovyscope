@@ -258,8 +258,8 @@ Terraform declarations for definition, references and hover; `RemoteCompiler` ru
 reflectively against the profile's jars in a class loader parented to the platform loader, so the engine's
 own Groovy never leaks in. A profile's target version re-runs GS010 as RP002, its checker policy caps or
 drops Groovy 6 checker findings, and its protected regions filter every fix and code action. Python
-discovers and validates profiles (`profiles.py`, `profile-schema.json`) and hands them to the engine in
-`GROOVYSCOPE_CONFIG_JSON`.
+discovers and validates profiles (`profiles.py`, `profile-schema.json`) and hands them to the engine in the
+configuration file it starts the engine with (`--config`, written private under the cache).
 
 The daemon is shared by editors and by CLI and MCP calls. Editors report edits; CLI and MCP calls do not,
 so every `groovyscope/*` request first compares a fingerprint of the compile files (path, size,

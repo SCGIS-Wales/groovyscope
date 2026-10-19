@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -232,6 +233,38 @@ def test_refresh_classpath_runs_the_export_only_in_a_trusted_workspace(
     assert "run `groovyscope classpath`" in classpath_tools(tmp_path, engine, file="")["refresh_classpath"]()["error"]
 
 
+def test_refresh_classpath_answers_within_its_budget_while_the_build_goes_on(
+    tmp_path: Path, engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(tmp_path / "build.gradle", "plugins {}\n")
+    entered = threading.Event()
+    release = threading.Event()
+    timeouts: list[int] = []
+
+    def slow_export(_root: Path, _environ: Mapping[str, str], **kwargs: Any) -> classpath.Export:
+        timeouts.append(kwargs["timeout"])
+        entered.set()
+        release.wait(10)
+        return EXPORT
+
+    monkeypatch.setattr(mcp_server.classpath_export, "export", slow_export)
+    engine["responses"]["groovyscope/status"] = {"engine": "1"}
+    tools = classpath_tools(tmp_path, engine, trusted=True, timeoutSeconds=600, waitSeconds=0)
+    first = tools["refresh_classpath"](timeout=5000)
+    assert first["state"] == "running" and "call refresh_classpath again" in first["note"]
+    assert entered.wait(5) and timeouts == [600]  # the agent's timeout is capped at classpath.timeoutSeconds
+    assert tools["refresh_classpath"]()["state"] == "running"  # no second build
+    assert tools["workspace_status"]()["classpathExport"]["state"] == "running"
+    release.set()
+    for _ in range(100):
+        if tools["workspace_status"]()["classpathExport"]["state"] != "running":
+            break
+        entered.wait(0.05)
+    assert tools["workspace_status"]()["classpathExport"]["state"] == "finished"
+    assert tools["refresh_classpath"]()["entries"] == 2  # the result of the export started earlier
+    assert timeouts == [600]
+
+
 def test_cli_reloads_a_daemon_running_an_older_configuration(
     runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -293,3 +326,85 @@ def test_classpath_command_reloads_the_running_daemon_in_place(
     monkeypatch.setattr(cli, "_RPC", refusing)
     fallback = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
     assert fallback.exit_code == 0 and "was stopped" in fallback.output and stopped
+
+
+def test_an_unchanged_classpath_keeps_the_daemon_running(
+    runner: CliRunner, tmp_path: Path, clean_env: dict[str, str], isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "settings.gradle").write_text("", encoding="utf-8")
+    trust.set_trusted(tmp_path, isolated_home, trusted=True)
+    monkeypatch.setattr(cli.classpath_export, "export", lambda *_a, **_k: EXPORT)
+    running = {"engine": "x", "configHash": ""}
+    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _t=5.0: running)
+    stopped: list[Path] = []
+    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
+    monkeypatch.setattr(cli, "_RPC", lambda *_a: pytest.fail("nothing to reload"))
+    first = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
+    obj = {"root": tmp_path.resolve(), "config_path": None}
+    cli.hand_over_config(obj, cli.load_config(tmp_path, None, dict(cli.os.environ)))
+    running["configHash"] = cli.config_hash(obj)  # the daemon already runs this very configuration
+    again = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
+    assert first.exit_code == 0 and again.exit_code == 0, again.output
+    assert "already runs this classpath" in again.output and stopped == [cli.daemon_paths(tmp_path)[0]]
+
+
+def test_a_configuration_push_on_a_dead_channel_reconnects_then_applies() -> None:
+    sent: list[tuple[str, str]] = []
+
+    def call(session: dict[str, Any], method: str, _params: Any = None, timeout: float | None = None) -> Any:
+        sent.append((session["name"], method))
+        if session["name"] == "dead":
+            msg = "engine closed the session"
+            raise ConnectionError(msg)
+        return {"reloaded": True} if method == mcp_server.RELOAD_METHOD else {"ok": method}
+
+    names = iter(["dead", "fresh"])
+    caller, _ = mcp_server.session_caller(
+        Path("/a.sock"),
+        lambda: Path("/b.sock"),
+        open_session=lambda _p: {"name": next(names)},
+        configuration=lambda: ("h1", "{}"),
+        call_fn=call,
+        close_fn=lambda _s: None,
+    )
+    assert caller("groovyscope/check", {}) == {"ok": "groovyscope/check"}
+    assert sent == [
+        ("dead", mcp_server.RELOAD_METHOD),
+        ("fresh", mcp_server.RELOAD_METHOD),
+        ("fresh", "groovyscope/check"),
+    ]
+
+
+def test_a_slow_configuration_reload_does_not_hold_other_calls() -> None:
+    reloading = threading.Event()
+    release = threading.Event()
+
+    def call(_session: dict[str, Any], method: str, _params: Any = None, timeout: float | None = None) -> Any:
+        if method == mcp_server.RELOAD_METHOD:
+            reloading.set()
+            release.wait(10)
+            return {"reloaded": True}
+        return {"ok": method}
+
+    caller, _ = mcp_server.session_caller(
+        Path("/a.sock"),
+        None,
+        open_session=lambda _p: {},
+        configuration=lambda: ("h1", "{}"),
+        call_fn=call,
+        close_fn=lambda _s: None,
+    )
+    first: dict[str, Any] = {}
+    worker = threading.Thread(target=lambda: first.update(answer=caller("groovyscope/check", {})))
+    worker.start()
+    assert reloading.wait(5)
+    second: dict[str, Any] = {}
+    other = threading.Thread(target=lambda: second.update(answer=caller("groovyscope/status", {})))
+    other.start()
+    try:
+        other.join(3)
+        assert second.get("answer") == {"ok": "groovyscope/status"}  # answered while the reload still waits
+    finally:
+        release.set()
+        worker.join(5)
+    assert first["answer"] == {"ok": "groovyscope/check"}

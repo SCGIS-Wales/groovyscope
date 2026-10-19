@@ -200,7 +200,7 @@ def test_waiting_calls_send_progress_notes(monkeypatch: pytest.MonkeyPatch) -> N
     notes: list[str] = []
     monkeypatch.setattr(interaction, "progress", lambda _d, _t, message, **_k: notes.append(message))
 
-    def slow(method: str, params: dict[str, Any]) -> Any:
+    def slow(method: str, params: dict[str, Any], _timeout: float | None = None) -> Any:
         time.sleep(0.35)
         return {"method": method, "params": params}
 

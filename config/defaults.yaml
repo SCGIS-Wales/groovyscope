@@ -41,7 +41,7 @@ daemon:
   logMaxBytes: 5000000    # the daemon log and the engine's log file (logging.file) are rotated past this size
   logsKept: 3             # rotated daemon logs kept; `groovyscope checkup --fix` removes the rest
 mcp:
-  requestTimeoutSeconds: 100  # budget per tool call, under Kiro's 120 s; over it the tool says "still running" and cancels
+  requestTimeoutSeconds: 100  # budget per tool call (1 to 115), under Kiro's 120 s; over it the tool says "still running"
   maxInFlight: 4          # tool calls the server runs on the engine at a time; the rest wait within the same budget
   confirmWrites: "auto"   # auto: fix, format and rename with apply, refresh_classpath and draw.io writes ask the user
                           # first when the client supports MCP elicitation; never: the client's own approval only
@@ -91,6 +91,9 @@ verify:
   runTasks: ["test"]      # test tasks `groovyscope verify` runs; affected tests of other tasks (integrationTest) are listed for CI
   timeoutSeconds: 1800    # the Gradle run's budget
   coverageTask: "jacocoTestReport"  # `verify --coverage` adds it when the build applies JaCoCo, then reads reports.jacoco
+classpath:
+  timeoutSeconds: 900     # longest the build may run when `groovyscope classpath` or refresh_classpath exports the
+                          # classpath; the MCP tool answers within mcp.requestTimeoutSeconds and the export goes on
 reports:
   sarif: []               # SARIF logs merged into check and review (SpotBugs, other SAST); empty = build/reports/spotbugs/*.sarif* when present
   jacoco: "build/reports/jacoco/test/jacocoTestReport.xml"  # read by coverage_gaps and `groovyscope coverage`

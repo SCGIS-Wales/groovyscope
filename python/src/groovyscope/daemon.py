@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
@@ -23,12 +24,11 @@ STATUS_METHOD = "groovyscope/status"
 SHUTDOWN_METHOD = "groovyscope/shutdownDaemon"
 START_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 15.0
+LOCK_TIMEOUT_SECONDS = START_TIMEOUT_SECONDS + STOP_TIMEOUT_SECONDS  # one holder may stop an old daemon, then start
+LOCK_POLL_SECONDS = 0.1
 # sun_path is 104 bytes on macOS and the BSDs, 108 on Linux (including the terminating NUL).
 MAX_SOCKET_PATH = {"darwin": 103}.get(sys.platform, 107)
 LOG = logging.getLogger("groovyscope.daemon")
-# What the JVM prints when `-XX:+ExitOnOutOfMemoryError` ends the daemon (`Terminating due to
-# java.lang.OutOfMemoryError: Java heap space`); any other OutOfMemoryError in the log tail counts too.
-OOM_MARKER = "OutOfMemoryError"
 # `doctor` and `checkup` warn once the heap in use passes this share of the maximum.
 HEAP_WARN_RATIO = 0.85
 HEAP_FIX = "raise `daemon.heap` in `.groovyscope.yaml` (then `groovyscope daemon restart`)"
@@ -123,8 +123,16 @@ def check_socket_path(socket_file: Path) -> None:
 
 
 @contextlib.contextmanager
-def start_lock(socket_file: Path) -> Iterator[None]:
-    """Serialise probe-and-start across processes, so two clients never start two daemons for one root."""
+def start_lock(
+    socket_file: Path,
+    *,
+    timeout: float = LOCK_TIMEOUT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> Iterator[None]:
+    """Serialise probe-and-start (and stop) across processes, so two clients never start two daemons for one root.
+    The wait is bounded: a holder that takes longer than ``timeout`` (a start and a stop together) is stuck, and
+    the caller gets a RuntimeError instead of hanging with it."""
     try:
         import fcntl  # noqa: PLC0415 - POSIX only; Unix domain sockets are too
     except ImportError:  # pragma: no cover - non-POSIX
@@ -132,7 +140,17 @@ def start_lock(socket_file: Path) -> Iterator[None]:
         return
     lock_file = socket_file.with_name(socket_file.name + ".lock")
     with lock_file.open("a") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        deadline = clock() + timeout
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if clock() >= deadline:
+                    msg = f"another groovyscope process has been starting or stopping the daemon on {socket_file} "
+                    msg += f"for over {timeout:.0f}s; try again, or `groovyscope daemon stop`"
+                    raise RuntimeError(msg) from None
+                sleep(LOCK_POLL_SECONDS)
         try:
             yield
         finally:
@@ -174,7 +192,13 @@ def probe(socket_file: Path, timeout: float = 5.0) -> dict[str, Any] | None:
 
 
 def daemon_command(
-    engine_command: Sequence[str], socket_file: Path, idle_minutes: int, cache: Path | None, root: Path | None = None
+    engine_command: Sequence[str],
+    socket_file: Path,
+    idle_minutes: int,
+    cache: Path | None,
+    root: Path | None = None,
+    *,
+    config_file: Path | None = None,
 ) -> list[str]:
     """The engine invocation for ``daemon`` mode, appended to the JVM command line. With ``root``, the daemon serves
     that workspace only (its configuration and trust decision are the ones it was started with)."""
@@ -190,6 +214,8 @@ def daemon_command(
         command += ["--cache-dir", str(cache)]
     if root is not None:
         command += ["--root", str(root)]
+    if config_file is not None:
+        command += ["--config", str(config_file)]
     return command
 
 
@@ -226,6 +252,7 @@ def start(
     secure_dir(socket_file.parent)
     secure_dir(log_file.parent)
     LOG.debug("starting daemon: %s", " ".join(command))
+    reap_children()
     with log_file.open("ab") as log:
         process = spawn(
             list(command),
@@ -236,6 +263,7 @@ def start(
             start_new_session=True,
             close_fds=True,
         )
+    keep_child(process)
     deadline = time.monotonic() + timeout
     while True:
         status = check(socket_file)
@@ -252,6 +280,28 @@ def start(
             msg = f"daemon on {socket_file} {reason}; log {log_file} ends with:\n{log_tail(log_file)}"
             raise RuntimeError(msg)
         sleep(0.2)
+
+
+# Daemons this process started. The daemon outlives a CLI call but is still this process's child while it runs
+# (a long MCP session, say): kept here and polled, so one that exits is reaped instead of left a zombie.
+_CHILDREN: list[Any] = []
+_CHILDREN_LOCK = threading.Lock()
+
+
+def keep_child(process: Any) -> None:
+    if hasattr(process, "poll"):
+        with _CHILDREN_LOCK:
+            _CHILDREN.append(process)
+
+
+def reap_children() -> int:
+    """Polls the daemons this process started and forgets those that exited (which reaps them). Returns how
+    many were reaped."""
+    with _CHILDREN_LOCK:
+        running = [child for child in _CHILDREN if child.poll() is None]
+        reaped = len(_CHILDREN) - len(running)
+        _CHILDREN[:] = running
+    return reaped
 
 
 def ensure_running(
@@ -281,7 +331,7 @@ def ensure_running(
     check = _probe(probe_fn)
     state = probe_state if state_fn is None else state_fn
     launch = start if start_fn is None else start_fn
-    halt = stop if stop_fn is None else stop_fn
+    halt = stop_unlocked if stop_fn is None else stop_fn
     section: Mapping[str, Any] = settings or {}
     check_socket_path(socket_file)
     secure_dir(socket_file.parent)
@@ -299,6 +349,18 @@ def ensure_running(
             return status
         command = prepare_start(list(command), log_file, section, sleep=sleep, now=now)
         return launch(command, socket_file, log_file, environ, probe_fn=check)
+
+
+class CrashLoopRefusedError(RuntimeError):
+    """The daemon keeps exiting as fast as it is started; no JVM is started, the reason says what to change."""
+
+
+def direct_heap(command: list[str], log_file: Path, settings: Mapping[str, Any]) -> list[str]:
+    """``command`` with the heap the self-healing grew for this workspace, for an engine started without the
+    daemon: a heap that ran out of memory there would run out here too."""
+    configured = selfheal.configured_heap(command, str(settings.get("heap", "1g")))
+    grown = selfheal.kept_heap(selfheal.load_state(selfheal.state_path(log_file)), configured)
+    return selfheal.with_heap(command, grown) if grown else command
 
 
 def forget_restarts(log_file: Path) -> None:
@@ -326,7 +388,7 @@ def prepare_start(
     moment = now()
     plan = selfheal.plan_restart(previous, cause, settings, configured, moment, physical=selfheal.physical_memory())
     if not plan["allowed"]:
-        raise RuntimeError(plan["reason"])
+        raise CrashLoopRefusedError(plan["reason"])
     if plan["reason"]:
         LOG.warning("%s", plan["reason"])
     if plan["delay"] > 0:
@@ -350,7 +412,21 @@ def stop(
     sleep: Callable[[float], None] = time.sleep,
     timeout: float = STOP_TIMEOUT_SECONDS,
 ) -> bool:
-    """Ask a running daemon to exit and wait for its socket to go away. False when it was not running."""
+    """Ask a running daemon to exit and wait for its socket to go away. False when it was not running. Holds the
+    start lock, so a start racing the stop never sees the old socket and keeps it."""
+    with start_lock(socket_file):
+        return stop_unlocked(socket_file, probe_fn=probe_fn, notify=notify, sleep=sleep, timeout=timeout)
+
+
+def stop_unlocked(
+    socket_file: Path,
+    *,
+    probe_fn: Probe | None = None,
+    notify: Callable[[Path, str], None] = rpc.notify,
+    sleep: Callable[[float], None] = time.sleep,
+    timeout: float = STOP_TIMEOUT_SECONDS,
+) -> bool:
+    """``stop`` for a caller that already holds the start lock."""
     check = _probe(probe_fn)
     if check(socket_file) is None:
         return False
@@ -382,8 +458,8 @@ def info(root: Path, environ: Mapping[str, str], *, probe_fn: Probe | None = Non
 
 
 def out_of_memory(log_file: Path) -> bool:
-    """Whether the daemon's log ends with an ``OutOfMemoryError``: the JVM exited for lack of heap."""
-    return OOM_MARKER in log_tail(log_file)
+    """Whether the daemon's log ends with an ``OutOfMemoryError`` of any kind (see selfheal.exit_cause_of)."""
+    return selfheal.exit_cause_of(log_tail(log_file)) != selfheal.EXIT_OTHER
 
 
 def memory_use(status: Mapping[str, Any] | None) -> tuple[int, int] | None:
@@ -416,5 +492,7 @@ def memory_warning(status: Mapping[str, Any] | None, ratio: float = HEAP_WARN_RA
 
 
 def out_of_memory_advice(log: str) -> str:
-    """What to do when the last daemon died of an ``OutOfMemoryError``."""
-    return f"the last daemon exited with OutOfMemoryError (log: {log}); {HEAP_FIX}"
+    """What to do when the last daemon died of an ``OutOfMemoryError``: a bigger heap for a heap exhaustion, the
+    kind's own advice for the others (read from the log)."""
+    other = selfheal.oom_advice(log_tail(Path(log)))
+    return f"the last daemon exited with OutOfMemoryError (log: {log}); {other or HEAP_FIX}"
