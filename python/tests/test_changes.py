@@ -6,9 +6,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 
-from groovyscope import changes
+from groovyscope import changes, cli
 
 DIFF = """diff --git a/src/A.groovy b/src/A.groovy
 --- a/src/A.groovy
@@ -274,5 +275,10 @@ def test_triage_ranks_risks_smells_and_noise_with_the_fix_command() -> None:
     }
     assert [c["code"] for c in triage["smells"]["codes"]] == ["GS026"]
     assert triage["noise"]["count"] == 3 and triage["noise"]["codes"][0]["code"] == "LineLength"
-    assert triage["fix"] == {"count": 2, "command": "groovyscope fix --codes GS002,NoDef"}
+    assert triage["fix"] == {"count": 2, "command": "groovyscope fix --code GS002 --code NoDef"}
     assert "fix" not in changes.triage([{"code": "LineLength"}], limit=5)
+    # The suggested command parses with the real CLI (it once said `--codes`, which `fix` does not have).
+    words = triage["fix"]["command"].split()
+    assert words[:2] == ["groovyscope", "fix"]
+    parsed = cli.main.get_command(click.Context(cli.main), "fix").make_context("fix", words[2:])  # type: ignore[union-attr]
+    assert parsed.params["codes"] == ("GS002", "NoDef") and parsed.params["apply_changes"] is False

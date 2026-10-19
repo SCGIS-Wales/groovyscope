@@ -248,7 +248,9 @@ def triage(findings: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, An
     fixable = sorted(code for code, e in per_code.items() if e["fixable"])
     total = sum(e["fixable"] for e in per_code.values())
     if fixable:
-        tiers["fix"] = {"count": total, "command": f"groovyscope fix --codes {','.join(fixable)}"}
+        # The CLI's option is `--code`, repeated; `fix` only reports until `--apply` is added.
+        options = " ".join(f"--code {code}" for code in fixable)
+        tiers["fix"] = {"count": total, "command": f"groovyscope fix {options}"}
     return tiers
 
 
