@@ -107,9 +107,15 @@ public final class DaemonServer implements Closeable {
 
     /** @param cacheDir where per-workspace symbol caches live; {@code null} disables caching */
     public DaemonServer(Path socketPath, EngineConfig config, Duration idleTimeout, Runnable onExit, Path cacheDir) {
+        this(socketPath, config, idleTimeout, onExit, cacheDir, null);
+    }
+
+    /** @param root the one workspace this daemon serves ({@code null}: any, as before {@code --root} existed) */
+    public DaemonServer(Path socketPath, EngineConfig config, Duration idleTimeout, Runnable onExit, Path cacheDir,
+            Path root) {
         this.socketPath = Objects.requireNonNull(socketPath, "socketPath");
         this.config = Objects.requireNonNull(config, "config");
-        this.registry = new WorkspaceRegistry(config, cacheDir);
+        this.registry = new WorkspaceRegistry(config, cacheDir, root);
         this.idleTimeout = Objects.requireNonNull(idleTimeout, "idleTimeout");
         this.onExit = Objects.requireNonNull(onExit, "onExit");
         this.executors = org.groovyscope.engine.lsp.RequestExecutors.forConfig(config);

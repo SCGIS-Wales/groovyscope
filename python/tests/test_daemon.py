@@ -50,6 +50,7 @@ def test_daemon_command() -> None:
         "/cache",
     ]
     assert daemon.daemon_command(["java"], Path("/s.sock"), 0, None)[-1] == "60"
+    assert daemon.daemon_command(["java"], Path("/s.sock"), 1, None, Path("/ws"))[-2:] == ["--root", "/ws"]
 
 
 def test_probe_without_socket(tmp_path: Path) -> None:

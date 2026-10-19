@@ -100,7 +100,7 @@ public final class Main {
     }
 
     /** Parsed daemon/LSP options: configuration plus the daemon socket and idle timeout. */
-    record Options(EngineConfig config, Path socket, long idleSeconds, Path cacheDir) {
+    record Options(EngineConfig config, Path socket, long idleSeconds, Path cacheDir, Path root) {
     }
 
     static final long DEFAULT_IDLE_SECONDS = 3600;
@@ -111,6 +111,7 @@ public final class Main {
         String configHash = EngineConfig.hashOf(json);
         Path socket = null;
         Path cacheDir = null;
+        Path root = null;
         long idleSeconds = DEFAULT_IDLE_SECONDS;
         while (!remaining.isEmpty()) {
             String option = remaining.remove(0);
@@ -118,6 +119,7 @@ public final class Main {
                 case "--config" -> json = Files.readString(cwd.resolve(value(remaining, option)), StandardCharsets.UTF_8);
                 case "--socket" -> socket = cwd.resolve(value(remaining, option));
                 case "--cache-dir" -> cacheDir = cwd.resolve(value(remaining, option));
+                case "--root" -> root = cwd.resolve(value(remaining, option));
                 case "--idle-seconds" -> {
                     try {
                         idleSeconds = Long.parseLong(value(remaining, option));
@@ -129,7 +131,7 @@ public final class Main {
             }
         }
         configureLogging(json, cacheDir);
-        return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir);
+        return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir, root);
     }
 
     /** Applies {@code logging.level} and {@code logging.file} from the configuration JSON to the engine log. */
@@ -193,7 +195,7 @@ public final class Main {
         }
         CountDownLatch exited = new CountDownLatch(1);
         try (DaemonServer server = new DaemonServer(parsed.socket, parsed.config,
-                java.time.Duration.ofSeconds(parsed.idleSeconds), exited::countDown, parsed.cacheDir)) {
+                java.time.Duration.ofSeconds(parsed.idleSeconds), exited::countDown, parsed.cacheDir, parsed.root)) {
             server.start();
             Runtime.getRuntime().addShutdownHook(new Thread(server::close, "groovyscope-daemon-cleanup"));
             exited.await();

@@ -743,7 +743,7 @@ def ensure_daemon(obj: dict[str, Any], command: list[str], effective: dict[str, 
     """Start the workspace daemon when needed (replacing one from another engine version). Raises on failure."""
     socket_file, log_file, cache = daemon_paths(obj["root"])
     daemon_command = daemon_lifecycle.daemon_command(
-        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache
+        command, socket_file, int(effective["daemon"]["idleTimeoutMinutes"]), cache, obj["root"]
     )
     status = daemon_lifecycle.ensure_running(
         daemon_command,

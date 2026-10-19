@@ -174,9 +174,10 @@ def probe(socket_file: Path, timeout: float = 5.0) -> dict[str, Any] | None:
 
 
 def daemon_command(
-    engine_command: Sequence[str], socket_file: Path, idle_minutes: int, cache: Path | None
+    engine_command: Sequence[str], socket_file: Path, idle_minutes: int, cache: Path | None, root: Path | None = None
 ) -> list[str]:
-    """The engine invocation for ``daemon`` mode, appended to the JVM command line."""
+    """The engine invocation for ``daemon`` mode, appended to the JVM command line. With ``root``, the daemon serves
+    that workspace only (its configuration and trust decision are the ones it was started with)."""
     command = [
         *engine_command,
         "daemon",
@@ -187,6 +188,8 @@ def daemon_command(
     ]
     if cache is not None:
         command += ["--cache-dir", str(cache)]
+    if root is not None:
+        command += ["--root", str(root)]
     return command
 
 

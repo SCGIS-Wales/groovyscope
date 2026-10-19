@@ -159,8 +159,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     @Override
     public CompletableFuture<InitializeResult> initialize(InitializeParams params) {
         Path root = resolveRoot(params, fallbackRoot);
+        LanguageServices served = workspaceFor(root);
         workspaceRoot.set(root);
-        services.set(servicesProvider.apply(root));
+        services.set(served);
         ServerInfo info = new ServerInfo(SERVER_NAME, EngineVersion.current());
         return CompletableFuture.completedFuture(new InitializeResult(capabilities(), info));
     }
@@ -967,6 +968,15 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                 org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.InvalidParams, message, null));
     }
 
+    /** The workspace for {@code root}, or an invalid-params error when this daemon serves another workspace. */
+    private LanguageServices workspaceFor(Path root) {
+        try {
+            return servicesProvider.apply(root);
+        } catch (org.groovyscope.engine.daemon.WorkspaceRegistry.RootRefusedException e) {
+            throw invalid(e.getMessage());
+        }
+    }
+
     private LanguageServices requireServices(Map<String, Object> params) {
         LanguageServices current = services.get();
         if (current == null && params != null && params.get("root") instanceof String root && !root.isBlank()) {
@@ -979,8 +989,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             if (!java.nio.file.Files.isDirectory(path)) {
                 throw invalid("root is not an existing directory: " + root);
             }
+            LanguageServices served = workspaceFor(path);
             workspaceRoot.set(path);
-            services.compareAndSet(null, servicesProvider.apply(path));
+            services.compareAndSet(null, served);
             current = services.get();
         }
         if (current == null) {
