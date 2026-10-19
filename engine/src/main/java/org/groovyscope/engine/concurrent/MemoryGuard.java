@@ -174,4 +174,10 @@ public final class MemoryGuard {
     public void tripForTest() {
         trip();
     }
+
+    /** True when the JVM was started with {@code -XX:+ExitOnOutOfMemoryError}, so an out-of-memory error ends it. */
+    public static boolean exitsOnOutOfMemory() {
+        return java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments()
+                .contains("-XX:+ExitOnOutOfMemoryError");
+    }
 }

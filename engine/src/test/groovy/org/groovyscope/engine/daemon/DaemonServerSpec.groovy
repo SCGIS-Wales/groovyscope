@@ -197,6 +197,18 @@ class DaemonServerSpec extends Specification {
         then:
         notThrown(IOException)
 
+        when: 'a container user with no account name (an arbitrary UID) is still the owner'
+        String name = System.getProperty('user.name')
+        System.setProperty('user.name', 'no-such-account-groovyscope')
+        try {
+            DaemonServer.prepareDirectory(nested)
+        } finally {
+            System.setProperty('user.name', name)
+        }
+
+        then:
+        notThrown(IOException)
+
         when:
         DaemonServer.prepareDirectory(shared)
 

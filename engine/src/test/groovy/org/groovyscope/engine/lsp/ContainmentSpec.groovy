@@ -154,5 +154,6 @@ class ContainmentSpec extends Specification {
         expect:
         server.status().get(10, TimeUnit.SECONDS).configHash == ''
         hashed.status().get(10, TimeUnit.SECONDS).configHash == 'abc'
+        server.status().get(10, TimeUnit.SECONDS).memory.oomExit instanceof Boolean
     }
 }

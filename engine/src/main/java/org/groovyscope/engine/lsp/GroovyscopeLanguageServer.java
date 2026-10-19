@@ -235,6 +235,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         memory.put("usedMb", (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024));
         memory.put("maxMb", runtime.maxMemory() / (1024 * 1024));
         memory.put("pressure", org.groovyscope.engine.concurrent.MemoryGuard.pressure());
+        memory.put("oomExit", org.groovyscope.engine.concurrent.MemoryGuard.exitsOnOutOfMemory());
         status.put("memory", memory);
         Map<String, Object> load = new LinkedHashMap<>();
         load.put("heavy", requests.heavyLoad());

@@ -188,8 +188,7 @@ public final class DaemonServer implements Closeable {
             return;
         }
         PosixFileAttributes attributes = Files.readAttributes(directory, PosixFileAttributes.class);
-        UserPrincipal me = directory.getFileSystem().getUserPrincipalLookupService()
-                .lookupPrincipalByName(System.getProperty("user.name"));
+        UserPrincipal me = currentUser(directory);
         if (!attributes.owner().equals(me)) {
             throw new IOException("socket directory " + directory + " is owned by " + attributes.owner().getName()
                     + ", not " + me.getName() + "; refusing to start");
@@ -198,6 +197,19 @@ public final class DaemonServer implements Closeable {
         if (permissions.contains(PosixFilePermission.GROUP_WRITE) || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
             throw new IOException("socket directory " + directory + " is writable by group or others ("
                     + PosixFilePermissions.toString(permissions) + "); refusing to start");
+        }
+    }
+
+    /**
+     * This process's user, as the owner of a file it creates in {@code directory}: unlike {@code user.name}, it holds
+     * for a container user with no account name (an arbitrary UID).
+     */
+    static UserPrincipal currentUser(Path directory) throws IOException {
+        Path probe = Files.createTempFile(directory, ".owner", null);
+        try {
+            return Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS);
+        } finally {
+            Files.deleteIfExists(probe);
         }
     }
 

@@ -58,7 +58,21 @@ public final class Main {
     }
 
     public static void main(String[] args) {
+        applySafetyFlags();
+        if (!org.groovyscope.engine.concurrent.MemoryGuard.exitsOnOutOfMemory()) {
+            System.err.println("groovyscope-engine: -XX:+ExitOnOutOfMemoryError is not set; after an out-of-memory "
+                    + "error the engine may keep running in a broken state instead of exiting to be restarted");
+        }
         System.exit(run(args, System.in, System.out, System.err, Paths.get(""), System::exit, System.getenv()));
+    }
+
+    /**
+     * Turns off {@code @Grab} and {@code @ASTTest} before any Groovy class can read the flags; {@code GroovyCompiler}
+     * sets them again as a second line of defence. They are deliberately not configurable.
+     */
+    static void applySafetyFlags() {
+        System.setProperty("groovy.grape.enable", "false");
+        System.setProperty("groovy.asttest.enable", "false");
     }
 
     /**
