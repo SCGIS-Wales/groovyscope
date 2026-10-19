@@ -48,7 +48,8 @@ inclusion: always
 
 - groovyscope answers for the folder Kiro was started in. Edit, review and look up Groovy in that repository; a
   path in another repository comes back `not found in the workspace`, and its review checked nothing.
-- Before finishing, `groovyscope.review` on the changed files; `groovyscope.fix` for the safe mechanical
+- Before finishing, `groovyscope.review` on the changed files; `groovyscope.fix` (with `changed_only` on a branch, so
+  existing code is left alone) for the safe mechanical
   fixes, the rest by hand; `groovyscope.explain <code>` says why a finding matters. A `missingDependencies`
   summary (GS100) means no classpath is configured: suggest `groovyscope classpath`, never edit code to
   silence unresolved library imports.

@@ -51,6 +51,10 @@ class PracticeFinderSpec extends Specification {
         found('Numbers.groovy') == [['GS001', 5], ['GS002', 14], ['GS003', 22]]
         fixed('Numbers.groovy', 'GS001').contains('int result = total.intdiv(parts)')
         fixed('Numbers.groovy', 'GS002').contains('return requested != null ? requested : 50')
+        // `parseText(body ?: '{}')` (line 43) is absent from the list above: the parser rejects an empty body, so
+        // defaulting empty and null alike is deliberate.
+        services.quality().practices(uri('Numbers.groovy')).find { it.diagnostic().code() == 'GS002' }
+                .diagnostic().message().contains('distinct from absent')
         fixed('Numbers.groovy', 'GS003').contains('int n = items?.size() ?: 0')
     }
 
@@ -168,6 +172,19 @@ class PracticeFinderSpec extends Specification {
 
         then:
         only.applied() == [(uri('Numbers.groovy')): ['GS001']]
+
+        when: 'only the changed lines: GS001 is on line 5, GS002 on line 14'
+        def changed = services.quality().fix([uri('Numbers.groovy')], [] as Set,
+                [(uri('Numbers.groovy')): [[14, 15] as int[]]])
+        def nothing = services.quality().fix([uri('Numbers.groovy')], [] as Set, [(uri('Numbers.groovy')): []])
+
+        then:
+        changed.applied() == [(uri('Numbers.groovy')): ['GS002']]
+        changed.appliedCounts()[uri('Numbers.groovy')] == [GS002: 1]
+        nothing.edits().isEmpty() && nothing.left().isEmpty()
+        org.groovyscope.engine.lsp.GroovyscopeLanguageServer.lineRanges([(uri('Numbers.groovy')): [[14, 15], 'x']])
+                .get(uri('Numbers.groovy'))*.toList() == [[14, 15]]
+        org.groovyscope.engine.lsp.GroovyscopeLanguageServer.lineRanges(null) == null
     }
 
     def 'fix application skips overlapping edits and the catalogue links every code'() {

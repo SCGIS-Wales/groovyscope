@@ -205,6 +205,39 @@ def test_fix_reports_then_applies(runner: CliRunner, tmp_path: Path, engine: dic
     assert target.read_text(encoding="utf-8") == "int x = a.intdiv(b)\n"
 
 
+def test_fix_changed_limits_the_engine_to_the_changed_lines(
+    runner: CliRunner, tmp_path: Path, engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine["response"] = {"edits": {}, "applied": {}, "appliedCounts": {}, "left": {}, "rejected": {}}
+    change = {
+        "base": "master",
+        "mode": "branch",
+        "files": [
+            {"path": "src/A.groovy", "status": "modified", "ranges": [[4, 6]]},
+            {"path": "src/Gone.groovy", "status": "deleted", "ranges": []},
+            {"path": "src/it/java/B.java", "status": "modified", "ranges": [[1, 2]]},
+        ],
+    }
+    monkeypatch.setattr(cli.changes, "changed_files", lambda _root, _base: change)
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "--changed", "--code", "GS002"])
+    assert result.exit_code == 0, result.output
+    uri = (tmp_path / "src" / "A.groovy").resolve().as_uri()
+    assert engine["requests"][-1] == (
+        "groovyscope/fix",
+        {"root": str(tmp_path), "uris": [uri], "codes": ["GS002"], "lines": {uri: [[4, 6]]}},
+    )
+    change["files"] = []
+    assert "no changed Groovy lines" in runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "--changed"]).output
+
+    def no_git(*_a: object) -> dict[str, Any]:
+        msg = "not inside a git repository"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(cli.changes, "changed_files", no_git)
+    failed = runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "--changed"])
+    assert failed.exit_code == 1 and "not inside a git repository" in failed.output
+
+
 def test_explain(runner: CliRunner, tmp_path: Path, engine: dict[str, Any]) -> None:
     engine["response"] = {
         "code": "GS002",
@@ -313,11 +346,11 @@ def test_review_changed_renders_a_merge_request_review(
     assert cli.triage_lines(
         {
             "noise": {"count": 2, "codes": [{"code": "NoDef", "count": 2, "fixable": 2}]},
-            "fix": {"count": 2, "command": "groovyscope fix --code NoDef"},
+            "fix": {"count": 2, "command": "groovyscope fix --changed --code NoDef"},
         }
     ) == [
         "noise (2): NoDef 2 (2 fixable)",
-        "safe fixes for 2: `groovyscope fix --code NoDef`",
+        "safe fixes for 2: `groovyscope fix --changed --code NoDef`",
     ]
     assert calls[:2] == ["groovyscope/check", "groovyscope/documentSymbols"]
     as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "--changed", "--staged", "--json"])

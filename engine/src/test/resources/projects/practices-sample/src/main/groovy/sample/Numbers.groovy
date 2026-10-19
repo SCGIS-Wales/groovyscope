@@ -38,4 +38,8 @@ class Numbers {
     long nothing(Long given) {
         return given ?: 0L
     }
+
+    Object read(String body) {
+        return new groovy.json.JsonSlurper().parseText(body ?: '{}')
+    }
 }

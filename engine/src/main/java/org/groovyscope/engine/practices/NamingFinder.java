@@ -404,8 +404,11 @@ public final class NamingFinder {
             } else if (COUNT_WORDS.contains(last) && ClassHelper.STRING_TYPE.equals(type)) {
                 report("GS026", node, what + " '" + name + "' is named as a number but is a String");
             } else if (DATE_WORDS.contains(last) && ClassHelper.STRING_TYPE.equals(type) && !what.equals("parameter")) {
-                report("GS026", node, what + " '" + name + "' is named as a point in time but is a String; parse it "
-                        + "once at the boundary");
+                // Information, not a warning: timestamps are often carried as RFC 3339 text on purpose (stored and
+                // published verbatim, parsed where compared), so this is a naming question, not a defect.
+                reportAtMost(Diagnostic.Severity.INFORMATION, "GS026", node, what + " '" + name
+                        + "' is named as a point in time but is a String; if it is timestamp text on purpose, a name "
+                        + "such as " + name + "Text says so, otherwise parse it once at the boundary");
             } else if (last.endsWith("s") && !last.endsWith("ss") && !last.equals("status") && !last.equals("class")
                     && !last.equals("address") && !last.equals("alias") && !last.equals("bytes")
                     && (ClassHelper.STRING_TYPE.equals(type) || ClassHelper.boolean_TYPE.equals(type)
@@ -509,7 +512,14 @@ public final class NamingFinder {
         }
 
         void report(String code, ASTNode node, String message) {
-            Diagnostic.Severity severity = PracticeFinder.severity(code, config);
+            reportAtMost(null, code, node, message);
+        }
+
+        /** {@link #report} with the configured severity lowered to at most {@code ceiling} (null: no ceiling). */
+        void reportAtMost(Diagnostic.Severity ceiling, String code, ASTNode node, String message) {
+            Diagnostic.Severity configured = PracticeFinder.severity(code, config);
+            Diagnostic.Severity severity = configured == null || ceiling == null
+                    || configured.ordinal() >= ceiling.ordinal() ? configured : ceiling;
             Range range = AstRanges.rangeOf(node);
             if (severity == null || range == null) {
                 return;
