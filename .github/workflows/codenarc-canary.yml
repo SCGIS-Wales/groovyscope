@@ -39,6 +39,7 @@ jobs:
       - name: Build and test with the latest stable CodeNarc
         working-directory: engine
         run: |
+          set -o pipefail
           ./gradlew build -PcodenarcResolve=true --console=plain 2>&1 | tee build.log
           pinned=$(sed -n 's/^codenarc *= *"\([^"]*\)".*/\1/p' gradle/libs.versions.toml)
           used=$(sed -n 's/^CodeNarc \([^:]*\):.*/\1/p' build.log | head -1)

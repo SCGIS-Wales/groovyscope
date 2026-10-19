@@ -1,3 +1,7 @@
+import java.util.Calendar
+import java.util.GregorianCalendar
+import java.util.Properties
+
 plugins {
     java
     groovy
@@ -114,7 +118,9 @@ tasks.shadowJar {
     // the nio, datetime, dateutil, sql and macro extension methods the type checker (and FormatStringChecker) need.
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
-    mergeGroovyExtensionModules()
+    // Shadow's own Groovy extension merge stamps the build time into the descriptor; this one writes no date, so two
+    // builds of one commit give byte-identical JARs.
+    transform(ReproducibleGroovyExtensionModules())
     filesNotMatching(listOf("META-INF/services/**", "META-INF/groovy/**")) {
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     }
@@ -129,3 +135,46 @@ tasks.assemble {
 }
 
 // The CycloneDX plugin (3.x) writes build/reports/cyclonedx/bom.json and bom.xml with its defaults.
+
+/**
+ * Merges every module's Groovy extension descriptor (extension and static extension classes, in the order the jars
+ * are read) into one descriptor, written without the date `Properties.store` would add.
+ */
+class ReproducibleGroovyExtensionModules : com.github.jengelman.gradle.plugins.shadow.transformers.ResourceTransformer {
+    private val extensionClasses = linkedSetOf<String>()
+    private val staticExtensionClasses = linkedSetOf<String>()
+
+    override fun canTransformResource(element: FileTreeElement): Boolean =
+        element.path == DESCRIPTOR || element.path == LEGACY_DESCRIPTOR
+
+    override fun transform(context: com.github.jengelman.gradle.plugins.shadow.transformers.TransformerContext) {
+        val properties = Properties()
+        context.inputStream.use { properties.load(it) }
+        extensionClasses += names(properties.getProperty("extensionClasses"))
+        staticExtensionClasses += names(properties.getProperty("staticExtensionClasses"))
+    }
+
+    override fun hasTransformedResource(): Boolean = extensionClasses.isNotEmpty() || staticExtensionClasses.isNotEmpty()
+
+    override fun modifyOutputStream(os: org.apache.tools.zip.ZipOutputStream, preserveFileTimestamps: Boolean) {
+        val entry = org.apache.tools.zip.ZipEntry(DESCRIPTOR)
+        entry.time = GregorianCalendar(1980, Calendar.FEBRUARY, 1, 0, 0, 0).timeInMillis
+        os.putNextEntry(entry)
+        val text = buildString {
+            append("moduleName=MergedByShadowJar\n")
+            append("moduleVersion=1.0.0\n")
+            append("extensionClasses=").append(extensionClasses.joinToString(",")).append('\n')
+            append("staticExtensionClasses=").append(staticExtensionClasses.joinToString(",")).append('\n')
+        }
+        os.write(text.toByteArray(Charsets.ISO_8859_1))
+        os.closeEntry()
+    }
+
+    private fun names(value: String?): List<String> =
+        value.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    companion object {
+        const val DESCRIPTOR = "META-INF/groovy/org.codehaus.groovy.runtime.ExtensionModule"
+        const val LEGACY_DESCRIPTOR = "META-INF/services/org.codehaus.groovy.runtime.ExtensionModule"
+    }
+}
