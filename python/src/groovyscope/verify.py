@@ -27,6 +27,17 @@ MAX_DECLARATIONS = 50  # changed declarations whose impact is asked for, to find
 TEST_SOURCE_PATH = re.compile(r"(?:^|/)src/(?!main/)[^/]+/(?:groovy|java)/")
 TEST_NAME_SUFFIXES = ("Test", "Tests", "Spec", "IT", "ITCase", "IntegrationTest")
 DEFAULT_RUN = ("test",)
+DEFAULT_COVERAGE_TASK = "jacocoTestReport"
+# Passed with --init-script when the command filters tests: a filter that matches no test in one project or task of
+# the build (a multi-project build runs `test` everywhere) is not a failure; the JUnit XML count says what ran.
+INIT_SCRIPT = """\
+allprojects {
+    tasks.withType(Test).configureEach { filter.failOnNoMatchingTests = false }
+}
+"""
+# `shouldRead()`, `shouldRead(String)[2]`, a Spock iteration `reads [x: 1, #0]`: the method or feature is before these.
+REPORT_TASK = re.compile(r"(?:^|[/!])test-results/(?P<task>[^/]+)/[^/]+$")
+NAME_SUFFIX = re.compile(r"\(|\s\[|\[")
 
 
 class TestRef(TypedDict):
@@ -77,10 +88,14 @@ def task_for(source_set: str, tasks: Mapping[str, str]) -> str:
 
 
 def affected_tests(
-    reports: Sequence[Mapping[str, Any]], changed_paths: Sequence[str], is_test: Callable[[str], bool]
+    reports: Sequence[Mapping[str, Any]],
+    changed_paths: Sequence[str],
+    is_test: Callable[[str], bool],
+    touched: Sequence[Mapping[str, Any]] = (),
 ) -> list[TestRef]:
     """Test methods that call (directly or through other code) a changed declaration, from the impact reports'
-    ``tests`` call sites, plus every changed test file as a whole class."""
+    ``tests`` call sites; the changed methods of a changed test file (``touched``: changed declarations with their
+    ``path``, ``symbol`` and ``kind``); and a changed test file with no changed method as a whole class."""
     found: dict[tuple[str, str], TestRef] = {}
     for report in reports:
         for site in report.get("tests", []):
@@ -94,10 +109,25 @@ def affected_tests(
             found.setdefault(
                 (class_name, method), {"className": class_name, "method": method, "path": path, "sourceSet": located[0]}
             )
+    changed_methods = {
+        str(t["path"]) for t in touched if t.get("kind") == "method" and is_test(str(t.get("path") or ""))
+    }
+    for item in touched:
+        path = str(item.get("path") or "")
+        located = source_set_of(path)
+        if item.get("kind") != "method" or located is None or not is_test(path):
+            continue
+        package = class_of(path) or ""
+        prefix = package.rsplit(".", 1)[0] + "." if "." in package else ""
+        owner, _, method = str(item["symbol"]).rpartition(".")
+        class_name = prefix + owner if owner else package
+        found.setdefault(
+            (class_name, method), {"className": class_name, "method": method, "path": path, "sourceSet": located[0]}
+        )
     for path in changed_paths:
         located = source_set_of(path)
         changed_class = class_of(path)
-        if located and changed_class and is_test(path):
+        if located and changed_class and is_test(path) and path not in changed_methods:
             found.setdefault(
                 (changed_class, ""), {"className": changed_class, "method": "", "path": path, "sourceSet": located[0]}
             )
@@ -119,20 +149,36 @@ def compile_tasks(changed_paths: Sequence[str]) -> list[str]:
     return tasks
 
 
-def gradle_command(
-    wrapper: str, compile_with: Sequence[str], tests: Sequence[TestRef], tasks: Mapping[str, str], run: Sequence[str]
-) -> list[str]:
-    """One Gradle invocation: the compile tasks, then each test task in RUN with a ``--tests`` filter per class."""
+def test_filter(test: TestRef) -> str:
+    """``Class.method`` for one test method, ``Class`` for a whole class."""
+    return f"{test['className']}.{test['method']}" if test.get("method") else test["className"]
+
+
+def filters_by_task(tests: Sequence[TestRef], tasks: Mapping[str, str], run: Sequence[str]) -> dict[str, list[str]]:
+    """``--tests`` filters per test task in RUN: one per test method, or the class when the whole class runs (a class
+    filter makes its method filters redundant)."""
+    whole = {(task_for(t["sourceSet"], tasks), t["className"]) for t in tests if not t["method"]}
     by_task: dict[str, list[str]] = {}
     for test in tests:
         task = task_for(test["sourceSet"], tasks)
-        if task in run and test["className"] not in by_task.setdefault(task, []):
-            by_task[task].append(test["className"])
+        if task not in run or (test["method"] and (task, test["className"]) in whole):
+            continue
+        name = test_filter(test)
+        if name not in by_task.setdefault(task, []):
+            by_task[task].append(name)
+    return by_task
+
+
+def gradle_command(
+    wrapper: str, compile_with: Sequence[str], tests: Sequence[TestRef], tasks: Mapping[str, str], run: Sequence[str]
+) -> list[str]:
+    """One Gradle invocation: the compile tasks, then each test task in RUN with its ``--tests`` filters (methods
+    where the change names them, so a run checks the tests that matter instead of the whole class)."""
     command = [wrapper, *compile_with]
-    for task, classes in by_task.items():
+    for task, names in filters_by_task(tests, tasks, run).items():
         command.append(task)
-        for class_name in classes:
-            command += ["--tests", class_name]
+        for name in names:
+            command += ["--tests", name]
     return command if len(command) > 1 else []
 
 
@@ -167,18 +213,21 @@ def plan(
     *,
     limit: int,
     read: Callable[[Path], str | None] = read_text,
+    touched: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """The tests the change reaches and how to run them: ``items`` (class, method, path, source set), the Gradle
     ``command`` that compiles the changed source sets and runs the affected tests of the tasks in
     ``verify.runTasks`` (``commandArgs`` as a list for ``groovyscope verify``), and ``inCi``: affected tests of other
     tasks (integration tests that need the pipeline's credentials), per task."""
-    tests = affected_tests(reports, changed_paths, is_test_path)
+    tests = affected_tests(reports, changed_paths, is_test_path, touched)
     build = read_build_text(root, read)
     tasks = test_tasks(build)
     run = [str(t) for t in settings.get("runTasks") or DEFAULT_RUN]
     wrapper = "./gradlew" if read(root / "gradlew") is not None else "gradle"
     command = gradle_command(wrapper, compile_tasks(changed_paths), tests, tasks, run) if build else []
     result: dict[str, Any] = {"count": len(tests), "items": list(tests[: max(1, limit)])}
+    if "jacoco" in build:
+        result["coverageTask"] = str(settings.get("coverageTask") or DEFAULT_COVERAGE_TASK)
     if command:
         result["command"] = quoted(command)
         result["commandArgs"] = command
@@ -225,3 +274,75 @@ def test_lines(plan_result: Mapping[str, Any]) -> list[str]:
     if plan_result.get("note"):
         lines.append(f"note: {plan_result['note']}")
     return lines
+
+
+def with_init_script(command: Sequence[str], script: Path) -> list[str]:
+    """The command with ``--init-script`` when it filters tests (see :data:`INIT_SCRIPT`)."""
+    if "--tests" not in command:
+        return list(command)
+    return [command[0], "--init-script", str(script), *command[1:]]
+
+
+def with_coverage(command: Sequence[str], task: str | None) -> list[str]:
+    """The command with the coverage report task last, once; unchanged when the build has none."""
+    if not command or not task or task in command:
+        return list(command)
+    return [*command, task]
+
+
+def method_name(name: str) -> str:
+    """A JUnit XML test name as a Gradle filter method: without ``()``, parameters or an iteration suffix."""
+    return NAME_SUFFIX.split(name, maxsplit=1)[0].strip()
+
+
+def task_of_report(label: str) -> str | None:
+    """The Gradle test task that wrote a report: ``<module>/build/test-results/<task>/TEST-*.xml`` (also inside an
+    archive, ``artifacts.zip!...``); None for reports of other tools (Maven surefire)."""
+    found = REPORT_TASK.search(label.replace("\\", "/"))
+    return found["task"] if found else None
+
+
+def rerun_command(wrapper: str, failures: Sequence[Mapping[str, Any]]) -> tuple[list[str], list[str]]:
+    """The Gradle command that runs only the failed tests, each test task with its ``--tests`` filters, and the
+    failures it cannot place (reports not written by a Gradle test task)."""
+    by_task: dict[str, list[str]] = {}
+    unplaced: list[str] = []
+    for failure in failures:
+        task = task_of_report(str(failure.get("report") or ""))
+        method = method_name(str(failure.get("name") or ""))
+        name = f"{failure['className']}.{method}" if method else str(failure["className"])
+        if task is None:
+            unplaced.append(name)
+        elif name not in by_task.setdefault(task, []):
+            by_task[task].append(name)
+    command = [wrapper]
+    for task, names in by_task.items():
+        command.append(task)
+        for name in names:
+            command += ["--tests", name]
+    return (command if len(command) > 1 else [], unplaced)
+
+
+def written_since(started: float, stat: Callable[[str], float]) -> Callable[[str], bool]:
+    """A ``keep`` for :func:`groovyscope.test_results.summarise`: reports written by this run, not older ones."""
+
+    def keep(label: str) -> bool:
+        try:
+            return stat(label) >= started
+        except OSError:
+            return False
+
+    return keep
+
+
+def uncovered_in_change(
+    gaps: Sequence[Mapping[str, Any]], ranges: Mapping[str, Sequence[Sequence[int]]]
+) -> list[dict[str, Any]]:
+    """Methods JaCoCo saw no test execute whose first line the change touched."""
+    return [
+        dict(g)
+        for g in gaps
+        if g.get("kind") == "method"
+        and g.get("status") == "uncovered"
+        and any(start <= int(g.get("line") or 0) <= end for start, end in ranges.get(str(g.get("path")), ()))
+    ]

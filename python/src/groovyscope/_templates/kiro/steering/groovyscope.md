@@ -57,6 +57,10 @@ inclusion: always
   changed lines, then compiles the changed source sets and runs the tests the change reaches through the call
   graph, Java tests included, in one Gradle command. Tests it lists as left to CI (integration tests that need
   pipeline credentials) are not run locally; say so instead of running them. `--dry-run` shows the plan.
+- Test failures: read them with `groovyscope.test_results` (or `groovyscope test-results [folder or .zip]`), which
+  finds every `TEST-*.xml` at any depth and inside archives such as a CI `artifacts.zip`; never write a script to
+  parse the XML. `groovyscope verify --failed` runs only the failed tests again; `--coverage` adds the JaCoCo
+  report and lists changed methods no test executed.
 - `classpath.state: stale` in an answer means a build file changed after the export: say so and offer
   `groovyscope.refresh_classpath` (trusted workspaces only) before judging unresolved classes; offer the
   same after you edit `build.gradle`, `pom.xml` or `libs.versions.toml`. Configuration and classpath changes

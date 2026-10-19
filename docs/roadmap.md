@@ -655,3 +655,12 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   returning a default), not those that log or rethrow; `groovyscope fix --changed` (MCP `changed_only`) applies
   safe fixes only on the lines the branch changed, the engine filtering by finding so a fix's import still comes
   with it, and the triage suggests that command.
+- 2026-10-19: running tests, from the owner's sessions where the agent wrote Python to parse
+  `TEST-*.xml` and ran whole test classes. `test_results` (MCP) and `groovyscope test-results` read every
+  `TEST-*.xml` at any depth under the workspace or given folders and inside ZIP archives such as a CI
+  `artifacts.zip`, in memory and within size limits, refusing a DOCTYPE; each failure comes with its message and
+  the first frame in the project's code and in the test. `verify` filters by test method (a changed test method runs
+  alone, a class filter only where the whole class is needed), passes an init script so a filter matching nothing in
+  one project is not a failure, and reads the reports the run wrote; `--failed` runs only the last failures again,
+  also from a CI archive (`--results`); `--coverage` adds `verify.coverageTask` when the build applies JaCoCo and
+  lists changed methods no test executed.

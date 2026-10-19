@@ -44,6 +44,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "relationship_graph": ("Class relationship graph", False),
     "check_naming": ("Naming findings and facts", True),
     "symbol_context": ("Symbol context in one call", True),
+    "test_results": ("Test results from JUnit XML", True),
 }
 
 # What the agent reads for each tool. Arguments in capitals; PATH:LINE:COL is 1-based everywhere.
@@ -82,6 +83,8 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "check_naming": "Naming findings GS020 to GS027 for PATHS, with each declaration's facts; rename via rename.",
     "symbol_context": "Definition, hover and reference count of the symbol at PATH:LINE:COL in one call.",
+    "test_results": "Failing tests from TEST-*.xml at any depth under SOURCES (folders or .zip archives; default "
+    "the workspace): message and the first frames in the code and the test.",
 }
 
 
