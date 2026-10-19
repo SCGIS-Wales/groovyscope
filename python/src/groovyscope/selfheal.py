@@ -162,10 +162,17 @@ def plan_restart(
     A start is refused once ``daemon.maxRestartsPerTenMinutes`` starts happened inside the window: the daemon is
     dying as fast as it is started and another JVM would only die too. Each start inside the window waits a
     jittered exponential backoff. After an out-of-memory exit the heap grows by ``daemon.heapGrowthFactor`` up
-    to ``daemon.maxHeap``; a heap grown earlier is kept."""
+    to ``daemon.maxHeap``; a heap grown earlier is kept while ``daemon.heap`` is still the one it grew from and
+    only when it is larger than ``daemon.heap``."""
     recent = [t for t in state["restarts"] if 0 <= now - t < WINDOW_SECONDS]
     budget = max(1, int(settings.get("maxRestartsPerTenMinutes", 3)))
-    current = state["heap"] or configured_heap
+    previous = state["heap"]
+    if previous and (
+        (state["configured"] is not None and state["configured"] != configured_heap)
+        or parse_heap(previous) <= parse_heap(configured_heap)
+    ):
+        previous = None  # the user changed daemon.heap since, or raised it past the grown heap: theirs stands
+    current = previous or configured_heap
     if len(recent) >= budget:
         reason = (
             f"the daemon was started {len(recent)} times in the last ten minutes and keeps exiting (last exit: "
@@ -176,7 +183,7 @@ def plan_restart(
     delay = 0.0
     if recent:
         delay = min(BACKOFF_CAP_SECONDS, BACKOFF_BASE_SECONDS * 2 ** (len(recent) - 1)) * (0.5 + jitter())
-    heap: str | None = state["heap"] if state["heap"] and state["heap"] != configured_heap else None
+    heap: str | None = previous
     reason = ""
     if cause == EXIT_OOM:
         factor = max(1.0, float(settings.get("heapGrowthFactor", 1.5)))
