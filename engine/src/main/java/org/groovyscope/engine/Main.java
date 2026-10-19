@@ -128,14 +128,20 @@ public final class Main {
                 default -> throw new IllegalArgumentException("unknown option: " + option);
             }
         }
-        configureLogging(json);
+        configureLogging(json, cacheDir);
         return new Options(EngineConfig.fromJson(json).withConfigHash(configHash), socket, idleSeconds, cacheDir);
     }
 
     /** Applies {@code logging.level} and {@code logging.file} from the configuration JSON to the engine log. */
     static void configureLogging(String json) {
+        configureLogging(json, null);
+    }
+
+    /** The same, with the daemon's cache directory, where a log file may live. */
+    static void configureLogging(String json, Path cacheDir) {
         String level = null;
         String file = null;
+        long rotateAt = org.groovyscope.engine.log.EngineLog.DEFAULT_MAX_BYTES;
         if (json != null && !json.isBlank()) {
             try {
                 com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(json);
@@ -148,11 +154,18 @@ public final class Main {
                     file = logging.has("file") && logging.get("file").isJsonPrimitive()
                             ? logging.get("file").getAsString() : null;
                 }
-            } catch (com.google.gson.JsonParseException | IllegalStateException e) {
+                com.google.gson.JsonObject daemon = parsed.isJsonObject() && parsed.getAsJsonObject().has("daemon")
+                        && parsed.getAsJsonObject().get("daemon").isJsonObject()
+                        ? parsed.getAsJsonObject().getAsJsonObject("daemon") : null;
+                if (daemon != null && daemon.has("logMaxBytes") && daemon.get("logMaxBytes").isJsonPrimitive()) {
+                    rotateAt = daemon.get("logMaxBytes").getAsLong();
+                }
+            } catch (com.google.gson.JsonParseException | IllegalStateException | NumberFormatException
+                    | UnsupportedOperationException e) {
                 // EngineConfig.fromJson reports a malformed configuration
             }
         }
-        org.groovyscope.engine.log.EngineLog.configure(level, file);
+        org.groovyscope.engine.log.EngineLog.configure(level, file, cacheDir, rotateAt);
         org.groovyscope.engine.log.EngineLog.info("engine %s, CodeNarc %s, Java %s (%s) at %s, log level %s",
                 EngineVersion.current(), EngineVersion.codenarc(), System.getProperty("java.version"),
                 System.getProperty("java.vendor"), System.getProperty("java.home"),

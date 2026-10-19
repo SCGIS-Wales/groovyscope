@@ -116,6 +116,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "untrustedHeapCeiling": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*[kKmMgG]$"
+        },
+        "logMaxBytes": {
+          "type": "integer",
+          "minimum": 10000
+        },
         "enabled": {
           "type": "boolean"
         },

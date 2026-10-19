@@ -86,3 +86,46 @@ def test_workspace_profiles_lose_emulation_jars_unless_trusted(tmp_path: Path) -
     assert profiles.untrusted_jar_notes(found, root)[0].startswith("profile w:")
     trusted = {p["name"]: p for p in profiles.engine_profiles(found, root, trusted=True)}
     assert trusted["w"]["target"]["emulationJars"] == [str((workspace_profile.parent / "jars/groovy.jar").resolve())]
+
+
+HOSTILE = """\
+logging: {file: ~/.bashrc}
+jdk: {autoProvision: true, vendor: corretto}
+daemon: {heapDumpOnOutOfMemory: true, heap: 64g, maxHeap: 32g, untrustedHeapCeiling: 128g}
+reports: {sarif: [build/spotbugs.sarif, /etc/passwd, ../../outside.sarif], jacoco: ../../../etc/report.xml}
+"""
+
+
+def test_untrusted_files_cannot_write_logs_download_jdks_dump_heaps_or_read_outside(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / ".groovyscope.yaml").write_text(HOSTILE, encoding="utf-8")
+    config, notes = load_config_with_notes(root, None, {}, home)
+    assert config["logging"]["file"] is None
+    assert config["jdk"]["autoProvision"] is False and config["jdk"]["vendor"] == "temurin"
+    assert config["daemon"]["heapDumpOnOutOfMemory"] is False
+    assert config["daemon"]["heap"] == "4g" and config["daemon"]["maxHeap"] == "4g"
+    assert config["daemon"]["untrustedHeapCeiling"] == "4g"
+    assert config["reports"]["sarif"] == ["build/spotbugs.sarif"]
+    assert config["reports"]["jacoco"] == "build/reports/jacoco/test/jacocoTestReport.xml"
+    assert sum("capped at 4g" in n for n in notes) == 2 and any("reports.sarif" in n for n in notes)
+    assert any("reports.jacoco" in n for n in notes) and any("logging.file" in n for n in notes)
+
+    trust.set_trusted(root, home, trusted=True)
+    trusted = load_config(root, None, {}, home)
+    assert trusted["logging"]["file"] == "~/.bashrc" and trusted["daemon"]["heap"] == "64g"
+    assert trusted["reports"]["jacoco"] == "../../../etc/report.xml"
+
+
+def test_heap_caps_leave_small_auto_and_environment_values(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    (tmp_path / ".groovyscope.yaml").write_text("daemon: {heap: 2g, maxHeap: auto}\n", encoding="utf-8")
+    assert load_config(tmp_path, None, {}, home)["daemon"]["heap"] == "2g"
+    assert load_config(tmp_path, None, {}, home)["daemon"]["maxHeap"] == "auto"
+    (tmp_path / ".groovyscope.yaml").write_text("daemon: {heap: 16g}\n", encoding="utf-8")
+    assert load_config(tmp_path, None, {"GROOVYSCOPE_DAEMON__HEAP": "16g"}, home)["daemon"]["heap"] == "16g"
+    assert trust.cap_heap({"daemon": "x"}, {}, {}, {}) == []
+    assert trust.cap_heap({"daemon": {"heap": "lots", "untrustedHeapCeiling": "1g"}}, {"daemon": {"heap": "lots"}},
+                          {}, {"daemon": {"untrustedHeapCeiling": "1g"}}) == []  # fmt: skip
+    assert trust.confine_reports({"reports": None}, {}, {}, {}, tmp_path) == []

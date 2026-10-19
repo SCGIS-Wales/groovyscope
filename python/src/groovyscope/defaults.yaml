@@ -36,6 +36,8 @@ daemon:
   heapGrowthFactor: 1.5   # how much the heap grows after an out-of-memory exit (once per exit, up to maxHeap)
   maxRestartsPerTenMinutes: 3  # daemon starts allowed in ten minutes; beyond that the front end stops restarting it
   heapDumpOnOutOfMemory: false # write a heap dump (the size of the heap) under the cache before exiting on OutOfMemoryError
+  untrustedHeapCeiling: "4g"  # an untrusted workspace's .groovyscope.yaml cannot set daemon.heap or maxHeap above this
+  logMaxBytes: 5000000    # the engine's log file (logging.file) is rotated past this size, one previous file kept
   logMaxBytes: 5000000    # the daemon log is rotated past this size
   logsKept: 3             # rotated daemon logs kept; `groovyscope checkup --fix` removes the rest
 mcp:
