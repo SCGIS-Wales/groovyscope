@@ -617,3 +617,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   read 48 KB where `read_symbol` answers in one call, because its own agent did not load groovyscope's steering:
   `doctor` names such agents and `groovyscope kiro steer` adds the steering. The steering also says groovyscope
   answers for the folder Kiro was started in. release-please now bumps the package's own version in `uv.lock`.
+- 2026-10-19: the owner uses agents other than `groovy`, so groovyscope must work in any of them. `groovyscope kiro
+  attach AGENT...` merges only groovyscope's parts (steering, the server when unreachable, read-only tools allowed,
+  start, write and stop hooks) into a named agent, keeping its name, tools, shell rules, hooks and format; a V3
+  agent gains only MCP permission rules. `doctor` names agents that call groovyscope with a part missing (`kiro
+  agents`); `kiro steer` from 0.21.1 is kept as an alias. Found on the way: the start hook installed the global
+  Kiro files and unpacked the benchmark corpus in a folder with no Groovy at all; it now prints one line and repairs
+  nothing there. The `uv.lock` bump in release-please used the wrong filter (the TOML parser wraps values):
+  reproduced with release-please's own updater and fixed (`@.name.value`).

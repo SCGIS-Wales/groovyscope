@@ -135,20 +135,15 @@ def kiro_agent_check(root: Path, global_home: Path, run: kiro_agent.KiroRunner |
 
 
 def steering_check(root: Path, global_home: Path) -> Check:
-    """Agents other than groovyscope's own that can call its tools but never load its steering."""
+    """Agents that call groovyscope but lack its steering or hooks (any agent, not only ``groovy``)."""
     configured = kiro_agent.mcp_servers(
         [global_home / "settings" / "mcp.json", root / ".kiro" / "settings" / "mcp.json"]
     )
-    gaps = kiro_steer.unsteered(kiro_steer.agent_files(root, global_home), configured)
+    gaps = kiro_steer.incomplete(kiro_steer.agent_files(root, global_home), configured)
     if not gaps:
-        return ("ok", "kiro steering", "every agent that calls groovyscope loads its steering")
-    names = ", ".join(name for name, _ in gaps)
-    return (
-        "warn",
-        "kiro steering",
-        f"{names} can call groovyscope but do not load its steering, so they grep and read whole files; "
-        "`groovyscope kiro steer` adds it",
-    )
+        return ("ok", "kiro agents", "every agent that calls groovyscope has its steering and hooks")
+    named = "; ".join(f"{name} lacks {' and '.join(missing)}" for name, _, missing in gaps)
+    return ("warn", "kiro agents", f"{named}; `groovyscope kiro attach` adds them")
 
 
 def agent_hidden_servers(agent: Path, root: Path, global_home: Path) -> list[str]:

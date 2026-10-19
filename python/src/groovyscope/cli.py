@@ -159,6 +159,11 @@ def main(
 def checkup_command(obj: dict[str, Any], *, for_agent: bool, fix: bool, as_json: bool) -> None:
     """Everything to do after an install or upgrade, as one report with the exact fix per item."""
     environ = dict(os.environ)
+    if for_agent and not checkup.is_project(obj["root"]):
+        # The start hook of any agent groovyscope is attached to: in a folder with no Groovy, nothing to check or
+        # repair, and nothing to install on the user's machine.
+        click.echo(checkup.IDLE_NOTE)
+        return
     try:
         report = checkup.build(
             obj["root"],
@@ -446,33 +451,63 @@ def kiro_init(
     )
 
 
-@kiro.command("steer")
-@click.argument("agents", nargs=-1)
-@click.option("--dry-run", is_flag=True, help="Name the agents and the resources to add without writing anything.")
-@click.pass_obj
-def kiro_steer_command(obj: dict[str, Any], agents: tuple[str, ...], *, dry_run: bool) -> None:
-    """Add groovyscope's steering to other Kiro agents that can call its tools (all such agents, or AGENTS by
-    name). Without the steering an agent greps and reads whole files where one groovyscope call would do."""
+ATTACH_HELP = (
+    "Give other Kiro agents groovyscope (AGENTS by name; without names, every agent that calls groovyscope with a "
+    "part missing): the steering, the MCP server when the agent cannot reach it, the read-only groovyscope tools "
+    "allowed, and the start, write and stop hooks. The agent's own tools, name, shell rules and format are kept, "
+    "and a .bak of each changed file is written."
+)
+
+
+def attach_agents(obj: dict[str, Any], agents: Sequence[str], *, dry_run: bool) -> None:
     global_home = kiro_home(dict(os.environ), Path.home())
     configured = kiro_agent.mcp_servers(
         [global_home / "settings" / "mcp.json", obj["root"] / ".kiro" / "settings" / "mcp.json"]
     )
-    gaps = kiro_steer.unsteered(kiro_steer.agent_files(obj["root"], global_home), configured)
-    chosen = [(name, path) for name, path in gaps if not agents or name in agents]
-    unknown = sorted(set(agents) - {name for name, _ in gaps})
-    for name in unknown:
-        click.echo(f"{name}: not an agent that calls groovyscope without its steering; nothing to do")
-    resources = kiro_steer.steering_resources(global_home)
+    files = kiro_steer.agent_files(obj["root"], global_home)
+    if agents:
+        chosen = kiro_steer.named(files, agents)
+        for name in sorted(set(agents) - {name for name, _ in chosen}):
+            click.echo(f"{name}: no such agent in {obj['root'] / '.kiro' / 'agents'} or {global_home / 'agents'}")
+    else:
+        chosen = [(name, path) for name, path, _ in kiro_steer.incomplete(files, configured)]
+        if not chosen:
+            click.echo("every agent that calls groovyscope has its steering and hooks; name an agent to add it")
+    run = _KIRO()
     for name, path in chosen:
+        existing = path.read_text(encoding="utf-8")
         agent = kiro_steer.read_agent(path) or {}
-        if dry_run:
-            click.echo(f"{name} ({path}): would add {', '.join(resources)}")
+        missing = kiro_steer.missing_parts(agent, configured)
+        if not missing:
+            click.echo(f"{name} ({path}): already has groovyscope")
             continue
-        write_atomically(backup_path(path), path.read_text(encoding="utf-8"))
-        write_atomically(path, json.dumps(kiro_steer.with_steering(agent, resources), indent=2) + "\n")
-        click.echo(f"{name} ({path}): now loads groovyscope's steering (backup next to it); restart its Kiro session")
-    if not chosen and not unknown:
-        click.echo("every agent that calls groovyscope already loads its steering")
+        if dry_run:
+            click.echo(f"{name} ({path}): would add {', '.join(missing)}")
+            continue
+        merged = kiro_steer.attached_text(existing, kiro_steer.attachment(agent, configured, global_home), run)
+        if merged["text"] == existing:
+            click.echo(f"{name} ({path}): left unchanged; {merged['note'] or 'nothing to add'}")
+            continue
+        write_atomically(backup_path(path), existing)
+        write_atomically(path, merged["text"])
+        note = f"; {merged['note']}" if merged["note"] else ""
+        click.echo(f"{name} ({path}): added {', '.join(missing)} ({merged['format']} format kept{note}); restart it")
+
+
+@kiro.command("attach", help=ATTACH_HELP)
+@click.argument("agents", nargs=-1)
+@click.option("--dry-run", is_flag=True, help="Name the agents and the parts to add without writing anything.")
+@click.pass_obj
+def kiro_attach(obj: dict[str, Any], agents: tuple[str, ...], *, dry_run: bool) -> None:
+    attach_agents(obj, agents, dry_run=dry_run)
+
+
+@kiro.command("steer", hidden=True, help="Alias of `kiro attach` (0.21.1).")
+@click.argument("agents", nargs=-1)
+@click.option("--dry-run", is_flag=True)
+@click.pass_obj
+def kiro_steer_command(obj: dict[str, Any], agents: tuple[str, ...], *, dry_run: bool) -> None:
+    attach_agents(obj, agents, dry_run=dry_run)
 
 
 @kiro.command("repair")

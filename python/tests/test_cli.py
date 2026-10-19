@@ -480,6 +480,7 @@ def test_checkup_agent_mode_never_fails(runner: CliRunner, tmp_path: Path, monke
         raise RuntimeError(msg)
 
     monkeypatch.setattr(cli.checkup, "build", boom)
+    (tmp_path / "build.gradle").write_text("", encoding="utf-8")  # a Groovy project: the checkup runs there
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--agent"])
     assert result.exit_code == 0 and result.output.strip() == "groovyscope checkup could not run: no"
     plain = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup"])

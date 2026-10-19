@@ -305,7 +305,7 @@ deliberately loose so shared runners do not fail the build.
 | `relay.py` | asyncio byte relay between this process's stdio and the socket |
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
 | `kiro_agent.py` | agent format detection (V2, universal, out of sync, V3) and format-preserving merges; the servers an agent's `tools` hides |
-| `kiro_steer.py` | other Kiro agents that can call groovyscope but do not load its steering (`doctor`), and adding it to them (`kiro steer`) |
+| `kiro_steer.py` | groovyscope in any Kiro agent: the parts an agent lacks (server, steering, hooks) for `doctor`, and merging only those into it in its own format (`kiro attach`) |
 | `checkup.py` | `groovyscope checkup`: the post-install report with the fix per item and the safe repairs the agent start hook applies |
 | `benchmark.py` | the bundled CodeNarc corpus (`_benchmark/`), unpacked into the user's home with a version stamp |
 | `changes.py` | changed files and line ranges from git, the pure review rules (split, bucket, touched declarations, verdict) and the merge request comment drafts |
