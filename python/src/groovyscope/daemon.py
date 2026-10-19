@@ -484,7 +484,14 @@ def memory_summary(status: Mapping[str, Any] | None) -> str | None:
 
 
 def memory_warning(status: Mapping[str, Any] | None, ratio: float = HEAP_WARN_RATIO) -> str | None:
-    """A warning once the heap in use passes ``ratio`` of the maximum, naming the fix; else nothing."""
+    """A warning once the heap in use passes ``ratio`` of the maximum, naming the fix, or when the engine runs
+    without ``-XX:+ExitOnOutOfMemoryError`` (it would linger broken after an out-of-memory error); else nothing."""
+    memory = (status or {}).get("memory")
+    if isinstance(memory, Mapping) and memory.get("oomExit") is False:
+        return (
+            "the engine runs without -XX:+ExitOnOutOfMemoryError, so an out-of-memory error leaves it running broken; "
+            "restart it with `groovyscope daemon restart`"
+        )
     use = memory_use(status)
     if use is None or use[0] < ratio * use[1]:
         return None

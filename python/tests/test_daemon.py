@@ -194,6 +194,9 @@ def test_memory_helpers() -> None:
     hot = daemon.memory_warning({"memory": {"usedMb": 850, "maxMb": 1000}})
     assert hot is not None and "850 of 1000 MB (85%)" in hot and "daemon.heap" in hot
     assert daemon.memory_warning({"memory": {"usedMb": 500, "maxMb": 1000}}, ratio=0.5) is not None
+    unsafe = daemon.memory_warning({"memory": {"usedMb": 100, "maxMb": 1000, "oomExit": False}})
+    assert unsafe is not None and "ExitOnOutOfMemoryError" in unsafe
+    assert daemon.memory_warning({"memory": {"usedMb": 100, "maxMb": 1000, "oomExit": True}}) is None
 
 
 def test_socket_path_limit_and_private_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
