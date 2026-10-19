@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.21.0...v0.21.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **mcp:** refuse unknown paths, find reworded copies, steer other agents ([#89](https://github.com/SCGIS-Wales/groovyscope/issues/89)) ([6b2e066](https://github.com/SCGIS-Wales/groovyscope/commit/6b2e066f0702d684701215b64378d9e7e9918aec))
+
 ## [0.21.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.20.0...v0.21.0) (2026-10-18)
 
 
