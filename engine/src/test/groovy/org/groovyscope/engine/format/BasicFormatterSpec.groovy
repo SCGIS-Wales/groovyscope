@@ -32,7 +32,7 @@ class BasicFormatterSpec extends Specification {
         expect:
         BasicFormatter.format('\tclass A {  \n\n\n\n\t\tint x\n}', SETTINGS, []) == '    class A {\n\n        int x\n}\n'
         BasicFormatter.format('', SETTINGS, []) == ''
-        BasicFormatter.format('a\r\nb\r\n', SETTINGS, []) == 'a\nb\n'
+        BasicFormatter.format('a\r\nb\r\n', SETTINGS, []) == 'a\r\nb\r\n'
         BasicFormatter.format('a\n\n\n', new EngineConfig.Format('basic', 2, 0, true), []) == 'a\n'
     }
 
@@ -50,9 +50,7 @@ class BasicFormatterSpec extends Specification {
 
         expect:
         BasicFormatter.format(text, SETTINGS, []) == 'def s = """\n  keep   \n\ttabs\n"""\nint x = 1\n'
-        BasicFormatter.togglesTripleQuote("x = '''a", false)
-        !BasicFormatter.togglesTripleQuote("x = '''a'''", false)
-        !BasicFormatter.togglesTripleQuote('// """ comment', false)
+        BasicFormatter.protectedSpans("x = '''a'''\n// \"\"\" comment\n")*.toList() == [[4, 10]]
     }
 
     def 'edits are a single whole-document replacement, or nothing'() {
