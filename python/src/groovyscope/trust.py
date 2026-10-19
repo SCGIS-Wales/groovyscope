@@ -31,6 +31,11 @@ GATED_KEYS: tuple[tuple[str, str], ...] = (
     ("jdk", "vendor"),
     ("daemon", "heapDumpOnOutOfMemory"),
 )
+# Environment variables that mark a process an agent started (Kiro's hooks and tools, Claude Code): trust is never
+# granted from one without the user saying so at a terminal. KIRO_HOME is a user setting, not a session.
+AGENT_ENV_PREFIXES = ("KIRO_",)
+AGENT_ENV_NAMES = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+NOT_AGENT_ENV = ("KIRO_HOME",)
 # Heap settings an untrusted workspace file may lower but not raise past daemon.untrustedHeapCeiling.
 CAPPED_HEAP_KEYS = ("heap", "maxHeap")
 
@@ -47,6 +52,16 @@ def trusted_roots(home: Path) -> list[str]:
         return []
     roots = data.get("workspaces", []) if isinstance(data, dict) else []
     return [str(root) for root in roots if isinstance(root, str)]
+
+
+def agent_session(environ: Mapping[str, str]) -> str | None:
+    """The environment variable showing that an agent started this process, or None."""
+    for name in sorted(environ):
+        if name in NOT_AGENT_ENV or not environ[name]:
+            continue
+        if name in AGENT_ENV_NAMES or name.startswith(AGENT_ENV_PREFIXES):
+            return name
+    return None
 
 
 def is_trusted(root: Path, home: Path) -> bool:

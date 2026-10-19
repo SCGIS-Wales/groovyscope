@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -62,7 +63,20 @@ def test_malformed_files_and_stray_environment(tmp_path: Path) -> None:
     assert load_config(tmp_path, None, {"GROOVYSCOPE_TOKEN": "x"}, home)["workspace"]["trust"] is True  # listed
 
 
-def test_trust_command(runner: CliRunner, tmp_path: Path, isolated_home: Path) -> None:
+def test_trust_command(runner: CliRunner, tmp_path: Path, isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in list(os.environ):
+        if trust.agent_session({name: os.environ[name]}):
+            monkeypatch.delenv(name)
+    refused = runner.invoke(cli.main, ["--root", str(tmp_path), "trust"])
+    assert refused.exit_code == 2 and "refused without a terminal" in refused.output
+    assert trust.trusted_roots(isolated_home) == []
+    monkeypatch.setattr(cli, "_IS_TTY", lambda: True)
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    agent = runner.invoke(cli.main, ["--root", str(tmp_path), "trust"])
+    assert agent.exit_code == 2 and "KIRO_SESSION_ID is set" in agent.output
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "trust", "--yes-i-am-the-user"]).exit_code == 0
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "trust", "--revoke"]).exit_code == 0
+    monkeypatch.delenv("KIRO_SESSION_ID")
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "trust"])
     assert result.exit_code == 0 and "is trusted" in result.output
     assert runner.invoke(cli.main, ["trust", "--list"]).output.strip() == str(tmp_path.resolve())
@@ -129,3 +143,10 @@ def test_heap_caps_leave_small_auto_and_environment_values(tmp_path: Path) -> No
     assert trust.cap_heap({"daemon": {"heap": "lots", "untrustedHeapCeiling": "1g"}}, {"daemon": {"heap": "lots"}},
                           {}, {"daemon": {"untrustedHeapCeiling": "1g"}}) == []  # fmt: skip
     assert trust.confine_reports({"reports": None}, {}, {}, {}, tmp_path) == []
+
+
+def test_agent_sessions_are_recognised() -> None:
+    assert trust.agent_session({"KIRO_HOME": "/k", "PATH": "/bin"}) is None
+    assert trust.agent_session({"CLAUDECODE": "1"}) == "CLAUDECODE"
+    assert trust.agent_session({"KIRO_AGENT": "groovy", "KIRO_HOME": "/k"}) == "KIRO_AGENT"
+    assert trust.agent_session({"KIRO_EMPTY": ""}) is None

@@ -2150,18 +2150,48 @@ def profile_status(obj: dict[str, Any], path: Path, as_json: bool) -> None:
             click.echo(f"{key}: {value}")
 
 
+def stdin_is_terminal() -> bool:
+    return sys.stdin.isatty()
+
+
+_IS_TTY: Callable[[], bool] = stdin_is_terminal
+
+
 @main.command("trust")
 @click.option("--revoke", is_flag=True, help="Stop trusting the workspace.")
 @click.option("--list", "list_all", is_flag=True, help="List the trusted workspaces.")
+@click.option(
+    "--yes-i-am-the-user",
+    "confirmed",
+    is_flag=True,
+    help="Grant trust from a terminal that an agent session started (you typed this, not the agent).",
+)
 @click.pass_obj
-def trust_command(obj: dict[str, Any], revoke: bool, list_all: bool) -> None:
+def trust_command(obj: dict[str, Any], *, revoke: bool, list_all: bool, confirmed: bool) -> None:
     """Trust this workspace: its .groovyscope.yaml may then set workspace.trust (AST transformations from the
-    workspace classpath), jdk.home and CodeNarc rule sets, and its runtime profiles may load emulation jars."""
+    workspace classpath), jdk.home, CodeNarc rule sets, logging.file, JDK downloads and heap dumps, and its runtime
+    profiles may load emulation jars. Granting trust needs a terminal: an agent cannot grant it to itself."""
     home = Path.home()
     if list_all:
         for root in trust.trusted_roots(home):
             click.echo(root)
         return
+    if not revoke:
+        marker = trust.agent_session(os.environ)
+        if not _IS_TTY():
+            click.echo(
+                "groovyscope trust: refused without a terminal; trust lets this workspace run code, so run it "
+                "yourself in a terminal",
+                err=True,
+            )
+            sys.exit(2)
+        if marker is not None and not confirmed:
+            click.echo(
+                f"groovyscope trust: refused inside an agent session ({marker} is set); if you are typing this "
+                "yourself, add --yes-i-am-the-user",
+                err=True,
+            )
+            sys.exit(2)
     trust.set_trusted(obj["root"], home, trusted=not revoke)
     state = "no longer trusted" if revoke else "trusted"
     click.echo(f"{obj['root']} is {state}; run `groovyscope daemon restart` if a daemon is serving it")

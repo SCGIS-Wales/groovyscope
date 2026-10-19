@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from groovyscope.config import deep_merge
-from groovyscope.tools_catalog import mutating_tools, read_only_tools, v3_matches
+from groovyscope.tools_catalog import SAFE_SHELL_GLOBS, mutating_tools, read_only_tools, v3_matches
 
 KNOWN_UPGRADE_REVISION = 2
 FORMATS = ("v2", "universal", "universal-out-of-sync", "v3", "unknown", "external")
@@ -46,21 +46,23 @@ SHARED_KEYS = ("hooks", "welcomeMessage", "resources")
 # Entries earlier releases wrote that are replaced on merge: the bare `@groovyscope` allowed every tool, the
 # per-tool entries from the catalogue allow only the read-only ones (Kiro ignores `readOnlyHint`).
 RETIRED_ALLOWED_TOOLS = ("@groovyscope",)
-RETIRED_V3_RULES: tuple[dict[str, Any], ...] = ({"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},)
+RETIRED_V3_RULES: tuple[dict[str, Any], ...] = (
+    {"capability": "mcp", "match": ["groovyscope/*"], "effect": "allow"},
+    {"capability": "shell", "match": ["./gradlew *", "groovyscope *", "git status", "git diff*"], "effect": "allow"},
+)
+# Shell entries earlier releases wrote, which let an agent run any groovyscope command (`trust` included), any Gradle
+# task and `git diff --output`; replaced by the read-only list from the tool catalogue.
+RETIRED_SHELL_COMMANDS = ("\\./gradlew .*", "groovyscope .*", "git diff.*")
 
 
 def v3_rules() -> tuple[dict[str, Any], ...]:
     """The V3 rules groovyscope needs: read-only MCP tools allowed, the mutating ones ask, file reads and the
-    build, groovyscope and git status commands allowed. Derived from the tool catalogue, never written by hand."""
+    read-only groovyscope, test and git commands allowed. Derived from the tool catalogue, never written by hand."""
     return (
         {"capability": "mcp", "match": v3_matches(read_only_tools()), "effect": "allow"},
         {"capability": "mcp", "match": v3_matches(mutating_tools()), "effect": "ask"},
         {"capability": "fs_read", "effect": "allow"},
-        {
-            "capability": "shell",
-            "match": ["./gradlew *", "groovyscope *", "git status", "git diff*"],
-            "effect": "allow",
-        },
+        {"capability": "shell", "match": list(SAFE_SHELL_GLOBS), "effect": "allow"},
     )
 
 
@@ -218,6 +220,8 @@ def merge_v2(current: Mapping[str, Any], template: Mapping[str, Any]) -> dict[st
         if existing is not None:
             if path == ("allowedTools",) and isinstance(existing, list):
                 existing = [entry for entry in existing if entry not in RETIRED_ALLOWED_TOOLS]
+            if path == ("toolsSettings", "shell", "allowedCommands") and isinstance(existing, list):
+                existing = [entry for entry in existing if entry not in RETIRED_SHELL_COMMANDS]
             set_path(merged, path, union(existing, get_path(template, path)))
     return merged
 
