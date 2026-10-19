@@ -622,6 +622,16 @@ public final class QualityServices {
      * the class then passes the static type checker; otherwise {@code @CompileDynamic} is added.
      */
     public FixResult fix(Collection<String> uris, Set<String> codes) {
+        return fix(uris, codes, null);
+    }
+
+    /**
+     * {@link #fix(Collection, Set)} limited to findings on the given lines: per document URI, 1-based inclusive
+     * {@code [start, end]} ranges (the lines a branch changed). A fix whose finding lies outside them is not applied
+     * and not counted; the edits a chosen fix needs elsewhere (an import) still come with it. {@code null} means
+     * every line.
+     */
+    public FixResult fix(Collection<String> uris, Set<String> codes, Map<String, List<int[]>> onlyLines) {
         Map<String, String> sources = workspace.sources();
         List<String> targets = uris == null || uris.isEmpty() ? new ArrayList<>(sources.keySet()) : new ArrayList<>(uris);
         Map<String, List<TextEdit>> edits = new TreeMap<>();
@@ -637,7 +647,8 @@ public final class QualityServices {
                 continue;
             }
             Map<String, Integer> missed = new TreeMap<>();
-            List<CodeAction> chosen = chooseFixes(uri, text, codes, staticOk, missed);
+            List<int[]> only = onlyLines == null ? null : onlyLines.getOrDefault(uri, List.of());
+            List<CodeAction> chosen = chooseFixes(uri, text, codes, staticOk, missed, only);
             if (chosen.isEmpty()) {
                 if (!missed.isEmpty()) {
                     left.put(uri, missed);
@@ -675,13 +686,24 @@ public final class QualityServices {
         return new FixResult(edits, applied, appliedCounts, left, rejected);
     }
 
+    private static boolean onLines(Diagnostic diagnostic, List<int[]> ranges) {
+        int line = diagnostic.range().start().line() + 1;
+        for (int[] range : ranges) {
+            if (range.length == 2 && line >= range[0] && line <= range[1]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<CodeAction> chooseFixes(String uri, String text, Set<String> codes, Map<String, Boolean> staticOk,
-            Map<String, Integer> missed) {
+            Map<String, Integer> missed, List<int[]> only) {
         TextLines lines = new TextLines(text);
         org.codehaus.groovy.ast.ModuleNode module = navigation.snapshot().result().modules().get(uri);
         List<CodeAction> chosen = new ArrayList<>();
         for (Diagnostic diagnostic : lint(uri, text, null)) {
-            if (codes != null && !codes.isEmpty() && !codes.contains(diagnostic.code())) {
+            if (codes != null && !codes.isEmpty() && !codes.contains(diagnostic.code())
+                    || only != null && !onLines(diagnostic, only)) {
                 continue;
             }
             CodeAction textual = quickFix(diagnostic, lines);
@@ -699,7 +721,8 @@ public final class QualityServices {
             }
         }
         for (PracticeFinder.Practice practice : practices(uri)) {
-            if (practice.fixable() && (codes == null || codes.isEmpty() || codes.contains(practice.diagnostic().code()))) {
+            if (practice.fixable() && (codes == null || codes.isEmpty() || codes.contains(practice.diagnostic().code()))
+                    && (only == null || onLines(practice.diagnostic(), only))) {
                 chosen.add(new CodeAction(practice.fixTitle(), practice.diagnostic(), practice.fix()));
             }
         }

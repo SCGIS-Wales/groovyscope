@@ -644,6 +644,27 @@ def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dic
     return {"coverage_gaps": coverage_gaps}
 
 
+def fix_request(
+    root: Path, paths: Sequence[str] | None, codes: Sequence[str] | None, *, changed_only: bool, base: str | None
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The ``groovyscope/fix`` params, limited to the branch's changed lines with ``changed_only``; or the answer to
+    give at once (no git, nothing changed)."""
+    params: dict[str, Any] = {
+        "root": str(root),
+        "uris": [to_uri(root, p) for p in paths or []],
+        "codes": list(codes or []),
+    }
+    if not changed_only:
+        return (params, None)
+    try:
+        scope = changes.fix_scope(root, changes.changed_files(root, base))
+    except ValueError as exc:
+        return (params, {"error": str(exc)})
+    if not scope["uris"]:
+        return (params, {"changed": 0, "files": [], "rejected": {}, "note": "no changed Groovy lines to fix"})
+    return ({**params, **scope}, None)
+
+
 def practice_tools(
     root: Path,
     call: Call,
@@ -703,12 +724,20 @@ def practice_tools(
         status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
         return {"path": path, **(dict(status) if isinstance(status, Mapping) else {"governed": False})}
 
-    def fix(paths: list[str] | None = None, codes: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
-        """Safe fixes for PATHS (all when empty) and CODES (all fixable when empty). APPLY writes the files."""
-        raw = call(
-            "groovyscope/fix",
-            {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "codes": codes or []},
-        )
+    def fix(
+        paths: list[str] | None = None,
+        codes: list[str] | None = None,
+        apply: bool = False,
+        changed_only: bool = False,
+        base: str | None = None,
+    ) -> dict[str, Any]:
+        """Safe fixes for PATHS (all when empty) and CODES (all fixable when empty). APPLY writes the files.
+        CHANGED_ONLY limits them to the lines this branch changed against BASE (default: the repository's default
+        branch), so existing code is left as it is."""
+        params, early = fix_request(root, paths, codes, changed_only=changed_only, base=base)
+        if early is not None:
+            return early
+        raw = call("groovyscope/fix", params)
         changed, refused = file_edits(raw.get("edits", {}), root)
         decision = interaction.UNSUPPORTED
         if apply and changed:
@@ -730,8 +759,10 @@ def practice_tools(
             if edit["path"] in fixed:
                 entry["fixed"] = fixed[edit["path"]]
             files.append(entry)
-        rejected = {relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()}
-        rejected.update({relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused})
+        rejected = {
+            **{relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()},
+            **{relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused},
+        }
         answer: dict[str, Any] = {"changed": len(files), "files": files[:cap], "rejected": rejected}
         if left:
             answer["left"] = {relative_path(path.as_uri(), root): counts for path, counts in list(left.items())[:cap]}

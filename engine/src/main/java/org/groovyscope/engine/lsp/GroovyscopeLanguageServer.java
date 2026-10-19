@@ -328,7 +328,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             List<String> uris = targets(current, params);
             org.groovyscope.engine.services.QualityServices.FixResult result = noneInside(params, uris)
                     ? new org.groovyscope.engine.services.QualityServices.FixResult(Map.of(), Map.of(), Map.of())
-                    : current.quality().fix(uris, new java.util.LinkedHashSet<>(stringList(params.get("codes"))));
+                    : current.quality().fix(uris, new java.util.LinkedHashSet<>(stringList(params.get("codes"))),
+                            lineRanges(params.get("lines")));
             Map<String, List<org.eclipse.lsp4j.TextEdit>> edits = new LinkedHashMap<>();
             for (Map.Entry<String, List<org.groovyscope.engine.model.TextEdit>> entry : result.edits().entrySet()) {
                 List<org.eclipse.lsp4j.TextEdit> list = new java.util.ArrayList<>();
@@ -345,6 +346,27 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             response.put("rejected", result.rejected());
             return response;
         });
+    }
+
+    /** {@code {uri: [[start, end], ...]}} (1-based, inclusive) from a request, or null when absent. */
+    static Map<String, List<int[]>> lineRanges(Object value) {
+        if (!(value instanceof Map<?, ?> map)) {
+            return null;
+        }
+        Map<String, List<int[]>> ranges = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            List<int[]> list = new java.util.ArrayList<>();
+            if (entry.getValue() instanceof List<?> items) {
+                for (Object item : items) {
+                    if (item instanceof List<?> pair && pair.size() == 2 && pair.get(0) instanceof Number start
+                            && pair.get(1) instanceof Number end) {
+                        list.add(new int[] {start.intValue(), end.intValue()});
+                    }
+                }
+            }
+            ranges.put(String.valueOf(entry.getKey()), list);
+        }
+        return ranges;
     }
 
     /** Contract items of every profile-governed document, for {@code groovyscope baseline save}. Params: {@code root}. */

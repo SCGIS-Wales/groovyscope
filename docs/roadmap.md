@@ -647,3 +647,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   call graph and the Gradle command (compile tasks of the changed source sets, `--tests` per affected class of the
   tasks in `verify.runTasks`; other tasks, such as `integrationTest` bound to `sourceSets.it` in `build.gradle`,
   listed for CI). `groovyscope verify` runs that plan in one step.
+- 2026-10-19: review accuracy, from the owner's second review round (the agent verified the review's plan against
+  the code and found most of it overstated). GS002 skips an Elvis passed straight to a parser that rejects empty
+  input (`readTree(resp ?: '{}')`) and says it is a defect only where the empty value is a real input; GS026 on a
+  time-named `String` (`certificateExpiry`) is information, not a warning, and suggests `...Text` for timestamp
+  text carried on purpose; the review's risky constructs count only catches that hide the failure (swallowed or
+  returning a default), not those that log or rethrow; `groovyscope fix --changed` (MCP `changed_only`) applies
+  safe fixes only on the lines the branch changed, the engine filtering by finding so a fix's import still comes
+  with it, and the triage suggests that command.

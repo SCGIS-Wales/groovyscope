@@ -40,6 +40,7 @@ class ValidateInput {
     boolean valid = false
     boolean isReady = true
     String retryCount = '3'
+    String certificateExpiry = '2026-10-19T00:00:00Z'
     Map<String, String> userList = [:]
     List<String> names = []
     String token
@@ -112,6 +113,13 @@ class User { }
         byCode.GS025*.diagnostic()*.message().any { it.contains("'strName'") }
         byCode.GS026*.diagnostic()*.message().any { it.contains("'retryCount'") }
         byCode.GS026*.diagnostic()*.message().any { it.contains("'userList'") }
+        // Timestamp text carried on purpose is a naming question, so information rather than a warning.
+        byCode.GS026.find { it.diagnostic().message().contains("'certificateExpiry'") }.diagnostic().severity() ==
+                org.groovyscope.engine.model.Diagnostic.Severity.INFORMATION
+        byCode.GS026.find { it.diagnostic().message().contains("'certificateExpiry'") }.diagnostic().message()
+                .contains('certificateExpiryText')
+        byCode.GS026.find { it.diagnostic().message().contains("'retryCount'") }.diagnostic().severity() !=
+                org.groovyscope.engine.model.Diagnostic.Severity.INFORMATION
         byCode.GS027*.diagnostic()*.message().any { it.contains('get, fetch') }
         !found.any { it.diagnostic().message().contains("'isReady'") }
         !found.any { it.diagnostic().message().contains("'i'") || it.diagnostic().message().contains("'x'") }
