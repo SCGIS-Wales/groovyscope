@@ -52,6 +52,7 @@ import org.groovyscope.engine.model.Diagnostic;
 import org.groovyscope.engine.model.Range;
 import org.groovyscope.engine.model.TextEdit;
 import org.groovyscope.engine.semantics.TypeNames;
+import org.groovyscope.engine.workspace.TestSources;
 
 /**
  * Naming checks, GS020 to GS027: whether names say what the things they name are and do. Each check reports only
@@ -255,8 +256,7 @@ public final class NamingFinder {
             String simple = classNode.getNameWithoutPackage();
             int dollar = simple.lastIndexOf('$');
             String name = dollar >= 0 ? simple.substring(dollar + 1) : simple;
-            testClass = name.endsWith("Test") || name.endsWith("Spec") || name.endsWith("Tests")
-                    || uri.contains("/src/test/");
+            testClass = TestSources.isTest(uri, name) || uri.contains("/src/test/");
             if (!classNode.isScript()) {
                 checkClassName(classNode, name);
             }

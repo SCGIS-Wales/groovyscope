@@ -41,6 +41,7 @@ import org.groovyscope.engine.model.Confidence;
 import org.groovyscope.engine.model.Range;
 import org.groovyscope.engine.model.Symbol;
 import org.groovyscope.engine.semantics.TypeNames;
+import org.groovyscope.engine.workspace.TestSources;
 
 /**
  * The relationships between the workspace's classes as a typed graph: inheritance ({@code extends},
@@ -391,8 +392,7 @@ public final class RelationshipGraph {
             }
         }
         String name = classNode.getNameWithoutPackage().replace('$', '.');
-        boolean test = (uri != null && uri.contains("/src/test/")) || name.endsWith("Test") || name.endsWith("Spec")
-                || name.endsWith("Tests");
+        boolean test = (uri != null && uri.contains("/src/test/")) || TestSources.isTest(uri, name);
         String kind = classNode.isScript() ? "script" : TypeNames.keywordOf(classNode);
         return new Node(classNode.getName(), name, kind, classNode.getPackageName(), uri,
                 range == null ? 0 : range.start().line(), range == null ? 0 : range.end().line(), members, test, null);

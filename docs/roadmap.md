@@ -638,3 +638,12 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   changed-line findings in `triage` (risks, smells, noise) with the fixable count and the `groovyscope fix`
   command; GS002 skips a default that is the same empty value (`?: ''`, `?: 0`, `?: []`, `?: [:]`); and the
   bundled CodeNarc profile drops `VariableTypeRequired`, which reported every `def` a second time next to `NoDef`.
+- 2026-10-19: items 4 and 5 of the owner's approved review improvements. The regression in the owner's session was
+  one changed line in a Java test helper that four integration tests read, found only by a 12-minute CI run, and
+  the agent chose compile tasks by hand. `workspace.sourceSets` (on) adds every `src/<set>/groovy` and
+  `src/<set>/java` to the roots, so `src/it/java` is analysed; test code is decided in one place (`TestSources`:
+  any source set but `main`, or a `Test`, `Tests`, `Spec`, `IT`, `ITCase`, `IntegrationTest` class name);
+  `review_changes` reviews changed Java too and answers `tests`: the test methods the change reaches through the
+  call graph and the Gradle command (compile tasks of the changed source sets, `--tests` per affected class of the
+  tasks in `verify.runTasks`; other tasks, such as `integrationTest` bound to `sourceSets.it` in `build.gradle`,
+  listed for CI). `groovyscope verify` runs that plan in one step.

@@ -52,6 +52,10 @@ inclusion: always
   fixes, the rest by hand; `groovyscope.explain <code>` says why a finding matters. A `missingDependencies`
   summary (GS100) means no classpath is configured: suggest `groovyscope classpath`, never edit code to
   silence unresolved library imports.
+- To verify a change, run `groovyscope verify` (shell) instead of choosing Gradle tasks by hand: it reviews the
+  changed lines, then compiles the changed source sets and runs the tests the change reaches through the call
+  graph, Java tests included, in one Gradle command. Tests it lists as left to CI (integration tests that need
+  pipeline credentials) are not run locally; say so instead of running them. `--dry-run` shows the plan.
 - `classpath.state: stale` in an answer means a build file changed after the export: say so and offer
   `groovyscope.refresh_classpath` (trusted workspaces only) before judging unresolved classes; offer the
   same after you edit `build.gradle`, `pom.xml` or `libs.versions.toml`. Configuration and classpath changes

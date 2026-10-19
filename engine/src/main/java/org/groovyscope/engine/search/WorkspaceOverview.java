@@ -32,6 +32,7 @@ import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
 import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.model.Range;
+import org.groovyscope.engine.workspace.TestSources;
 import org.groovyscope.engine.workspace.WorkspaceModel;
 
 /**
@@ -42,7 +43,7 @@ public final class WorkspaceOverview {
 
     static final int TOP = 20;
     static final String DEFAULT_PACKAGE = "(default)";
-    static final List<String> TEST_SUFFIXES = List.of("Test", "Spec", "Tests");
+    static final List<String> TEST_SUFFIXES = TestSources.TEST_SUFFIXES;
     private static final Pattern PACKAGE = Pattern.compile("(?m)^\\s*package\\s+([\\w.]+)");
 
     /** Totals of one package. */
@@ -171,6 +172,9 @@ public final class WorkspaceOverview {
             if (segment.equals("test") || segment.equals("tests") || segment.endsWith("Test")) {
                 return true;
             }
+        }
+        if (TestSources.isTestPath(path.toString())) {
+            return true;
         }
         String file = relative.getFileName() == null ? "" : relative.getFileName().toString();
         int dot = file.lastIndexOf('.');
