@@ -625,3 +625,9 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   Kiro files and unpacked the benchmark corpus in a folder with no Groovy at all; it now prints one line and repairs
   nothing there. The `uv.lock` bump in release-please used the wrong filter (the TOML parser wraps values):
   reproduced with release-please's own updater and fixed (`@.name.value`).
+- 2026-10-19: in the owner's Kiro session the agent called a `get_diagnostics` tool that does not exist. The
+  steering listed "diagnostics" among the `code` tool's operations (Kiro's code tool has a `get_diagnostics`
+  operation, not a tool), and the agent also compiled a file alone with `groovy -e`, where every library import
+  fails. The steering now sends errors and findings to `groovyscope.check` or `review`, says there is no
+  `get_diagnostics` tool, and warns against classpath-less compiles. Measured on the way: the write hook takes 4
+  to 7 s on a 3,000-line file, most of it the workspace recompile behind `compile`; to be proposed.

@@ -27,11 +27,15 @@ inclusion: always
 
 ## Navigation
 
-- For any Groovy, Gradle or Jenkinsfile question, use the `code` tool (find references, go to definition,
-  hover, diagnostics, rename with dry run) or the `groovyscope` MCP tools. Never grep, rg, sed, awk, head
-  or tail to locate Groovy symbols or read Groovy files; if the `code` tool rejects a Groovy file, use
-  `groovyscope.symbol_context` (definition, hover and reference count in one call), `find_references`,
-  `find_symbol` and `check` instead and mention the failure once.
+- For any Groovy, Gradle or Jenkinsfile question, use the `groovyscope` MCP tools, or the `code` tool (find
+  references, go to definition, hover, rename with dry run) when the agent has it. Never grep, rg, sed, awk,
+  head or tail to locate Groovy symbols or read Groovy files; if the `code` tool rejects a Groovy file, use
+  `groovyscope.symbol_context` (definition, hover and reference count in one call), `find_references` and
+  `find_symbol` instead and mention the failure once.
+- Errors and findings in a Groovy file come from `groovyscope.check` (`paths`, and `max_priority: 1` for errors
+  only) or `groovyscope.review`, which compile with the project's classpath. There is no `get_diagnostics`
+  tool; never call one. Do not compile a file alone with `groovy` or `groovyc` to check it: without the
+  classpath every library import fails, and that says nothing about the change.
 - In an unfamiliar workspace: `groovyscope.workspace_overview`, then `document_symbols` for a file's outline,
   then `read_symbol` for the one declaration you need. Never read a whole file to find one declaration. Pass
   `limit` and `cursor` to page long answers.
