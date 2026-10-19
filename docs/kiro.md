@@ -265,7 +265,7 @@ prepare step that refuses dynamic targets), call hierarchy, semantic tokens, for
 code actions (quick fixes, `source.fixAll.groovyscope`, `source.organizeImports`) and diagnostics (pushed and
 pulled: compile, type checkers, lint down to `lint.publishMaxPriority`, GS and RP checks, each marked `fixable`
 when `fix` can repair it). The README has the table. The engine reads the effective `.groovyscope.yaml` from
-the `GROOVYSCOPE_CONFIG_JSON` variable that `groovyscope lsp` sets, so `workspace.sourceRoots`,
+the file `groovyscope lsp` writes and passes with `--config` (private, under the cache), so `workspace.sourceRoots`,
 `workspace.classpath`, `workspace.classpathFile`, `workspace.exclude` and `workspace.trust` apply.
 
 ## What the MCP tools add
