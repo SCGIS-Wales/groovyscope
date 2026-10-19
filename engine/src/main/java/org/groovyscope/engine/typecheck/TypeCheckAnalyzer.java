@@ -168,6 +168,18 @@ public final class TypeCheckAnalyzer {
             if (attempt == 0) {
                 deadline = started + RetryBudget.of(System.nanoTime() - started);
             }
+            if (pass.crash != null && pass.isolable && remaining.size() > 1) {
+                String culprit = isolate(remaining, classpath, trust, extensions);
+                if (culprit != null) {
+                    // That file goes without a type check, reported on itself; the rest are checked without it.
+                    diagnostics.get(culprit).add(new Diagnostic(culprit, org.groovyscope.engine.model.Range.of(0, 0,
+                            0, 1), Severity.WARNING, SOURCE, "typecheck-failed", "the type checker failed on this file: "
+                            + pass.crash.getMessage()));
+                    status.put(culprit, Status.CRASHED);
+                    remaining.remove(culprit);
+                    continue;
+                }
+            }
             if (pass.crash != null) {
                 String first = remaining.keySet().iterator().next();
                 diagnostics.get(first).add(new Diagnostic(first, org.groovyscope.engine.model.Range.of(0, 0, 0, 1),
@@ -194,8 +206,34 @@ public final class TypeCheckAnalyzer {
         return new Result(diagnostics, status);
     }
 
+    /** @param isolable the crash was thrown while checking (one file's doing, perhaps), not a global failure */
     private record Pass(boolean checked, Set<String> broken, Map<String, List<Diagnostic>> diagnostics, Exception crash,
-            String incomplete) {
+            String incomplete, boolean isolable) {
+    }
+
+    /**
+     * The one file that crashes the checker on its own, found by halving the suspects (log2 n compiles); null when
+     * the crash needs several files together.
+     */
+    private String isolate(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions) {
+        List<String> suspects = new ArrayList<>(sources.keySet());
+        while (suspects.size() > 1) {
+            org.groovyscope.engine.concurrent.Cancellation.checkpoint();
+            List<String> half = suspects.subList(0, suspects.size() / 2);
+            Pass probe = compileOnce(subset(sources, half), classpath, trust, extensions);
+            suspects = new ArrayList<>(probe.crash != null ? half : suspects.subList(half.size(), suspects.size()));
+        }
+        String suspect = suspects.get(0);
+        Pass alone = compileOnce(subset(sources, suspects), classpath, trust, extensions);
+        return alone.crash != null ? suspect : null;
+    }
+
+    private static Map<String, String> subset(Map<String, String> sources, List<String> uris) {
+        Map<String, String> chosen = new LinkedHashMap<>();
+        for (String uri : uris) {
+            chosen.put(uri, sources.get(uri));
+        }
+        return chosen;
     }
 
     private Pass compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions) {
@@ -223,8 +261,12 @@ public final class TypeCheckAnalyzer {
             unit.compile(Phases.INSTRUCTION_SELECTION);
         } catch (CompilationFailedException e) {
             // Errors are read from the collectors below.
-        } catch (RuntimeException | LinkageError | AssertionError e) {
-            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(e.toString(), e), null);
+        } catch (Throwable e) {
+            if (!org.groovyscope.engine.concurrent.Containment.recoverable(e)) {
+                throw e;
+            }
+            // thrown while checking some file: worth isolating (the other files can still be checked)
+            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(e.toString(), e), null, true);
         } finally {
             closeQuietly(loader);
             if (transformLoader != loader) {
@@ -240,7 +282,7 @@ public final class TypeCheckAnalyzer {
         // incomplete.
         String unloaded = unloadedExtension(unit.getErrorCollector(), extensions);
         if (unloaded != null) {
-            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(unloaded), null);
+            return new Pass(false, Set.of(), Map.of(), new IllegalStateException(unloaded), null, false);
         }
         String incomplete = exceptionWhileChecking(unit.getErrorCollector());
         collect(unit.getErrorCollector(), sources, found);
@@ -261,9 +303,9 @@ public final class TypeCheckAnalyzer {
             // stopped before static checking with nothing to show for it: a failed check, never a clean one
             String other = otherError(unit.getErrorCollector());
             return new Pass(false, Set.of(), Map.of(), new IllegalStateException(other != null ? other
-                    : "the compile stopped before static checking"), null);
+                    : "the compile stopped before static checking"), null, true);
         }
-        return new Pass(checked, broken, found, null, incomplete);
+        return new Pass(checked, broken, found, null, incomplete, false);
     }
 
     /** The checker that produced a static type checking message, or {@code typecheck} for the core checker. */
