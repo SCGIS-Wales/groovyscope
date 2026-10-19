@@ -33,6 +33,12 @@ printed first. `--dry-run` shows the diff and writes nothing; `--force` replaces
 backups unless `--no-backup`). `groovyscope kiro repair [--global]` re-merges after a manual edit or
 `/code init` removed an entry. The global agent also reads `~/.kiro/steering/**/*.md` by absolute path.
 
+Another agent of yours (one for Python, say) that can call the groovyscope tools does not see groovyscope's steering
+unless its `resources` list it, so it greps and reads whole files where `read_symbol` would answer in one call.
+`groovyscope doctor` names such agents on its `kiro steering` line, and `groovyscope kiro steer [AGENT]...`
+(`--dry-run` to preview) adds the steering to them, the project copy by relative path and the global copy by
+absolute path, with a `.bak` of each file it changes.
+
 The agent's `tools` is `["*"]` on purpose. Kiro only exposes an MCP server to an agent whose `tools` names it
 (`@server`) or allows everything, and an agent written by groovyscope 0.8.x or earlier listed only `code` and
 `@groovyscope`, which hid the other servers in `mcp.json`. `groovyscope doctor` names any server the agent's

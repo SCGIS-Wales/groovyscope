@@ -30,6 +30,7 @@ from groovyscope import (
     diagnostics,
     hooks,
     kiro_agent,
+    kiro_steer,
     practices,
     profiles,
     provision,
@@ -443,6 +444,35 @@ def kiro_init(
         agent_format=agent_format,
         show_diff=show_diff,
     )
+
+
+@kiro.command("steer")
+@click.argument("agents", nargs=-1)
+@click.option("--dry-run", is_flag=True, help="Name the agents and the resources to add without writing anything.")
+@click.pass_obj
+def kiro_steer_command(obj: dict[str, Any], agents: tuple[str, ...], *, dry_run: bool) -> None:
+    """Add groovyscope's steering to other Kiro agents that can call its tools (all such agents, or AGENTS by
+    name). Without the steering an agent greps and reads whole files where one groovyscope call would do."""
+    global_home = kiro_home(dict(os.environ), Path.home())
+    configured = kiro_agent.mcp_servers(
+        [global_home / "settings" / "mcp.json", obj["root"] / ".kiro" / "settings" / "mcp.json"]
+    )
+    gaps = kiro_steer.unsteered(kiro_steer.agent_files(obj["root"], global_home), configured)
+    chosen = [(name, path) for name, path in gaps if not agents or name in agents]
+    unknown = sorted(set(agents) - {name for name, _ in gaps})
+    for name in unknown:
+        click.echo(f"{name}: not an agent that calls groovyscope without its steering; nothing to do")
+    resources = kiro_steer.steering_resources(global_home)
+    for name, path in chosen:
+        agent = kiro_steer.read_agent(path) or {}
+        if dry_run:
+            click.echo(f"{name} ({path}): would add {', '.join(resources)}")
+            continue
+        write_atomically(backup_path(path), path.read_text(encoding="utf-8"))
+        write_atomically(path, json.dumps(kiro_steer.with_steering(agent, resources), indent=2) + "\n")
+        click.echo(f"{name} ({path}): now loads groovyscope's steering (backup next to it); restart its Kiro session")
+    if not chosen and not unknown:
+        click.echo("every agent that calls groovyscope already loads its steering")
 
 
 @kiro.command("repair")

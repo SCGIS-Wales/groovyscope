@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import urllib.parse
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,47 @@ def to_uri(root: Path, path: str) -> str:
         msg = f"{path} is outside the workspace"
         raise ValueError(msg)
     return target.as_uri()
+
+
+# The tool arguments that name workspace files or folders, and how many missing ones an answer names.
+PATH_ARGUMENTS = ("path", "paths")
+MISSING_SHOWN = 5
+
+
+def missing_paths(root: Path, arguments: Mapping[str, Any], exists: Callable[[Path], bool] = Path.exists) -> list[str]:
+    """The ``path`` and ``paths`` arguments of a tool call that name nothing in the workspace, or leave it.
+
+    Checked before any tool runs: a file the engine does not know would otherwise come back with no findings, a
+    clean answer about nothing (a client started in a neighbouring repository asks for that repository's files)."""
+    named: list[str] = []
+    for key in PATH_ARGUMENTS:
+        value = arguments.get(key)
+        if isinstance(value, str):
+            named.append(value)
+        elif isinstance(value, list):
+            named += [str(item) for item in value]
+    base = root.resolve()
+    missing: list[str] = []
+    for path in named:
+        target = (base / path).resolve()
+        if not target.is_relative_to(base) or not exists(target):
+            missing.append(path)
+    return missing
+
+
+def missing_paths_answer(root: Path, missing: Sequence[str]) -> dict[str, Any]:
+    """The answer instead of a tool's result when it names files the workspace does not have."""
+    rest = len(missing) - MISSING_SHOWN
+    shown = ", ".join(missing[:MISSING_SHOWN]) + (f" and {rest} more" if rest > 0 else "")
+    return {
+        "error": (
+            f"not found in the workspace {root}: {shown}. Nothing was checked. groovyscope answers for the folder "
+            "the client was started in: start it in the repository you are editing, or give paths relative to "
+            f"{root}."
+        ),
+        "missing": list(missing),
+        "workspace": str(root),
+    }
 
 
 def clip(text: Any, limit: int) -> Any:

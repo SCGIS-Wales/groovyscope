@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__, daemon, kiro_agent, profiles, sweep
+from groovyscope import __version__, daemon, kiro_agent, kiro_steer, profiles, sweep
 from groovyscope.config import load_config_with_notes
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover, jdk_status
@@ -134,6 +134,23 @@ def kiro_agent_check(root: Path, global_home: Path, run: kiro_agent.KiroRunner |
     return ("info", "kiro agent", f"{label}; no groovy agent yet (run `groovyscope kiro init --global`)")
 
 
+def steering_check(root: Path, global_home: Path) -> Check:
+    """Agents other than groovyscope's own that can call its tools but never load its steering."""
+    configured = kiro_agent.mcp_servers(
+        [global_home / "settings" / "mcp.json", root / ".kiro" / "settings" / "mcp.json"]
+    )
+    gaps = kiro_steer.unsteered(kiro_steer.agent_files(root, global_home), configured)
+    if not gaps:
+        return ("ok", "kiro steering", "every agent that calls groovyscope loads its steering")
+    names = ", ".join(name for name, _ in gaps)
+    return (
+        "warn",
+        "kiro steering",
+        f"{names} can call groovyscope but do not load its steering, so they grep and read whole files; "
+        "`groovyscope kiro steer` adds it",
+    )
+
+
 def agent_hidden_servers(agent: Path, root: Path, global_home: Path) -> list[str]:
     """Configured MCP servers whose tools the agent cannot use."""
     try:
@@ -219,6 +236,7 @@ def build_report(
         jar_check(environ),
         kiro_check(root, kiro_home(environ, home or Path.home())),
         kiro_agent_check(root, kiro_home(environ, home or Path.home()), kiro),
+        steering_check(root, kiro_home(environ, home or Path.home())),
         profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
         client_check(root, environ),

@@ -43,7 +43,15 @@ from groovyscope.edits import (
     write_document,
 )
 from groovyscope.kiro import write_atomically
-from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
+from groovyscope.mcp_server_support import (
+    Call,
+    Paged,
+    clip,
+    missing_paths,
+    missing_paths_answer,
+    relative_path,
+    to_uri,
+)
 from groovyscope.render import page
 from groovyscope.tools_catalog import TOOL_INFO, description
 
@@ -1048,6 +1056,21 @@ def respond(
 CONTEXT_PARAMETER = "ctx"
 
 
+def existing_paths(root: Path, function: Callable[..., Any]) -> Callable[..., Any]:
+    """``function`` answering an error, without running, when its ``path`` or ``paths`` name files the workspace
+    does not have (see :func:`missing_paths`)."""
+
+    @functools.wraps(function)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        missing = missing_paths(root, kwargs)
+        if missing:
+            LOG.info("%s: not in the workspace %s: %s", function.__name__, root, missing)
+            return missing_paths_answer(root, missing)
+        return function(*args, **kwargs)
+
+    return wrapper
+
+
 FIT_ROUNDS = 64
 FIT_MIN_STRING = 200
 
@@ -1217,7 +1240,10 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
             open_world_hint=False,
         )
         tool = respond(
-            diagnostics.timed(name, function, LOG), structured=structured, max_bytes=max_bytes, on_client=record
+            diagnostics.timed(name, existing_paths(root, function), LOG),
+            structured=structured,
+            max_bytes=max_bytes,
+            on_client=record,
         )
         server.tool(
             name=name,
