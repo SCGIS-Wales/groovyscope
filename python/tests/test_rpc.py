@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import socketserver
 import threading
 from collections.abc import Iterator
@@ -50,6 +51,14 @@ class _Handler(socketserver.StreamRequestHandler):
                 )
             elif message["method"] == "hangup":
                 return
+            elif message["method"] == "trickle":
+                # notifications without end: only a total deadline stops a client waiting for the reply
+                note = rpc.encode({"jsonrpc": "2.0", "method": "window/logMessage", "params": {}})
+                try:
+                    while True:
+                        self.request.sendall(note)
+                except OSError:
+                    return
             else:
                 self.request.sendall(
                     rpc.encode({"jsonrpc": "2.0", "id": message["id"], "result": {"echo": message["params"]}})
@@ -126,6 +135,20 @@ class _SessionHandler(socketserver.StreamRequestHandler):
                 return
             elif message["method"] == "hang":
                 continue  # never answered: what a client's timeout and cancel are for
+            elif message["method"] == "exiting":
+                self.request.sendall(
+                    rpc.encode(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": message["id"],
+                            "error": {"code": rpc.DAEMON_EXITING_CODE, "message": "daemon is exiting; reconnect"},
+                        }
+                    )
+                )
+            elif message["method"] == "array":
+                body = b"[1, 2]"
+                self.request.sendall(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+                self.request.sendall(rpc.encode({"jsonrpc": "2.0", "id": message["id"], "result": "after"}))
             elif message["method"] == "slow":
                 threading.Event().wait(0.3)
                 self.request.sendall(rpc.encode({"jsonrpc": "2.0", "id": message["id"], "result": "late"}))
@@ -250,3 +273,72 @@ def test_channel_fails_every_waiter_when_the_engine_hangs_up(session_server: _Se
         rpc.channel_call(channel, "hangup", {}, timeout=5)
     assert not rpc.channel_alive(channel)
     rpc.close_channel(channel)
+
+
+def test_split_frame_refuses_a_body_that_is_not_an_object() -> None:
+    body = b"[1, 2]"
+    with pytest.raises(ValueError, match="not a JSON object"):
+        rpc.split_frame(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+
+
+def test_request_has_one_deadline_however_many_notifications_arrive(server: _Server, short_dir: Path) -> None:
+    with pytest.raises(TimeoutError, match=r"trickle did not answer within 0\.3s"):
+        rpc.request(short_dir / "s.sock", "trickle", {}, timeout=0.3)
+
+
+def test_a_frame_that_is_not_an_object_does_not_stop_the_reader(
+    session_server: _SessionServer, short_dir: Path
+) -> None:
+    channel = rpc.open_channel(short_dir / "e.sock", timeout=5)
+    try:
+        assert rpc.channel_call(channel, "array", {}, timeout=5) == "after"
+        assert rpc.channel_alive(channel)
+    finally:
+        rpc.close_channel(channel)
+
+
+def test_a_daemon_that_is_exiting_is_a_connection_error(session_server: _SessionServer, short_dir: Path) -> None:
+    channel = rpc.open_channel(short_dir / "e.sock", timeout=5)
+    try:
+        with pytest.raises(rpc.DaemonExitingError, match="daemon is exiting"):
+            rpc.channel_call(channel, "exiting", {}, timeout=5)
+        assert issubclass(rpc.DaemonExitingError, ConnectionError)
+    finally:
+        rpc.close_channel(channel)
+    session = rpc.open_session(short_dir / "e.sock", timeout=5)
+    try:
+        with pytest.raises(rpc.DaemonExitingError):
+            rpc.call(session, "exiting", {}, timeout=5)
+    finally:
+        rpc.close_session(session)
+
+
+def test_a_write_that_cannot_finish_breaks_the_channel_instead_of_leaving_half_a_frame(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rpc, "CHANNEL_WRITE_SECONDS", 0.2)
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(short_dir / "deaf.sock"))
+    listener.listen(1)
+    try:
+        channel = rpc.open_channel(short_dir / "deaf.sock", timeout=5)
+        with pytest.raises(rpc.ChannelBrokenError):
+            rpc.channel_submit(channel, "groovyscope/check", {"blob": "x" * 8_000_000})
+        assert not rpc.channel_alive(channel)
+        assert issubclass(rpc.ChannelBrokenError, ConnectionError)
+        rpc.close_channel(channel)
+    finally:
+        listener.close()
+
+
+def test_a_large_frame_reaches_a_reader_that_takes_it_in_pieces(
+    session_server: _SessionServer, short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rpc, "CHANNEL_POLL_SECONDS", 0.01)
+    channel = rpc.open_channel(short_dir / "e.sock", timeout=5)
+    try:
+        blob = "y" * 1_000_000
+        assert rpc.channel_call(channel, "groovyscope/status", {"blob": blob}, timeout=30) == {"echo": {"blob": blob}}
+        assert rpc.channel_alive(channel)
+    finally:
+        rpc.close_channel(channel)
