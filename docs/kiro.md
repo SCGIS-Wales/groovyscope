@@ -33,11 +33,22 @@ printed first. `--dry-run` shows the diff and writes nothing; `--force` replaces
 backups unless `--no-backup`). `groovyscope kiro repair [--global]` re-merges after a manual edit or
 `/code init` removed an entry. The global agent also reads `~/.kiro/steering/**/*.md` by absolute path.
 
-Another agent of yours (one for Python, say) that can call the groovyscope tools does not see groovyscope's steering
-unless its `resources` list it, so it greps and reads whole files where `read_symbol` would answer in one call.
-`groovyscope doctor` names such agents on its `kiro steering` line, and `groovyscope kiro steer [AGENT]...`
-(`--dry-run` to preview) adds the steering to them, the project copy by relative path and the global copy by
-absolute path, with a `.bak` of each file it changes.
+### groovyscope in your own agents
+
+The `groovy` agent is one way in, not the only one: any agent can use groovyscope. It needs four parts: the MCP
+server (its own `mcpServers` entry, or `includeMcpJson` with groovyscope in `mcp.json`), the steering
+(`groovyscope.md` in its `resources`; without it the agent greps and reads whole files where `read_symbol` answers
+in one call), the read-only groovyscope tools in `allowedTools` (no prompt per lookup), and the hooks (`groovyscope
+checkup --agent` at start, `groovyscope hook` after writes and at the end of a turn).
+
+`groovyscope kiro attach AGENT...` adds whichever parts a named agent lacks, in the project's `.kiro/agents` and in
+`~/.kiro/agents`; without names it completes every agent that already calls groovyscope with a part missing, and
+`--dry-run` previews. Everything else in the agent stays: its name, its own tools (`@groovyscope` is added only to a
+tools list that names tools one by one), its shell rules, its hooks and its format (V2, universal through kiro-cli,
+or V3, which gains only groovyscope's MCP permission rules). A `.bak` of each changed file is kept. `groovyscope
+doctor` names incomplete agents on its `kiro agents` line. In a folder with no Groovy (no build file, Jenkinsfile,
+`.groovyscope.yaml` or Groovy sources) the start hook prints one line and repairs nothing, so an attached Python
+agent pays nothing in Python repositories.
 
 The agent's `tools` is `["*"]` on purpose. Kiro only exposes an MCP server to an agent whose `tools` names it
 (`@server`) or allows everything, and an agent written by groovyscope 0.8.x or earlier listed only `code` and

@@ -64,6 +64,12 @@ def profile_guidance(
     return profiles.guidance(found, root)
 
 
+IDLE_NOTE = (
+    "groovyscope: not a Groovy project here (no build file, Jenkinsfile, .groovyscope.yaml or Groovy sources); "
+    "no checks or repairs ran"
+)
+
+
 def is_project(root: Path) -> bool:
     """A Groovy project: a build file, a configuration, a Jenkinsfile, or Groovy sources in the usual roots."""
     if any((root / marker).exists() for marker in doctor.PROJECT_MARKERS):

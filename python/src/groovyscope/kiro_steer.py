@@ -1,9 +1,11 @@
-"""groovyscope's steering for Kiro agents other than its own.
+"""groovyscope in any Kiro agent, not only its own ``groovy`` agent.
 
-A custom Kiro agent loads only the steering its ``resources`` list. An agent that can call the groovyscope MCP tools
-but never loads ``groovyscope.md`` does not know to prefer ``read_symbol`` over grep and line ranges, or to review in
-the repository it edits, so it spends credits finding code the tools return in one call. ``doctor`` names such agents
-and ``groovyscope kiro steer`` adds the steering to them.
+An agent gets groovyscope by four parts: the MCP server (its own ``mcpServers`` entry, or the ``mcp.json`` files it
+includes), the steering (``groovyscope.md`` in its ``resources``, without which it greps and reads whole files where
+one groovyscope call answers), the read-only groovyscope tools in ``allowedTools`` (no prompt for each lookup), and
+the hooks (the checkup at start, findings after each write and at the end of a turn). ``groovyscope kiro attach``
+merges exactly these parts into the agents a user names, keeping everything else and the agent's format; ``doctor``
+names the agents that call groovyscope with a part missing.
 """
 
 from __future__ import annotations
@@ -13,9 +15,13 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from groovyscope import kiro, kiro_agent
+
 STEERING_FILE = "groovyscope.md"
 WORKSPACE_STEERING = f"file://.kiro/steering/{STEERING_FILE}"
 SERVER = "groovyscope"
+TOOL_PREFIX = f"@{SERVER}"
+HOOK_COMMANDS = ("groovyscope checkup --agent", "groovyscope hook")
 
 
 def steering_resources(global_home: Path) -> list[str]:
@@ -43,9 +49,33 @@ def reaches_groovyscope(agent: Mapping[str, Any], configured: Sequence[str]) -> 
         return True
     for key in ("tools", "allowedTools"):
         names = agent.get(key)
-        if isinstance(names, list) and any(isinstance(n, str) and n.startswith(f"@{SERVER}") for n in names):
+        if isinstance(names, list) and any(isinstance(n, str) and n.startswith(TOOL_PREFIX) for n in names):
             return True
     return agent.get("includeMcpJson") is True and SERVER in configured
+
+
+def hook_commands(agent: Mapping[str, Any]) -> set[str]:
+    """Every hook command the agent runs, whatever the event."""
+    hooks = agent.get("hooks")
+    if not isinstance(hooks, Mapping):
+        return set()
+    return {
+        str(entry.get("command"))
+        for entries in hooks.values()
+        if isinstance(entries, list)
+        for entry in entries
+        if isinstance(entry, Mapping) and entry.get("command")
+    }
+
+
+def missing_parts(agent: Mapping[str, Any], configured: Sequence[str]) -> list[str]:
+    """The groovyscope parts an agent lacks: ``server``, ``steering``, ``hooks``."""
+    missing = [] if reaches_groovyscope(agent, configured) else ["server"]
+    if not loads_steering(agent):
+        missing.append("steering")
+    if not set(HOOK_COMMANDS) <= hook_commands(agent):
+        missing.append("hooks")
+    return missing
 
 
 def agent_files(root: Path, global_home: Path) -> list[Path]:
@@ -65,18 +95,65 @@ def read_agent(path: Path) -> dict[str, Any] | None:
     return document if isinstance(document, dict) else None
 
 
-def unsteered(files: Sequence[Path], configured: Sequence[str]) -> list[tuple[str, Path]]:
-    """``(agent name, file)`` for every agent that can call groovyscope but does not load its steering."""
-    gaps: list[tuple[str, Path]] = []
+def agent_name(agent: Mapping[str, Any], path: Path) -> str:
+    return str(agent.get("name") or path.stem)
+
+
+def incomplete(files: Sequence[Path], configured: Sequence[str]) -> list[tuple[str, Path, list[str]]]:
+    """``(name, file, missing parts)`` for every agent that can call groovyscope but lacks its steering or hooks."""
+    found: list[tuple[str, Path, list[str]]] = []
     for path in files:
         agent = read_agent(path)
-        if agent is not None and reaches_groovyscope(agent, configured) and not loads_steering(agent):
-            gaps.append((str(agent.get("name") or path.stem), path))
-    return gaps
+        if agent is None or not reaches_groovyscope(agent, configured):
+            continue
+        missing = missing_parts(agent, configured)
+        if missing:
+            found.append((agent_name(agent, path), path, missing))
+    return found
 
 
-def with_steering(agent: Mapping[str, Any], resources: Sequence[str]) -> dict[str, Any]:
-    """The agent with the steering resources appended (each once); everything else unchanged."""
-    current = agent.get("resources")
-    kept = [item for item in current if isinstance(item, str)] if isinstance(current, list) else []
-    return {**agent, "resources": [*kept, *(item for item in resources if item not in kept)]}
+def named(files: Sequence[Path], names: Sequence[str]) -> list[tuple[str, Path]]:
+    """The agent files whose agent is called one of ``names`` (a name may live in the project and globally)."""
+    chosen: list[tuple[str, Path]] = []
+    for path in files:
+        agent = read_agent(path)
+        if agent is not None and agent_name(agent, path) in names:
+            chosen.append((agent_name(agent, path), path))
+    return chosen
+
+
+def attachment(agent: Mapping[str, Any], configured: Sequence[str], global_home: Path) -> dict[str, Any]:
+    """groovyscope's parts for one agent, from the ``groovy`` agent and ``mcp.json`` templates. The agent's own
+    ``tools`` list gains ``@groovyscope`` only when it lists tools one by one; the server entry is added only when
+    the agent cannot reach groovyscope already."""
+    template = json.loads(kiro.load_template("agents/groovy.json"))
+    parts: dict[str, Any] = {
+        "allowedTools": [t for t in template.get("allowedTools", []) if str(t).startswith(TOOL_PREFIX)],
+        "resources": steering_resources(global_home),
+        "hooks": template.get("hooks", {}),
+    }
+    tools = agent.get("tools")
+    if isinstance(tools, list) and "*" not in tools and TOOL_PREFIX not in tools:
+        parts["tools"] = [TOOL_PREFIX]
+    if not reaches_groovyscope(agent, configured):
+        servers = json.loads(kiro.load_template("mcp.json"))["mcpServers"]
+        parts["mcpServers"] = {SERVER: servers[SERVER]}
+    return parts
+
+
+def attached_text(existing: str, parts: Mapping[str, Any], run: kiro_agent.KiroRunner | None) -> kiro_agent.AgentMerge:
+    """The agent file with groovyscope's parts merged in, in the file's own format. A V3 agent gains only
+    groovyscope's MCP permission rules (never file or shell ones) and the server entry."""
+    before = json.loads(existing)
+    merged = kiro_agent.merge_agent(existing, kiro_agent.dump(parts), requested="auto", run=run)
+    if merged["format"] != "v3":
+        return merged
+    document: dict[str, Any] = json.loads(merged["text"])
+    old_rules = kiro_agent.get_path(before, ("permissions", "rules")) or []
+    rules = kiro_agent.get_path(document, ("permissions", "rules")) or []
+    document["permissions"]["rules"] = [
+        rule for rule in rules if rule in old_rules or (isinstance(rule, Mapping) and rule.get("capability") == "mcp")
+    ]
+    if "mcpServers" in parts:
+        document["mcpServers"] = {**(before.get("mcpServers") or {}), **parts["mcpServers"]}
+    return {"text": kiro_agent.dump(document), "format": merged["format"], "note": merged["note"]}
