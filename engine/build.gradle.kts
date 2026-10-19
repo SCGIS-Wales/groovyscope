@@ -122,7 +122,18 @@ tasks.shadowJar {
     // Shadow's own Groovy extension merge stamps the build time into the descriptor; this one writes no date, so two
     // builds of one commit give byte-identical JARs.
     transform(ReproducibleGroovyExtensionModules())
-    filesNotMatching(listOf("META-INF/services/**", "META-INF/groovy/**")) {
+    // Every bundled Apache NOTICE is kept (Apache-2.0 section 4(d)), merged into one; the inputs are fixed, so the
+    // merged file is the same in every build.
+    transform(com.github.jengelman.gradle.plugins.shadow.transformers.ApacheNoticeResourceTransformer::class.java) {
+        projectName.set("groovyscope")
+        organizationName.set("SCGIS-Wales and contributors")
+        organizationURL.set("https://github.com/SCGIS-Wales/groovyscope")
+        inceptionYear.set("2026")
+    }
+    from(layout.projectDirectory.file("../THIRD-PARTY-NOTICES.md")) {
+        into("META-INF")
+    }
+    filesNotMatching(listOf("META-INF/services/**", "META-INF/groovy/**", "META-INF/NOTICE*")) {
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     }
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/*.EC")
