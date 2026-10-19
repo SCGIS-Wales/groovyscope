@@ -83,6 +83,8 @@ public final class LanguageServices {
     static final int WORKSPACE_SYMBOL_LIMIT = 500;
     /** Index entries visited between two cancellation checks in a whole-workspace walk. */
     static final int CHECKPOINT_EVERY = 256;
+    /** How long {@link #close} waits for background work (a symbol save) before closing the store. */
+    static final long CLOSE_DRAIN_SECONDS = 5;
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 
     private final WorkspaceModel workspace;
@@ -109,6 +111,7 @@ public final class LanguageServices {
     private final Object jobLock = new Object();
     private CompileJob inFlight;
     private volatile long lastUsedNanos = System.nanoTime();
+    private volatile boolean closed;
     /** The symbol save not yet written; a newer snapshot replaces it, so saves never queue up. */
     private final AtomicReference<Runnable> pendingSave = new AtomicReference<>();
 
@@ -544,6 +547,10 @@ public final class LanguageServices {
      * snapshot at once while the compile runs in the background.
      */
     public Snapshot snapshot() {
+        if (closed) {
+            throw new IllegalStateException("the workspace " + workspace.root() + " was closed (released while idle); "
+                    + "reconnect to open it again");
+        }
         lastUsedNanos = System.nanoTime();
         String staleOk = Freshness.staleOkUri();
         Snapshot published = snapshot;
@@ -640,8 +647,22 @@ public final class LanguageServices {
         return lastUsedNanos;
     }
 
-    /** Releases what this workspace holds: the kept compile's loader, pending saves and the background thread. */
+    /** Marks this workspace as just used (a connection was handed it), so an idle eviction leaves it. */
+    public void touch() {
+        lastUsedNanos = System.nanoTime();
+    }
+
+    /** True once {@link #close} ran: the workspace answers nothing more. */
+    public boolean isClosed() {
+        return closed;
+    }
+
+    /**
+     * Releases what this workspace holds: the kept compile's loader, pending saves and the background thread, which
+     * is drained (bounded) before the symbol store closes so no save runs against a closed database.
+     */
     public void close() {
+        closed = true;
         synchronized (lock) {
             if (openLoader != null) {
                 openLoader.close();
@@ -651,6 +672,14 @@ public final class LanguageServices {
             quality = null;
         }
         background.shutdownNow();
+        try {
+            if (!background.awaitTermination(CLOSE_DRAIN_SECONDS, TimeUnit.SECONDS)) {
+                org.groovyscope.engine.log.EngineLog.warn("%s", "background work of " + workspace.root()
+                        + " still running at close; the symbol cache closes anyway");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         if (store != null) {
             try {
                 store.close();

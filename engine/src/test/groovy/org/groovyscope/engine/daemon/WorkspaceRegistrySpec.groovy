@@ -73,4 +73,41 @@ class WorkspaceRegistrySpec extends Specification {
         def failed = thrown(java.util.concurrent.ExecutionException)
         failed.cause instanceof ResponseErrorException
     }
+
+    def 'eviction never hands out a closed workspace, and a stale reference fails fast (E-19)'() {
+        given:
+        Path root = Files.createDirectories(temp.resolve('w'))
+        Files.writeString(root.resolve('A.groovy'), 'class A { }')
+        Path cache = Files.createDirectories(temp.resolve('cache'))
+        def registry = new WorkspaceRegistry(EngineConfig.DEFAULTS, cache)
+
+        when: 'a workspace just handed out is not idle, whatever the threshold'
+        def first = registry.apply(root)
+        first.snapshot()
+
+        then:
+        registry.evictIdle(java.time.Duration.ofMinutes(1)) == 0
+
+        when: 'it is evicted once idle, the next apply gets a fresh one'
+        int evicted = registry.evictIdle(java.time.Duration.ZERO)
+        def second = registry.apply(root)
+
+        then:
+        evicted == 1
+        first.isClosed()
+        !second.isClosed()
+        !second.is(first)
+        second.snapshot().version() > 0
+
+        when: 'the old reference is used after eviction'
+        first.markDirty()
+        first.snapshot()
+
+        then:
+        def closed = thrown(IllegalStateException)
+        closed.message.contains('closed')
+
+        cleanup:
+        registry.evictIdle(java.time.Duration.ZERO)
+    }
 }
