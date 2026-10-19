@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import practices
+from groovyscope import practices, process
 
 Runner = Callable[[Sequence[str], Path], tuple[int, str]]
 Which = Callable[[str], str | None]
@@ -48,9 +48,7 @@ class ChangeSet(TypedDict):
 def default_runner(command: Sequence[str], cwd: Path) -> tuple[int, str]:
     """Run git; stdout on success, stderr on failure, a non-zero code for anything that went wrong."""
     try:
-        done = subprocess.run(
-            list(command), cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=False
-        )
+        done = process.run_text(command, cwd=cwd, timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return (-1, f"{command[0]} did not finish within {GIT_TIMEOUT_SECONDS} s")
     except OSError as exc:

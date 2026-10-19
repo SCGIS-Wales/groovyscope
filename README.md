@@ -195,7 +195,7 @@ closed-world), and parallel calls are queued safely on the one engine session.
 | `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |
 | `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing`, `metaClass` writes, `@Grab`, `Eval`, `execute()` |
 | `workspace_status()` | Daemon state, engine version, root, file count, trust flag, and the `classpath` state (`fresh`, `stale`, `missing`, `configured`, `none`) |
-| `refresh_classpath(timeout?)` | Exports the classpath again from the build after a dependency changed (`check` says `classpath.state: stale`); the engine picks it up on its next request. Runs the build, trusted workspaces only |
+| `refresh_classpath(timeout?)` | Exports the classpath again from the build after a dependency changed (`check` says `classpath.state: stale`); the engine picks it up on its next request. Runs the build (at most `classpath.timeoutSeconds`), trusted workspaces only; a build that outlasts the call goes on in the background, and a later call or `workspace_status` gives its result |
 
 ## Configuration
 

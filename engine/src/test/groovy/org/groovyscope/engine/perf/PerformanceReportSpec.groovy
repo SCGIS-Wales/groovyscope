@@ -82,6 +82,18 @@ ${previous}        value${i} + n
         def openOnly = services.quality().publishedDiagnostics([target])
         long openMillis = (System.nanoTime() - openStart) / 1_000_000
 
+        and: 'while another file is edited and its compile runs, two hovers on an unchanged file (the light lane)'
+        String other = root.resolve('Class1.groovy').toUri().toString()
+        services.workspace().open(other, Files.readString(root.resolve('Class1.groovy')) + '\n// edited\n')
+        services.markDirty()
+        def compiling = java.util.concurrent.CompletableFuture.supplyAsync { services.snapshot() }
+        long hoverStart = System.nanoTime()
+        2.times {
+            org.groovyscope.engine.concurrent.Freshness.staleOkFor(target) { services.hover(target, new Position(5, 8)) }
+        }
+        long hoverMillis = (System.nanoTime() - hoverStart) / 1_000_000
+        compiling.get(120, java.util.concurrent.TimeUnit.SECONDS)
+
         and: 'the same for every document (the pre-0.13 push)'
         long allStart = System.nanoTime()
         def everything = services.quality().publishedDiagnostics()
@@ -92,9 +104,14 @@ ${previous}        value${i} + n
         openOnly.keySet() == [target] as Set
         everything.size() == FILES
         println "perf: files=${FILES} cold-compile=${coldMillis}ms warm-references=${warmMillis}ms " +
-                "single-file-recheck=${recheckMillis}ms publish-open-document=${openMillis}ms publish-all=${allMillis}ms"
+                "single-file-recheck=${recheckMillis}ms publish-open-document=${openMillis}ms publish-all=${allMillis}ms " +
+                "two-hovers-during-compile=${hoverMillis}ms"
         warmMillis < 5_000
         recheckMillis < 60_000
         openMillis < 60_000
+        hoverMillis < HOVER_DURING_COMPILE_MILLIS
     }
+
+    /** The plan's target for two hovers while a compile runs (E-11). */
+    static final long HOVER_DURING_COMPILE_MILLIS = 200
 }

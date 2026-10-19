@@ -15,9 +15,12 @@
  */
 package org.groovyscope.engine.lsp;
 
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -46,12 +49,49 @@ public final class RequestExecutors {
     static final int LIGHT_THREADS = 2;
     static final int LIGHT_QUEUE = 256;
 
+    /**
+     * The JSON-RPC error code (in the server range) of a request refused because the daemon is exiting: the client
+     * reconnects, which starts a new daemon, instead of reporting a failure.
+     */
+    public static final int DAEMON_EXITING = -32099;
+
     private final ThreadPoolExecutor heavy;
     private final ThreadPoolExecutor light;
+    // The requests started through this view and not yet finished, so a closed connection can cancel its own.
+    private final Set<CompletableFuture<?>> tracked = ConcurrentHashMap.newKeySet();
+    // Every unfinished request of every view, so a shutdown answers the queued ones instead of dropping them.
+    private final Set<CompletableFuture<?>> everything;
 
     public RequestExecutors(int heavyThreads, int heavyQueue) {
-        this.heavy = pool("groovyscope-heavy", Math.max(1, heavyThreads), Math.max(1, heavyQueue));
-        this.light = pool("groovyscope-light", LIGHT_THREADS, LIGHT_QUEUE);
+        this(pool("groovyscope-heavy", Math.max(1, heavyThreads), Math.max(1, heavyQueue)),
+                pool("groovyscope-light", LIGHT_THREADS, LIGHT_QUEUE), ConcurrentHashMap.newKeySet());
+    }
+
+    private RequestExecutors(ThreadPoolExecutor heavy, ThreadPoolExecutor light, Set<CompletableFuture<?>> everything) {
+        this.heavy = heavy;
+        this.light = light;
+        this.everything = everything;
+    }
+
+    /**
+     * A view for one connection: the same lanes, with its own record of the requests it started. LSP4J leaves a
+     * running request open when its connection closes (probe 0.4), so the connection cancels them through
+     * {@link #cancelAll}.
+     */
+    public RequestExecutors forConnection() {
+        return new RequestExecutors(heavy, light, everything);
+    }
+
+    /** Cancels every request started through this view that has not finished. */
+    public void cancelAll() {
+        for (CompletableFuture<?> future : List.copyOf(tracked)) {
+            future.cancel(true);
+        }
+    }
+
+    /** Requests started through this view and not finished. */
+    public int inFlight() {
+        return tracked.size();
     }
 
     /** Executors sized from {@code daemon.workerThreads} and {@code daemon.requestQueue}. */
@@ -74,12 +114,32 @@ public final class RequestExecutors {
 
     /** Runs a cheap request (navigation, outline, status) on the light lane. */
     public <T> CompletableFuture<T> light(Function<CancelChecker, T> work) {
-        return submit(light, "light", work);
+        return track(submit(light, "light", work));
+    }
+
+    /**
+     * A light request about one document: answered from the published snapshot while a compile is pending, unless
+     * that document changed since (see {@link org.groovyscope.engine.concurrent.Freshness}); {@code uri} null makes it
+     * an ordinary light request.
+     */
+    public <T> CompletableFuture<T> lightAbout(String uri, Function<CancelChecker, T> work) {
+        return light(cancel -> uri == null ? work.apply(cancel)
+                : org.groovyscope.engine.concurrent.Freshness.staleOkFor(uri, () -> work.apply(cancel)));
     }
 
     /** Runs a request that may compile, lint or type-check on the heavy lane. */
     public <T> CompletableFuture<T> heavy(Function<CancelChecker, T> work) {
-        return submit(heavy, "heavy", work);
+        return track(submit(heavy, "heavy", work));
+    }
+
+    private <T> CompletableFuture<T> track(CompletableFuture<T> future) {
+        tracked.add(future);
+        everything.add(future);
+        future.whenComplete((value, error) -> {
+            tracked.remove(future);
+            everything.remove(future);
+        });
+        return future;
     }
 
     private static <T> CompletableFuture<T> submit(ThreadPoolExecutor executor, String lane,
@@ -102,9 +162,20 @@ public final class RequestExecutors {
                 return;
             }
             Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
-            outer.completeExceptionally(cause instanceof RejectedExecutionException ? busy(executor, lane) : cause);
+            if (cause instanceof org.groovyscope.engine.concurrent.MemoryPressureException pressure) {
+                outer.completeExceptionally(new ResponseErrorException(new ResponseError(
+                        ResponseErrorCode.RequestFailed, pressure.getMessage(), null)));
+                return;
+            }
+            outer.completeExceptionally(!(cause instanceof RejectedExecutionException) ? cause
+                    : executor.isShutdown() ? exiting() : busy(executor, lane));
         });
         return outer;
+    }
+
+    static ResponseErrorException exiting() {
+        return new ResponseErrorException(new ResponseError(DAEMON_EXITING,
+                "daemon is exiting; reconnect to start a new one", null));
     }
 
     static ResponseErrorException busy(ThreadPoolExecutor executor, String lane) {
@@ -125,5 +196,9 @@ public final class RequestExecutors {
     public void shutdown() {
         heavy.shutdownNow();
         light.shutdownNow();
+        // Queued requests are dropped by shutdownNow without an answer: tell their clients to reconnect.
+        for (CompletableFuture<?> future : List.copyOf(everything)) {
+            future.completeExceptionally(exiting());
+        }
     }
 }

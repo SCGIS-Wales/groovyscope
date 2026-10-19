@@ -146,6 +146,10 @@
           "type": "integer",
           "minimum": 1
         },
+        "diskCheckMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
         "heapPressurePercent": {
           "type": "integer",
           "minimum": 1,
@@ -469,6 +473,16 @@
         }
       }
     },
+    "classpath": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "reports": {
       "type": "object",
       "additionalProperties": false,
@@ -516,7 +530,8 @@
       "properties": {
         "requestTimeoutSeconds": {
           "type": "number",
-          "exclusiveMinimum": 0
+          "minimum": 1,
+          "maximum": 115
         },
         "maxInFlight": {
           "type": "integer",

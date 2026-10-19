@@ -96,6 +96,8 @@ public class GroovyCompiler {
         return compile(sources, classpath, trust, Map.of());
     }
 
+    private final Set<GroovyClassLoader> openLoaders = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /**
      * The same, resolving the classes in {@code known} (by name) to the given trees instead of compiling them: a
      * file checked after a write is compiled alone against the rest of the workspace as the last full compile left
@@ -113,105 +115,122 @@ public class GroovyCompiler {
         // The first attempt that got past parsing: its trees are the ones kept when later rounds only cascade.
         // Rounds before it failed on syntax, and their drops are genuine; rounds after it drop the users of what
         // it could not resolve.
-        Attempt resolvedOnce = null;
-        Set<String> droppedSinceResolved = new LinkedHashSet<>();
-        Attempt previous = null;
-        Attempt kept = null;
-        int phase = 0;
-        int attempts = 0;
-        long started = System.nanoTime();
-        long deadline = Long.MAX_VALUE;
-        boolean overBudget = false;
-        for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
-            if (System.nanoTime() > deadline) {
-                overBudget = true;
-                break;
+        // Every attempt's loader is released on every exit (a cancel in the parse-only pass included), except the
+        // one whose trees the result keeps (E-16).
+        List<Attempt> made = new ArrayList<>();
+        Attempt transferred = null;
+        try {
+            Attempt resolvedOnce = null;
+            Set<String> droppedSinceResolved = new LinkedHashSet<>();
+            Attempt previous = null;
+            Attempt kept = null;
+            int phase = 0;
+            int attempts = 0;
+            long started = System.nanoTime();
+            long deadline = Long.MAX_VALUE;
+            boolean overBudget = false;
+            for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
+                if (System.nanoTime() > deadline) {
+                    overBudget = true;
+                    break;
+                }
+                // A cancelled request stops here, between rounds; the loaders of the rounds so far are released below
+                // through the normal exit when the caller discards the result, or at once when nothing was kept yet.
+                if (org.groovyscope.engine.concurrent.Cancellation.requested()) {
+                    release(previous == resolvedOnce ? null : previous);
+                    release(resolvedOnce);
+                    throw new java.util.concurrent.CancellationException("compile cancelled after " + attempts + " round(s)");
+                }
+                Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION, known);
+                made.add(result);
+                attempts++;
+                if (attempt == 0) {
+                    deadline = started + RetryBudget.of(System.nanoTime() - started);
+                }
+                if (previous != null && previous != resolvedOnce) {
+                    release(previous);
+                }
+                previous = result;
+                phase = Math.max(phase, result.phaseReached);
+                boolean resolved = !result.failed || result.phaseReached >= Phases.CANONICALIZATION;
+                if (resolvedOnce == null) {
+                    // Up to and including the first resolved round every error is real; later rounds only report
+                    // the classes that earlier drops removed.
+                    mergeDiagnostics(diagnostics, result.diagnostics);
+                }
+                if (resolvedOnce == null && result.failed && !result.crashed
+                        && result.phaseReached >= Phases.SEMANTIC_ANALYSIS) {
+                    resolvedOnce = result;
+                }
+                if (resolved || result.brokenUris.isEmpty() || attempt == MAX_RETRIES) {
+                    if (resolved) {
+                        modules.putAll(result.modules);
+                        kept = result;
+                    } else {
+                        dropped.addAll(remaining.keySet());
+                    }
+                    remaining.clear();
+                    break;
+                }
+                for (String broken : result.brokenUris) {
+                    remaining.remove(broken);
+                    dropped.add(broken);
+                    if (resolvedOnce != null) {
+                        droppedSinceResolved.add(broken);
+                    }
+                }
+                if (resolvedOnce != null && cascaded(resolvedOnce, droppedSinceResolved)) {
+                    // Every further round would only drop the users of the files already dropped; the resolved
+                    // round's trees are kept below, so the remaining compiles would be thrown away.
+                    break;
+                }
             }
-            // A cancelled request stops here, between rounds; the loaders of the rounds so far are released below
-            // through the normal exit when the caller discards the result, or at once when nothing was kept yet.
-            if (org.groovyscope.engine.concurrent.Cancellation.requested()) {
-                release(previous == resolvedOnce ? null : previous);
-                release(resolvedOnce);
-                throw new java.util.concurrent.CancellationException("compile cancelled after " + attempts + " round(s)");
-            }
-            Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION, known);
-            attempts++;
-            if (attempt == 0) {
-                deadline = started + RetryBudget.of(System.nanoTime() - started);
-            }
-            if (previous != null && previous != resolvedOnce) {
-                release(previous);
-            }
-            previous = result;
-            phase = Math.max(phase, result.phaseReached);
-            boolean resolved = !result.failed || result.phaseReached >= Phases.CANONICALIZATION;
-            if (resolvedOnce == null) {
-                // Up to and including the first resolved round every error is real; later rounds only report
-                // the classes that earlier drops removed.
-                mergeDiagnostics(diagnostics, result.diagnostics);
-            }
-            if (resolvedOnce == null && result.failed && !result.crashed
-                    && result.phaseReached >= Phases.SEMANTIC_ANALYSIS) {
-                resolvedOnce = result;
-            }
-            if (resolved || result.brokenUris.isEmpty() || attempt == MAX_RETRIES) {
-                if (resolved) {
-                    modules.putAll(result.modules);
-                    kept = result;
-                } else {
+            boolean keepResolved = resolvedOnce != null && kept == null
+                    && (cascaded(resolvedOnce, droppedSinceResolved) || overBudget);
+            if (overBudget) {
+                org.groovyscope.engine.log.EngineLog.warn("compile stopped retrying after %d round(s): %d file(s) %s",
+                        attempts, remaining.size(), keepResolved ? "kept from the resolved round" : "parsed only");
+                if (!keepResolved) {
                     dropped.addAll(remaining.keySet());
                 }
                 remaining.clear();
-                break;
             }
-            for (String broken : result.brokenUris) {
-                remaining.remove(broken);
-                dropped.add(broken);
-                if (resolvedOnce != null) {
-                    droppedSinceResolved.add(broken);
+            if (keepResolved) {
+                if (previous != resolvedOnce) {
+                    release(previous);
                 }
+                // Only the files dropped before the resolved round (syntax errors) have no tree in it; the files
+                // dropped after it are the cascade, and the resolved round's trees for them are kept.
+                Set<String> syntaxDrops = new LinkedHashSet<>(dropped);
+                syntaxDrops.removeAll(droppedSinceResolved);
+                CompilationResult partial = keepResolvedAttempt(sources, diagnostics, resolvedOnce, syntaxDrops, classpath,
+                        trust, attempts);
+                transferred = resolvedOnce;
+                return partial;
             }
-            if (resolvedOnce != null && cascaded(resolvedOnce, droppedSinceResolved)) {
-                // Every further round would only drop the users of the files already dropped; the resolved
-                // round's trees are kept below, so the remaining compiles would be thrown away.
-                break;
-            }
-        }
-        boolean keepResolved = resolvedOnce != null && kept == null
-                && (cascaded(resolvedOnce, droppedSinceResolved) || overBudget);
-        if (overBudget) {
-            org.groovyscope.engine.log.EngineLog.warn("compile stopped retrying after %d round(s): %d file(s) %s",
-                    attempts, remaining.size(), keepResolved ? "kept from the resolved round" : "parsed only");
-            if (!keepResolved) {
-                dropped.addAll(remaining.keySet());
-            }
-            remaining.clear();
-        }
-        if (keepResolved) {
-            if (previous != resolvedOnce) {
+            if (previous != kept && previous != resolvedOnce) {
                 release(previous);
             }
-            // Only the files dropped before the resolved round (syntax errors) have no tree in it; the files
-            // dropped after it are the cascade, and the resolved round's trees for them are kept.
-            Set<String> syntaxDrops = new LinkedHashSet<>(dropped);
-            syntaxDrops.removeAll(droppedSinceResolved);
-            return keepResolvedAttempt(sources, diagnostics, resolvedOnce, syntaxDrops, classpath, trust, attempts);
+            if (resolvedOnce != kept) {
+                release(resolvedOnce);
+            }
+            for (String uri : dropped) {
+                org.groovyscope.engine.concurrent.Cancellation.checkpoint();
+                parseInto(modules, uri, sources.get(uri), classpath, trust);
+            }
+            // Java files are compiled only so Groovy code can resolve them; Groovy's view of Java code is not
+            // something to report on (javac and the IDE own that), so their diagnostics are dropped.
+            diagnostics.keySet().removeIf(GroovyCompiler::isJava);
+            LoaderHandle loader = handle(kept);
+            transferred = kept;
+            return new CompilationResult(modules, sources, diagnostics, phase, dropped, loader, attempts);
+        } finally {
+            for (Attempt attempt : made) {
+                if (attempt != transferred) {
+                    release(attempt);
+                }
+            }
         }
-        if (previous != kept && previous != resolvedOnce) {
-            release(previous);
-        }
-        if (resolvedOnce != kept) {
-            release(resolvedOnce);
-        }
-        for (String uri : dropped) {
-            org.groovyscope.engine.concurrent.Cancellation.checkpoint();
-            parseInto(modules, uri, sources.get(uri), classpath, trust);
-        }
-        // Java files are compiled only so Groovy code can resolve them; Groovy's view of Java code is not
-        // something to report on (javac and the IDE own that), so their diagnostics are dropped.
-        diagnostics.keySet().removeIf(GroovyCompiler::isJava);
-        LoaderHandle loader = kept == null || kept.loader == null ? null : new LoaderHandle(kept.loader);
-        return new CompilationResult(modules, sources, diagnostics, phase, dropped, loader, attempts);
     }
 
     /** Parses one file alone to CONVERSION (its loader is released at once) and adds its tree when it has one. */
@@ -276,7 +295,7 @@ public class GroovyCompiler {
         diagnostics.keySet().removeIf(GroovyCompiler::isJava);
         Set<String> partial = new LinkedHashSet<>(dropped);
         partial.addAll(resolved.brokenUris);
-        LoaderHandle loader = resolved.loader == null ? null : new LoaderHandle(resolved.loader);
+        LoaderHandle loader = handle(resolved);
         return new CompilationResult(modules, sources, diagnostics, resolved.phaseReached, partial, loader, attempts);
     }
 
@@ -317,6 +336,7 @@ public class GroovyCompiler {
 
         ClassLoader parent = new WorkspaceParentClassLoader(GroovyCompiler.class.getClassLoader());
         GroovyClassLoader resolutionLoader = new GroovyClassLoader(parent, configuration);
+        openLoaders.add(resolutionLoader);
         for (Path entry : classpath) {
             resolutionLoader.addURL(toUrl(entry));
         }
@@ -346,7 +366,7 @@ public class GroovyCompiler {
             String firstUri = sources.keySet().iterator().next();
             crash.put(firstUri, List.of(new Diagnostic(firstUri, Range.of(0, 0, 0, 1), Severity.ERROR, SOURCE,
                     "compiler-crash", "the Groovy compiler failed: " + e)));
-            closeQuietly(resolutionLoader);
+            closeLoader(resolutionLoader);
             return new Attempt(Map.of(), Map.of(), crash, Set.copyOf(sources.keySet()), unit.getPhase(), true, true,
                     null, null);
         } finally {
@@ -397,11 +417,31 @@ public class GroovyCompiler {
         }
     }
 
-    /** Closes the class loader of an attempt whose trees are discarded. */
-    private static void release(Attempt attempt) {
+    /** Closes the class loader of an attempt whose trees are discarded (once, however often it is asked). */
+    private void release(Attempt attempt) {
         if (attempt != null && attempt.loader != null) {
-            closeQuietly(attempt.loader);
+            closeLoader(attempt.loader);
         }
+    }
+
+    /** The handle a result owns for the attempt's loader; closing it releases the loader here too. */
+    private LoaderHandle handle(Attempt attempt) {
+        if (attempt == null || attempt.loader == null) {
+            return null;
+        }
+        GroovyClassLoader loader = attempt.loader;
+        return new LoaderHandle(() -> closeLoader(loader));
+    }
+
+    private void closeLoader(GroovyClassLoader loader) {
+        if (openLoaders.remove(loader)) {
+            closeQuietly(loader);
+        }
+    }
+
+    /** Resolution loaders created and not yet closed (the kept compile's, normally one; for specs). */
+    public int openLoaderCount() {
+        return openLoaders.size();
     }
 
     /**
@@ -418,10 +458,10 @@ public class GroovyCompiler {
                 resolver.setClassNodeResolver(unit.getClassNodeResolver());
                 resolver.startResolving(classNode, source);
                 new StaticImportVisitor(classNode, source).visitClass(classNode);
-            } catch (RuntimeException | LinkageError | AssertionError e) {
+            } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
                 try {
                     new VariableScopeVisitor(source).visitClass(classNode);
-                } catch (RuntimeException | LinkageError | AssertionError ignored) {
+                } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError ignored) {
                     // Scoping is best effort on a file that did not fully compile.
                 }
             }
@@ -484,7 +524,7 @@ public class GroovyCompiler {
         for (ClassNode classNode : module.getClasses()) {
             try {
                 new VariableScopeVisitor(source).visitClass(classNode);
-            } catch (RuntimeException | LinkageError | AssertionError e) {
+            } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
                 // Scoping is best effort on a file that did not fully compile (or uses classes missing from the
                 // configured classpath).
             }

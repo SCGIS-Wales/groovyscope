@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -77,7 +78,15 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
             throw new RootRefusedException("this daemon serves " + onlyRoot + " with that workspace's configuration "
                     + "and trust; " + key + " needs its own (run groovyscope there)");
         }
-        return services.computeIfAbsent(key, k -> new LanguageServices(new WorkspaceModel(k, config), new GroovyCompiler(), openStore(k)));
+        // Created or touched inside the map's atomic compute, so an eviction of this root either happened before
+        // (a fresh workspace is made) or sees it as just used and keeps it (E-19).
+        return services.compute(key, (k, existing) -> {
+            LanguageServices current = existing == null || existing.isClosed()
+                    ? new LanguageServices(new WorkspaceModel(k, config), new GroovyCompiler(), openStore(k))
+                    : existing;
+            current.touch();
+            return current;
+        });
     }
 
     /** The real path when it exists (symbolic links resolved), else the normalised absolute path. */
@@ -146,15 +155,21 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
      * connection still uses the registry (the daemon calls this only when none is open).
      */
     public int evictIdle(java.time.Duration idle) {
-        int evicted = 0;
         long threshold = System.nanoTime() - idle.toNanos();
-        for (Map.Entry<Path, LanguageServices> entry : services.entrySet()) {
-            if (entry.getValue().lastUsedNanos() - threshold < 0 && services.remove(entry.getKey(), entry.getValue())) {
-                entry.getValue().close();
-                evicted++;
-            }
+        List<LanguageServices> released = new java.util.ArrayList<>();
+        for (Path root : List.copyOf(services.keySet())) {
+            // Removed atomically per root against apply(): a workspace handed out meanwhile was touched and stays.
+            services.computeIfPresent(root, (k, open) -> {
+                if (open.lastUsedNanos() - threshold > 0) {
+                    return open;
+                }
+                released.add(open);
+                return null;
+            });
         }
-        return evicted;
+        // Closed outside the map: closing waits for background work, which must not hold the map's lock.
+        released.forEach(LanguageServices::close);
+        return released.size();
     }
 
     public Iterable<Path> roots() {

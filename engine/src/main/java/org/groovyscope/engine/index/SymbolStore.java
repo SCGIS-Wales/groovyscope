@@ -29,9 +29,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.groovyscope.engine.model.Location;
 import org.groovyscope.engine.model.Range;
 import org.groovyscope.engine.model.Symbol;
@@ -44,6 +47,9 @@ import org.groovyscope.engine.model.SymbolKind;
  */
 public final class SymbolStore implements Closeable {
 
+    /** How long a writer waits for another connection's lock before giving up. */
+    static final int BUSY_TIMEOUT_MILLIS = 5_000;
+
     private final Connection connection;
 
     private SymbolStore(Connection connection) {
@@ -54,7 +60,15 @@ public final class SymbolStore implements Closeable {
     public static SymbolStore open(Path file) throws IOException {
         try {
             Files.createDirectories(file.toAbsolutePath().getParent());
-            Connection connection = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath());
+            // Readers do not block the writer (WAL), and a second process (a CLI next to the daemon) waits for the
+            // lock instead of failing with SQLITE_BUSY: a save takes the write lock when it begins (IMMEDIATE), so it
+            // never has to upgrade a read lock, which SQLite refuses at once rather than waiting.
+            org.sqlite.SQLiteConfig settings = new org.sqlite.SQLiteConfig();
+            settings.setBusyTimeout(BUSY_TIMEOUT_MILLIS);
+            settings.setJournalMode(org.sqlite.SQLiteConfig.JournalMode.WAL);
+            settings.setTransactionMode(org.sqlite.SQLiteConfig.TransactionMode.IMMEDIATE);
+            Connection connection = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath(),
+                    settings.toProperties());
             try (Statement statement = connection.createStatement()) {
                 statement.execute("""
                         CREATE TABLE IF NOT EXISTS symbols (
@@ -70,17 +84,43 @@ public final class SymbolStore implements Closeable {
         }
     }
 
-    /** Replaces the stored symbols with {@code symbols} (children are flattened), hashed by document. */
+    /**
+     * Stores {@code symbols} (children are flattened), hashed by document: the rows of documents whose text changed
+     * or that are gone are replaced, the rest are left as they are.
+     */
     public synchronized void save(Map<String, String> sources, List<Symbol> symbols) throws IOException {
         try {
             connection.setAutoCommit(false);
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("DELETE FROM symbols");
+            Map<String, String> hashes = new HashMap<>();
+            for (Map.Entry<String, String> source : sources.entrySet()) {
+                hashes.put(source.getKey(), hash(source.getValue()));
+            }
+            Map<String, String> stored = new HashMap<>();
+            try (Statement statement = connection.createStatement();
+                    ResultSet rows = statement.executeQuery("SELECT DISTINCT uri, hash FROM symbols")) {
+                while (rows.next()) {
+                    stored.put(rows.getString(1), rows.getString(2));
+                }
+            }
+            Set<String> stale = new HashSet<>();
+            for (Map.Entry<String, String> entry : stored.entrySet()) {
+                if (!entry.getValue().equals(hashes.get(entry.getKey()))) {
+                    stale.add(entry.getKey());
+                }
+            }
+            Set<String> changed = new HashSet<>(hashes.keySet());
+            changed.removeIf(uri -> hashes.get(uri).equals(stored.get(uri)));
+            try (PreparedStatement delete = connection.prepareStatement("DELETE FROM symbols WHERE uri = ?")) {
+                for (String uri : stale) {
+                    delete.setString(1, uri);
+                    delete.addBatch();
+                }
+                delete.executeBatch();
             }
             String sql = "INSERT INTO symbols VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
             try (PreparedStatement insert = connection.prepareStatement(sql)) {
                 for (Symbol symbol : symbols) {
-                    insertTree(insert, sources, symbol);
+                    insertTree(insert, hashes, changed, symbol);
                 }
                 insert.executeBatch();
             }
@@ -97,12 +137,12 @@ public final class SymbolStore implements Closeable {
         }
     }
 
-    private static void insertTree(PreparedStatement insert, Map<String, String> sources, Symbol symbol)
-            throws SQLException {
-        if (symbol.location() != null && sources.containsKey(symbol.location().uri())) {
+    private static void insertTree(PreparedStatement insert, Map<String, String> hashes, Set<String> changed,
+            Symbol symbol) throws SQLException {
+        if (symbol.location() != null && changed.contains(symbol.location().uri())) {
             String uri = symbol.location().uri();
             insert.setString(1, uri);
-            insert.setString(2, hash(sources.get(uri)));
+            insert.setString(2, hashes.get(uri));
             insert.setString(3, symbol.name());
             insert.setString(4, symbol.kind().name());
             insert.setString(5, symbol.container());
@@ -120,7 +160,7 @@ public final class SymbolStore implements Closeable {
             insert.addBatch();
         }
         for (Symbol child : symbol.children()) {
-            insertTree(insert, sources, child);
+            insertTree(insert, hashes, changed, child);
         }
     }
 
@@ -155,6 +195,16 @@ public final class SymbolStore implements Closeable {
         }
         return new Symbol(rows.getString("name"), kind, rows.getString("container"),
                 new Location(rows.getString("uri"), range), selection, rows.getString("detail"), List.of());
+    }
+
+    /** The journal mode the database runs in ({@code wal} once opened). */
+    public synchronized String journalMode() throws IOException {
+        try (Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery("PRAGMA journal_mode")) {
+            return rows.next() ? rows.getString(1).toLowerCase(java.util.Locale.ROOT) : "";
+        } catch (SQLException e) {
+            throw new IOException("cannot read the journal mode: " + e.getMessage(), e);
+        }
     }
 
     public synchronized long count() throws IOException {

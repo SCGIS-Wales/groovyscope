@@ -7,12 +7,14 @@ the vendor publishes, and it is unpacked under the cache directory where JDK dis
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import io
 import json
 import logging
 import platform as platform_module
 import re
+import secrets
 import shutil
 import sys
 import tarfile
@@ -148,7 +150,40 @@ def provision_jdk(
     machine: str = platform_module.machine(),
     vendor: str = "temurin",
 ) -> ProvisionedJdk:
-    """Download the latest ``feature`` release from ``vendor`` for this platform, verify it, unpack it."""
+    """Download the latest ``feature`` release from ``vendor`` for this platform, verify it, unpack it. Installs
+    into one folder are serialised by a lock on ``install_dir/.lock``: a second install waits, then finds the
+    release the first one unpacked and downloads nothing. An installed release is never removed."""
+    install_dir.mkdir(parents=True, exist_ok=True)
+    with (install_dir / LOCK_NAME).open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            return _provision_locked(
+                install_dir, feature=feature, downloader=downloader, system=system, machine=machine, vendor=vendor
+            )
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+LOCK_NAME = ".lock"
+
+
+def installed(install_dir: Path, release: str, feature: int) -> ProvisionedJdk | None:
+    """The JDK already unpacked as ``release``, when it holds a ``bin/java``."""
+    if not release:
+        return None
+    home = home_within(install_dir / release)
+    return None if home is None else {"home": str(home), "version": feature, "release": release}
+
+
+def _provision_locked(
+    install_dir: Path,
+    *,
+    feature: int,
+    downloader: Downloader,
+    system: str,
+    machine: str,
+    vendor: str,
+) -> ProvisionedJdk:
     os_name, arch = adoptium_platform(system, machine)
     if vendor == "corretto":
         asset = corretto_asset(feature, os_name, arch, downloader)
@@ -160,13 +195,16 @@ def provision_jdk(
     if asset["release"] and not _SAFE_NAME.match(asset["release"]):
         msg = f"refusing an unexpected release name {asset['release']!r}"
         raise ValueError(msg)
+    present = installed(install_dir, asset["release"], feature)
+    if present is not None:
+        LOG.info("JDK %s is already installed in %s", asset["release"], install_dir)
+        return present
     LOG.debug("JDK asset %s (sha256 %s)", asset["url"], asset["sha256"])
     data = downloader(asset["url"])
     actual = hashlib.sha256(data).hexdigest()
     if actual != asset["sha256"]:
         msg = f"SHA-256 mismatch for {asset['name']}: expected {asset['sha256']}, got {actual}"
         raise ValueError(msg)
-    install_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=install_dir) as scratch:
         try:
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
@@ -179,9 +217,13 @@ def provision_jdk(
         release = asset["release"] or release_from(home_within(unpacked) or unpacked, vendor)
         if not _SAFE_NAME.match(release):
             release = f"{vendor}-{feature}"
+        present = installed(install_dir, release, feature)
+        if present is not None:
+            return present  # the release named only inside the archive was there already
         target = install_dir / release
         if target.exists():
-            shutil.rmtree(target)
+            # A folder without bin/java under the release's name (an interrupted move): set aside, never deleted.
+            target.rename(target.with_name(f"{release}.incomplete-{secrets.token_hex(4)}"))
         shutil.move(str(unpacked), str(target))
     home = home_within(target)
     if home is None:

@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import __version__, daemon
+from groovyscope import __version__, atomic, daemon
 from groovyscope.jar import embedded_versions, write_manifest
 
 RELEASE_BASE = "https://github.com/SCGIS-Wales/groovyscope/releases/download"
@@ -89,10 +89,9 @@ def default_downloader(url: str) -> bytes:
 
 
 def write_atomically(target: Path, data: bytes) -> None:
-    """Write bytes via a temporary file and a rename, so a crash never leaves a truncated file behind."""
-    temporary = target.with_name(f".{target.name}.part")
-    temporary.write_bytes(data)
-    temporary.replace(target)
+    """Write bytes via a temporary file and a rename, so a crash never leaves a truncated file behind (a unique
+    temporary name: two fetches at once never rename each other's half)."""
+    atomic.write_bytes(target, data)
 
 
 def checksum_from_sums(text: str, name: str) -> str | None:

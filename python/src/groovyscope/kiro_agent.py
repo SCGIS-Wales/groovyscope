@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
+from groovyscope import process
 from groovyscope.config import deep_merge
 from groovyscope.tools_catalog import SAFE_SHELL_GLOBS, mutating_tools, read_only_tools, v3_matches
 
@@ -96,9 +97,7 @@ def kiro_runner(which: Callable[[str], str | None] = shutil.which) -> KiroRunner
 
     def run(arguments: Sequence[str]) -> tuple[int, str]:
         try:
-            done = subprocess.run(
-                [found, *arguments], capture_output=True, text=True, timeout=KIRO_TIMEOUT_SECONDS, check=False
-            )
+            done = process.run_text([found, *arguments], timeout=KIRO_TIMEOUT_SECONDS)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return (-1, str(exc))
         return (done.returncode, done.stdout + done.stderr)

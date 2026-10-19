@@ -105,4 +105,78 @@ class RequestExecutorsSpec extends Specification {
             return t
         }
     }
+
+    def 'closing a connection cancels the requests it started, and only those (E-15)'() {
+        given:
+        def shared = new RequestExecutors(2, 4)
+        def closing = shared.forConnection()
+        def other = shared.forConnection()
+        def running = new CountDownLatch(1)
+        def stopped = new CountDownLatch(1)
+
+        when: 'a long check runs for one connection; the other connection has a request too'
+        def check = closing.heavy { cancel ->
+            running.countDown()
+            try {
+                while (true) {
+                    Cancellation.checkpoint()
+                    Thread.onSpinWait()
+                }
+            } finally {
+                stopped.countDown()
+            }
+        }
+        running.await(30, TimeUnit.SECONDS)
+        def hold = new CountDownLatch(1)
+        def kept = other.heavy { cancel -> hold.await(30, TimeUnit.SECONDS); 'kept' }
+        closing.cancelAll()
+
+        then: 'the closed connection\'s work stops; the other one is untouched'
+        stopped.await(30, TimeUnit.SECONDS)
+        check.isCancelled()
+        !kept.isDone()
+
+        when:
+        hold.countDown()
+
+        then:
+        kept.get(30, TimeUnit.SECONDS) == 'kept'
+        closing.inFlight() == 0
+
+        cleanup:
+        shared.shutdown()
+    }
+
+    def 'a request still queued at shutdown is answered daemon is exiting, not dropped'() {
+        given:
+        def executors = new RequestExecutors(1, 4)
+        def view = executors.forConnection()
+        def running = new CountDownLatch(1)
+        view.heavy { cancel -> running.countDown(); new CountDownLatch(1).await(30, TimeUnit.SECONDS) }
+        running.await(30, TimeUnit.SECONDS)
+        def queued = view.heavy { cancel -> 'never' }
+
+        when:
+        executors.shutdown()
+        def failure = thrownBy { queued.get(30, TimeUnit.SECONDS) }
+
+        then:
+        failure.cause instanceof ResponseErrorException
+        failure.cause.responseError.code == RequestExecutors.DAEMON_EXITING
+    }
+
+    def 'lanes that have shut down answer daemon is exiting, which a client takes as reconnect (E-14)'() {
+        given:
+        def executors = new RequestExecutors(1, 1)
+        executors.shutdown()
+
+        when:
+        def refused = executors.light { cancel -> 'never' }
+        def failure = thrownBy { refused.get(30, TimeUnit.SECONDS) }
+
+        then:
+        failure.cause instanceof ResponseErrorException
+        failure.cause.responseError.code == RequestExecutors.DAEMON_EXITING
+        failure.cause.responseError.message.startsWith('daemon is exiting')
+    }
 }

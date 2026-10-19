@@ -84,6 +84,14 @@ public final class MemoryGuard {
         return guard != null && guard.underPressure();
     }
 
+    /** Refuses a whole-workspace step (a compile, a type check) while the installed guard reports pressure. */
+    public static void requireHeadroom() {
+        MemoryGuard guard = INSTALLED.get();
+        if (guard != null && guard.underPressure()) {
+            throw new MemoryPressureException(guard.advice());
+        }
+    }
+
     static Optional<MemoryPoolMXBean> tenuredPool() {
         MemoryPoolMXBean best = null;
         for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
@@ -173,5 +181,11 @@ public final class MemoryGuard {
     /** For specs: declare pressure as the JVM's notification would. */
     public void tripForTest() {
         trip();
+    }
+
+    /** True when the JVM was started with {@code -XX:+ExitOnOutOfMemoryError}, so an out-of-memory error ends it. */
+    public static boolean exitsOnOutOfMemory() {
+        return java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments()
+                .contains("-XX:+ExitOnOutOfMemoryError");
     }
 }

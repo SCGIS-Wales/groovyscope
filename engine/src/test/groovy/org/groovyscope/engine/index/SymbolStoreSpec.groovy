@@ -53,8 +53,14 @@ class SymbolStoreSpec extends Specification {
         store.load(['file:///C.groovy': 'class C { }']).empty
         store.load(['file:///Other.groovy': 'x']).empty
 
-        when: 'saving again replaces everything'
+        when: 'saving the same text keeps the rows; a changed text replaces them'
         store.save(sources, [child])
+
+        then:
+        store.count() == 2
+
+        when:
+        store.save(['file:///C.groovy': 'class C { void m() { } }'], [child])
 
         then:
         store.count() == 1
@@ -121,5 +127,59 @@ class SymbolStoreSpec extends Specification {
             Thread.sleep(50)
         }
         assert condition()
+    }
+
+    private static Symbol symbol(String uri, String name) {
+        new Symbol(name, SymbolKind.CLASS, null, new Location(uri, Range.of(0, 0, 0, 5)), Range.of(0, 0, 0, 5), name, List.of())
+    }
+
+    private static List<Long> rowids(Path file, String uri) {
+        def connection = java.sql.DriverManager.getConnection("jdbc:sqlite:${file}")
+        try {
+            def statement = connection.prepareStatement('SELECT rowid FROM symbols WHERE uri = ? ORDER BY rowid')
+            statement.setString(1, uri)
+            def rows = statement.executeQuery()
+            List<Long> ids = []
+            while (rows.next()) {
+                ids << rows.getLong(1)
+            }
+            ids
+        } finally {
+            connection.close()
+        }
+    }
+
+    def 'a save rewrites only the documents that changed, in WAL mode, and two writers do not collide (E-23)'() {
+        given:
+        Path file = temp.resolve('wal/symbols.db')
+        def store = SymbolStore.open(file)
+        def other = SymbolStore.open(file)
+        Map<String, String> sources = ['file:///w/A.groovy': 'class A {}', 'file:///w/B.groovy': 'class B {}']
+        store.save(sources, [symbol('file:///w/A.groovy', 'A'), symbol('file:///w/B.groovy', 'B')])
+        def before = rowids(file, 'file:///w/A.groovy')
+
+        when: 'B changes and C is gone, A is untouched'
+        Map<String, String> edited = ['file:///w/A.groovy': 'class A {}', 'file:///w/B.groovy': 'class B { int x }']
+        store.save(edited, [symbol('file:///w/A.groovy', 'A'), symbol('file:///w/B.groovy', 'B')])
+
+        then:
+        rowids(file, 'file:///w/A.groovy') == before
+        store.load(edited)*.name().sort() == ['A', 'B']
+        store.journalMode() == 'wal'
+
+        when: 'two connections save at the same time'
+        def saves = [store, other].collect { s ->
+            java.util.concurrent.CompletableFuture.runAsync {
+                20.times { i -> s.save(['file:///w/A.groovy': "class A { int v${i} }".toString()], [symbol('file:///w/A.groovy', 'A')]) }
+            }
+        }
+        saves*.get(60, java.util.concurrent.TimeUnit.SECONDS)
+
+        then:
+        notThrown(Exception)
+
+        cleanup:
+        store?.close()
+        other?.close()
     }
 }

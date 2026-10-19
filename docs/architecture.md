@@ -63,19 +63,38 @@ use passes 85% of the maximum, before the daemon dies.
 Requests from every connection run on two bounded lanes shared by the process (`RequestExecutors`), not on the
 common pool: a heavy lane of `daemon.workerThreads` threads (the processor count by default) for anything that
 compiles, lints, type-checks or formats, with at most `daemon.requestQueue` requests waiting, and a small light
-lane for hover, definition, outline, references and status, so one long type check never starves navigation.
-A request that finds the heavy queue full is answered at once with a `RequestFailed` error that names the load,
+lane for hover, definition, outline and status, so one long type check never starves navigation. `references`,
+`rename` and the diagnostics push, which walk the workspace or lint it, run on the heavy lane. A light request
+about one document never owns a compile: when that document is unchanged since the published compile, it is
+answered from that snapshot at once while the compile runs on the workspace's background thread (stale while
+revalidating); only a request about a document that changed waits for the fresh compile. The trade is bounded:
+an answer about an unchanged document that points into a file being edited (a definition, an incoming call) can
+carry that file's pre-edit range until the compile lands, which is milliseconds to seconds; after a configuration
+reload nothing is answered from the old snapshot; and under heap pressure, when compiles are refused, a light
+request is answered from the last compile even about an edited document. Hover shows the notes
+of findings already computed and never lints. A request that finds the heavy queue full is answered at once with a `RequestFailed` error that names the load,
 which is back pressure the client can act on instead of a timeout. Each request runs with its cancel flag bound
 to the thread (`Cancellation`), and the compiler (between rounds), the type checker (between attempts), the
 linter (between files), the index and the call graph (between modules and batches) check it at their safe
-points, so `$/cancelRequest` stops work within one unit. Nothing is interrupted or stopped from outside.
+points, so `$/cancelRequest` stops work within one unit. Nothing is interrupted or stopped from outside. LSP4J
+leaves a running request open when its connection closes, so each connection keeps a view of the lanes that
+records its requests and cancels them all when the connection ends. An idle daemon closes its socket first and
+keeps serving the clients already connected for a short grace period; only then are the lanes shut down, and a
+request after that is answered with error -32099 "daemon is exiting", which a client takes as a reason to
+reconnect.
 
 A compile is single flight: the first request that finds the snapshot stale runs it, later requests join its
 future and poll their own cancel flag while they wait. A cancelled waiter leaves without touching the compile the
 others still need; the compile itself is abandoned, at its next checkpoint, only when every request interested
-in it is gone, and the workspace then stays stale for the next request. With no client connected, a workspace
+in it is gone, and the workspace then stays stale for the next request. The compile holds a lock that a waiter
+polls with its cancel flag, never a monitor, and the type check is single flight per snapshot in the same way.
+CLI and MCP requests compare a fingerprint of the files on disk (one walk, shared with the compile that follows)
+to notice edits made outside the editor; `daemon.diskCheckMillis` (0, every request) lets a very large repository
+trust one look for a while. With no client connected, a workspace
 nobody has asked about for `daemon.workspaceIdleMinutes` is released (trees, index, loader and jars), and the
-next connection that opens it compiles afresh. `status` answers from counters the model already holds, never
+next connection that opens it compiles afresh. Handing a workspace out and releasing it are atomic per root, so
+a connection never receives one that is being closed; a released workspace refuses further use and drains its
+pending symbol save before its SQLite store (WAL mode, with a busy timeout) closes. `status` answers from counters the model already holds, never
 from a walk of the tree, so the liveness probe stays cheap on a busy daemon.
 
 Memory has two more guardrails. In the engine, a `MemoryGuard` watches the tenured pool: once the memory still in
@@ -83,7 +102,10 @@ use after a collection passes `daemon.heapPressurePercent` (85%) of the maximum,
 it can rebuild (call graph, quality services, folded diagnostics, cached symbols), `status` reports
 `memory.pressure`, and requests that would walk the whole workspace (`duplicates`, `overview`, `graph`, and
 `check`, `format` or `dynamicCode` with no `uris`) are refused with the `daemon.heap` advice while single-document
-requests keep working; pressure clears when a later collection leaves the pool under the threshold.
+requests keep working; under pressure a compile or type check is refused too, while a light request keeps the
+published snapshot. Shedding takes no lock, so it never waits behind a request. Pressure clears when a later
+collection leaves the pool under the threshold. A file that crashes the type checker is found by halving the
+files (a few compiles) and reported on itself, while the rest are still checked.
 `OutOfMemoryError` is still never caught. Before that point, admission control keeps a huge workspace from being
 loaded at all: `workspace.maxFiles` (20,000) and `workspace.maxTotalBytes` (256 MB) bound what the compile reads,
 and the files left out are reported once as a `GS101` warning on the first document, naming the first omitted
@@ -240,8 +262,8 @@ Terraform declarations for definition, references and hover; `RemoteCompiler` ru
 reflectively against the profile's jars in a class loader parented to the platform loader, so the engine's
 own Groovy never leaks in. A profile's target version re-runs GS010 as RP002, its checker policy caps or
 drops Groovy 6 checker findings, and its protected regions filter every fix and code action. Python
-discovers and validates profiles (`profiles.py`, `profile-schema.json`) and hands them to the engine in
-`GROOVYSCOPE_CONFIG_JSON`.
+discovers and validates profiles (`profiles.py`, `profile-schema.json`) and hands them to the engine in the
+configuration file it starts the engine with (`--config`, written private under the cache).
 
 The daemon is shared by editors and by CLI and MCP calls. Editors report edits; CLI and MCP calls do not,
 so every `groovyscope/*` request first compares a fingerprint of the compile files (path, size,

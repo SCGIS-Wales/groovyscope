@@ -16,6 +16,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
+from groovyscope import process
+
 MINIMUM_JDK = 17
 RECOMMENDED_JDK = 21
 PROBE_TIMEOUT_SECONDS = 30
@@ -53,9 +55,7 @@ class Discovery(TypedDict):
 def default_runner(command: Sequence[str]) -> tuple[int, str]:
     """Run a command and return ``(returncode, stdout + stderr)``; failures become a non-zero code."""
     try:
-        completed = subprocess.run(
-            list(command), capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS, check=False
-        )
+        completed = process.run_text(command, timeout=PROBE_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return (-1, str(exc))
     return (completed.returncode, completed.stdout + completed.stderr)

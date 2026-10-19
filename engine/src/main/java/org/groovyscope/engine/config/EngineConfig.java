@@ -78,20 +78,31 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * requests (hover, definition, outline, status) have their own small pool. A workspace nobody has used for
      * {@code workspaceIdleMinutes} is released from memory.
      */
-    public record Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes, int heapPressurePercent) {
+    /**
+     * @param diskCheckMillis how long a check of the workspace on disk (did a file change outside the editor?) is
+     *                        trusted before the next request walks the tree again; 0 checks on every request
+     */
+    public record Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes, int heapPressurePercent,
+            int diskCheckMillis) {
 
-        public static final Daemon DEFAULTS = new Daemon(0, 64, 30, 85);
+        public static final Daemon DEFAULTS = new Daemon(0, 64, 30, 85, 0);
 
         public Daemon {
             workerThreads = Math.max(0, workerThreads);
             requestQueue = Math.max(1, requestQueue);
             workspaceIdleMinutes = Math.max(1, workspaceIdleMinutes);
             heapPressurePercent = Math.max(1, Math.min(99, heapPressurePercent));
+            diskCheckMillis = Math.max(0, diskCheckMillis);
         }
 
-        /** The lanes and eviction settings with the default pressure threshold. */
+        /** The lanes and eviction settings with the default pressure threshold and disk check. */
         public Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes) {
-            this(workerThreads, requestQueue, workspaceIdleMinutes, DEFAULTS == null ? 85 : DEFAULTS.heapPressurePercent());
+            this(workerThreads, requestQueue, workspaceIdleMinutes, 85, 0);
+        }
+
+        /** The lanes, eviction and pressure settings with a disk check on every request. */
+        public Daemon(int workerThreads, int requestQueue, int workspaceIdleMinutes, int heapPressurePercent) {
+            this(workerThreads, requestQueue, workspaceIdleMinutes, heapPressurePercent, 0);
         }
 
         /** The heavy pool size this setting means on this machine. */
@@ -372,6 +383,12 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 practices, profiles, maxFileBytes, diagnostics, configHash, daemon, budget);
     }
 
+    /** This configuration with other daemon settings. */
+    public EngineConfig withDaemon(Daemon replacement) {
+        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
+                practices, profiles, maxFileBytes, diagnostics, configHash, replacement, budget);
+    }
+
     /** This configuration with the hash of the raw JSON it was read from. */
     public EngineConfig withConfigHash(String hash) {
         return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
@@ -490,7 +507,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 new Daemon(integer(daemon.get("workerThreads"), Daemon.DEFAULTS.workerThreads()),
                         integer(daemon.get("requestQueue"), Daemon.DEFAULTS.requestQueue()),
                         integer(daemon.get("workspaceIdleMinutes"), Daemon.DEFAULTS.workspaceIdleMinutes()),
-                        integer(daemon.get("heapPressurePercent"), Daemon.DEFAULTS.heapPressurePercent())),
+                        integer(daemon.get("heapPressurePercent"), Daemon.DEFAULTS.heapPressurePercent()),
+                        integer(daemon.get("diskCheckMillis"), Daemon.DEFAULTS.diskCheckMillis())),
                 new Budget(integer(workspace.get("maxFiles"), Budget.DEFAULTS.maxFiles()),
                         longValue(workspace.get("maxTotalBytes"), Budget.DEFAULTS.maxTotalBytes())));
     }

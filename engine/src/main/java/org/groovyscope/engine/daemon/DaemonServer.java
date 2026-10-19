@@ -188,8 +188,7 @@ public final class DaemonServer implements Closeable {
             return;
         }
         PosixFileAttributes attributes = Files.readAttributes(directory, PosixFileAttributes.class);
-        UserPrincipal me = directory.getFileSystem().getUserPrincipalLookupService()
-                .lookupPrincipalByName(System.getProperty("user.name"));
+        UserPrincipal me = currentUser(directory);
         if (!attributes.owner().equals(me)) {
             throw new IOException("socket directory " + directory + " is owned by " + attributes.owner().getName()
                     + ", not " + me.getName() + "; refusing to start");
@@ -198,6 +197,19 @@ public final class DaemonServer implements Closeable {
         if (permissions.contains(PosixFilePermission.GROUP_WRITE) || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
             throw new IOException("socket directory " + directory + " is writable by group or others ("
                     + PosixFilePermissions.toString(permissions) + "); refusing to start");
+        }
+    }
+
+    /**
+     * This process's user, as the owner of a file it creates in {@code directory}: unlike {@code user.name}, it holds
+     * for a container user with no account name (an arbitrary UID).
+     */
+    static UserPrincipal currentUser(Path directory) throws IOException {
+        Path probe = Files.createTempFile(directory, ".owner", null);
+        try {
+            return Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS);
+        } finally {
+            Files.deleteIfExists(probe);
         }
     }
 
@@ -347,10 +359,11 @@ public final class DaemonServer implements Closeable {
      * @param graceful an idle exit: a client accepted between the idle check and {@code close()} is still being
      *                 served, so the exit waits (bounded) for it to finish; an explicit shutdown does not wait
      */
-    private void requestExit(boolean graceful) {
+    void requestExit(boolean graceful) {
         if (exitRequested.compareAndSet(false, true)) {
             Thread thread = new Thread(() -> {
-                close();
+                // Stop accepting first; the lanes stay up while a connected client is served, then shut down.
+                stopAccepting();
                 long deadline = System.nanoTime() + (graceful ? EXIT_GRACE.toNanos() : 0L);
                 while (connections.get() > 0 && System.nanoTime() < deadline) {
                     try {
@@ -360,6 +373,7 @@ public final class DaemonServer implements Closeable {
                         break;
                     }
                 }
+                executors.shutdown();
                 onExit.run();
             }, "groovyscope-daemon-exit");
             thread.setDaemon(true);
@@ -393,6 +407,16 @@ public final class DaemonServer implements Closeable {
 
     @Override
     public void close() {
+        stopAccepting();
+        executors.shutdown();
+    }
+
+    /**
+     * Closes the listener and removes the socket, so no new client arrives; connected clients keep being served
+     * until {@link #close} or the exit sequence shuts the request lanes down (a request then gets the distinct
+     * "daemon is exiting" error, which a client takes as a reason to reconnect).
+     */
+    void stopAccepting() {
         stopped.set(true);
         if (!open.compareAndSet(true, false)) {
             return;
@@ -400,7 +424,6 @@ public final class DaemonServer implements Closeable {
         if (watchdog != null) {
             watchdog.shutdownNow();
         }
-        executors.shutdown();
         if (server != null) {
             try {
                 server.close();

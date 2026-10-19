@@ -52,6 +52,8 @@ final class DiagnosticsPublisher {
     private final Map<String, List<org.groovyscope.engine.model.Diagnostic>> lastPublished = new java.util.HashMap<>();
     private ScheduledFuture<?> pending;
     private volatile boolean stopped;
+    // The heavy lane a publish runs on, like any request that compiles and lints; null runs it on this thread.
+    private final RequestExecutors lanes;
 
     DiagnosticsPublisher(Supplier<LanguageServices> services, Supplier<LanguageClient> client) {
         this(services, client, Set::of);
@@ -59,9 +61,15 @@ final class DiagnosticsPublisher {
 
     DiagnosticsPublisher(Supplier<LanguageServices> services, Supplier<LanguageClient> client,
             Supplier<Set<String>> openDocuments) {
+        this(services, client, openDocuments, null);
+    }
+
+    DiagnosticsPublisher(Supplier<LanguageServices> services, Supplier<LanguageClient> client,
+            Supplier<Set<String>> openDocuments, RequestExecutors lanes) {
         this.services = services;
         this.client = client;
         this.openDocuments = openDocuments;
+        this.lanes = lanes;
     }
 
     /** The documents the connection has open, bound once the text document service exists. */
@@ -100,7 +108,7 @@ final class DiagnosticsPublisher {
             return; // the connection has ended or shut down; nobody is listening
         }
         try {
-            pending = executor.schedule(this::publishNow, delayMillis, TimeUnit.MILLISECONDS);
+            pending = executor.schedule(this::publishOrRetry, delayMillis, TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.RejectedExecutionException e) {
             pending = null;
         }
@@ -111,8 +119,38 @@ final class DiagnosticsPublisher {
         return executor.isShutdown();
     }
 
-    /** Compiles if needed and publishes the diagnostics of the documents in scope now. */
-    void publishNow() {
+    /** A scheduled publish: when the heavy lane is full, it is tried again after the quiet window. */
+    private void publishOrRetry() {
+        if (!publishNow() && !stopped) {
+            schedule();
+        }
+    }
+
+    /**
+     * Compiles if needed and publishes the diagnostics of the documents in scope now, on the heavy lane so it counts
+     * against the same capacity as every other compile and lint. False when the lane refused it (busy) and nothing
+     * was published.
+     */
+    boolean publishNow() {
+        if (lanes == null) {
+            publishInline();
+            return true;
+        }
+        try {
+            lanes.heavy(cancel -> {
+                publishInline();
+                return null;
+            }).get();
+            return true;
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.CancellationException e) {
+            return false; // busy, exiting or cancelled with the connection: nothing was sent
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private void publishInline() {
         LanguageServices current = services.get();
         LanguageClient target = client.get();
         if (current == null || target == null || stopped) {

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import BinaryIO
 
 CHUNK = 65536
+LOG = logging.getLogger("groovyscope.relay")
 
 Write = Callable[[bytes], Awaitable[None]]
 Close = Callable[[], Awaitable[None]]
@@ -28,7 +31,7 @@ async def pump(reader: asyncio.StreamReader, write: Write, on_eof: Close) -> Non
 
 def lost(exc: OSError) -> int:
     """Report a connection that broke mid-session; the exit code tells the client to restart the server."""
-    print(f"groovyscope: connection to the daemon lost ({exc}); the client should restart the server", file=sys.stderr)
+    LOG.error("connection to the daemon lost (%s); the client should restart the server", exc)
     return 1
 
 
@@ -95,15 +98,25 @@ async def run(socket_file: Path) -> int:
     loop = asyncio.get_running_loop()
     stdin = asyncio.StreamReader()
     await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(stdin), sys.stdin.buffer)
-    transport, _ = await loop.connect_write_pipe(asyncio.Protocol, sys.stdout.buffer)
+    write_out, close_out = await output_pipe(sys.stdout.buffer)
+    return await relay(socket_file, stdin, write_out, close_out, connection)
+
+
+async def output_pipe(pipe: BinaryIO) -> tuple[Write, Close]:
+    """Writing to ``pipe`` with back pressure: a write waits (``drain``) while the client reads slower than the
+    daemon answers, so the relay's buffer stays bounded instead of holding every reply in memory."""
+    loop = asyncio.get_running_loop()
+    transport, protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, pipe)
+    writer = asyncio.StreamWriter(transport, protocol, None, loop)
 
     async def write_out(data: bytes) -> None:
-        transport.write(data)
+        writer.write(data)
+        await writer.drain()
 
     async def close_out() -> None:
-        transport.close()
+        writer.close()
 
-    return await relay(socket_file, stdin, write_out, close_out, connection)
+    return (write_out, close_out)
 
 
 def main(socket_file: Path) -> int:

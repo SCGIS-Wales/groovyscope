@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -32,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.groovyscope.engine.concurrent.Cancellation;
+import org.groovyscope.engine.concurrent.Freshness;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -79,6 +81,10 @@ import org.groovyscope.engine.workspace.WorkspaceModel;
 public final class LanguageServices {
 
     static final int WORKSPACE_SYMBOL_LIMIT = 500;
+    /** Index entries visited between two cancellation checks in a whole-workspace walk. */
+    static final int CHECKPOINT_EVERY = 256;
+    /** How long {@link #close} waits for background work (a symbol save) before closing the store. */
+    static final long CLOSE_DRAIN_SECONDS = 5;
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 
     private final WorkspaceModel workspace;
@@ -90,7 +96,10 @@ public final class LanguageServices {
         thread.setDaemon(true);
         return thread;
     });
-    private final AtomicBoolean backgroundRefreshQueued = new AtomicBoolean();
+    private final AtomicBoolean backgroundCompileQueued = new AtomicBoolean();
+    private volatile java.util.concurrent.Future<?> backgroundCompile = CompletableFuture.completedFuture(null);
+    // Held for the whole of a compile; a waiter polls its cancel flag instead of blocking on a monitor (E-13).
+    private final java.util.concurrent.locks.ReentrantLock compileLock = new java.util.concurrent.locks.ReentrantLock();
     private volatile Snapshot snapshot = Snapshot.empty();
     /** Bumped on every workspace change; the snapshot is stale while it differs from {@link #compiled}. */
     private final AtomicLong changes = new AtomicLong(1);
@@ -102,6 +111,9 @@ public final class LanguageServices {
     private final Object jobLock = new Object();
     private CompileJob inFlight;
     private volatile long lastUsedNanos = System.nanoTime();
+    private volatile boolean closed;
+    /** The change count of the last reconfigure: a snapshot older than that is never served stale. */
+    private volatile long reconfiguredAt;
     /** The symbol save not yet written; a newer snapshot replaces it, so saves never queue up. */
     private final AtomicReference<Runnable> pendingSave = new AtomicReference<>();
 
@@ -282,12 +294,25 @@ public final class LanguageServices {
     }
 
     private volatile String compiledFingerprint;
+    private volatile long lastDiskCheck = Long.MIN_VALUE;
+    private volatile java.util.function.LongSupplier clock = System::nanoTime;
+
+    /** For specs: the clock the disk check window is measured on. */
+    void clock(java.util.function.LongSupplier replacement) {
+        clock = replacement;
+    }
 
     /**
      * Marks the snapshot stale when files changed on disk since the last compile. Requests from the CLI and the
      * MCP server call this first: they have no editor sending change notifications.
      */
     public void syncWithDisk() {
+        long window = workspace.config().daemon().diskCheckMillis() * 1_000_000L;
+        long now = clock.getAsLong();
+        if (window > 0 && lastDiskCheck != Long.MIN_VALUE && now - lastDiskCheck < window) {
+            return; // checked within daemon.diskCheckMillis: trusted for the rest of the window
+        }
+        lastDiskCheck = now;
         String recorded = compiledFingerprint;
         if (recorded != null && !recorded.equals(workspace.diskFingerprint())) {
             markDirty();
@@ -313,56 +338,76 @@ public final class LanguageServices {
             folded = null;
         }
         markDirty();
+        // Until a compile under the new settings is published, no request is answered from the old one.
+        reconfiguredAt = changes.get();
     }
 
     public boolean isDirty() {
         return compiled != changes.get();
     }
 
-    /** Recompiles the workspace now and returns the fresh snapshot. */
+    /** Recompiles the workspace when it changed since the last compile, and returns the snapshot. */
     public Snapshot refresh() {
-        synchronized (lock) {
+        acquireCompileLock();
+        try {
+            if (!isDirty()) {
+                return snapshot;
+            }
             // Captured before the sources are read: an edit that arrives while this compile runs leaves the
             // snapshot stale, so the next query recompiles instead of serving the pre-edit result.
             long target = changes.get();
             String fingerprint = null;
             Map<String, String> sources = Map.of();
+            CompilationResult result = null;
+            boolean published = false;
             try {
                 // Taken before the sources are read, so an edit racing this compile shows up as a later change.
                 long started = System.nanoTime();
-                fingerprint = workspace.diskFingerprint();
-                sources = workspace.compileSources();
-                CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
+                WorkspaceModel.CompileInput input = workspace.compileInput();
+                fingerprint = input.fingerprint();
+                sources = input.sources();
+                result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
                 org.groovyscope.engine.log.EngineLog.debug("compiled %d file(s) of %s in %d ms (%d with diagnostics)",
                         sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,
                         result.diagnostics().values().stream().filter(list -> !list.isEmpty()).count());
                 Map<String, ModuleNode> modules = new HashMap<>(result.modules());
-                // A file that no longer parses keeps a tree of its last good text, parsed again into this
-                // generation: a tree carried over from the previous compile would pin that whole generation
-                // (every file's AST and the loader with its jars) in memory for as long as the error lasts.
-                for (Map.Entry<String, String> source : sources.entrySet()) {
-                    String uri = source.getKey();
-                    if (modules.containsKey(uri)) {
-                        lastGood.put(uri, source.getValue());
-                    } else {
-                        String text = lastGood.get(uri);
-                        if (text != null) {
-                            compiler.parseOnly(uri, text).ifPresent(module -> modules.put(uri, module));
+                Map<String, String> lastTexts;
+                synchronized (lock) {
+                    // A file that no longer parses keeps a tree of its last good text, parsed again into this
+                    // generation: a tree carried over from the previous compile would pin that whole generation
+                    // (every file's AST and the loader with its jars) in memory for as long as the error lasts.
+                    for (Map.Entry<String, String> source : sources.entrySet()) {
+                        if (modules.containsKey(source.getKey())) {
+                            lastGood.put(source.getKey(), source.getValue());
                         }
                     }
+                    lastGood.keySet().retainAll(sources.keySet());
+                    lastTexts = new HashMap<>(lastGood);
                 }
-                lastGood.keySet().retainAll(sources.keySet());
+                for (String uri : sources.keySet()) {
+                    String text = lastTexts.get(uri);
+                    if (!modules.containsKey(uri) && text != null) {
+                        compiler.parseOnly(uri, text).ifPresent(module -> modules.put(uri, module));
+                    }
+                }
                 AstIndex index = AstIndex.build(modules, sources);
                 Resolver resolver = new Resolver(index);
-                version++;
-                snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
-                graph = null;
-                graphVersion = -1;
-                // Nothing references the previous generation now: release the jars its loader held open.
-                if (openLoader != null) {
-                    openLoader.close();
+                synchronized (lock) {
+                    if (closed) {
+                        // released while this compile ran: nothing is published, and its loader is closed below
+                        throw new CancellationException("the workspace was closed during the compile");
+                    }
+                    version++;
+                    snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
+                    graph = null;
+                    graphVersion = -1;
+                    // Nothing references the previous generation now: release the jars its loader held open.
+                    if (openLoader != null) {
+                        openLoader.close();
+                    }
+                    openLoader = result.loader();
+                    published = true;
                 }
-                openLoader = result.loader();
                 persistSymbols(snapshot, sources);
             } catch (CancellationException e) {
                 // Every request that wanted this compile is gone: nothing is recorded, the next request compiles.
@@ -373,12 +418,66 @@ public final class LanguageServices {
                 // Recorded as a snapshot with the failure as a diagnostic, so later requests answer from it until
                 // something changes, instead of repeating the same failure on every request.
                 org.groovyscope.engine.log.EngineLog.warn("%s", "analysis failed: " + e);
-                version++;
-                snapshot = failedSnapshot(snapshot, sources, e, version);
+                synchronized (lock) {
+                    version++;
+                    snapshot = failedSnapshot(snapshot, sources, e, version);
+                }
+            } finally {
+                // A result that was not published (cancelled or failed after the compile returned) owns a loader
+                // nobody else will close.
+                if (!published && result != null && result.loader() != null) {
+                    result.loader().close();
+                }
             }
             compiled = target;
             compiledFingerprint = fingerprint;
             return snapshot;
+        } finally {
+            compileLock.unlock();
+        }
+    }
+
+    /** Waits for the compile lock, leaving (cancelled) when the request is cancelled or interrupted meanwhile. */
+    private void acquireCompileLock() {
+        try {
+            while (!compileLock.tryLock(100, TimeUnit.MILLISECONDS)) {
+                Cancellation.checkpoint();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CancellationException("interrupted while waiting for the compile");
+        }
+    }
+
+    /** The snapshot last published, without compiling. */
+    public Snapshot currentSnapshot() {
+        return snapshot;
+    }
+
+    /** The compile last queued on the background thread (done when none is queued). */
+    public java.util.concurrent.Future<?> backgroundCompile() {
+        return backgroundCompile;
+    }
+
+    /** Queues one compile on the background thread, unless one is already queued. */
+    private void revalidate() {
+        if (!backgroundCompileQueued.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            backgroundCompile = background.submit(() -> {
+                try {
+                    // Nobody waits on it, so it is abandoned only when the workspace closes.
+                    Cancellation.run(() -> closed, this::snapshot);
+                } catch (RuntimeException e) {
+                    org.groovyscope.engine.log.EngineLog.debug("background compile of %s failed: %s",
+                            workspace.root(), e);
+                } finally {
+                    backgroundCompileQueued.set(false);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            backgroundCompileQueued.set(false); // closed: nothing more to compile
         }
     }
 
@@ -450,15 +549,7 @@ public final class LanguageServices {
         if (store == null || hasCompiled() || cachedSymbols().isEmpty()) {
             return false;
         }
-        if (backgroundRefreshQueued.compareAndSet(false, true)) {
-            background.submit(() -> {
-                try {
-                    refresh();
-                } finally {
-                    backgroundRefreshQueued.set(false);
-                }
-            });
-        }
+        revalidate();
         return true;
     }
 
@@ -482,9 +573,32 @@ public final class LanguageServices {
         }
     }
 
-    /** The current snapshot, rebuilt first when stale; one compile per change however many requests need it. */
+    /**
+     * The current snapshot, rebuilt first when stale; one compile per change however many requests need it. A light
+     * request about a document unchanged since the published compile (see {@link Freshness}) gets the published
+     * snapshot at once while the compile runs in the background.
+     */
     public Snapshot snapshot() {
+        if (closed) {
+            throw new IllegalStateException("the workspace " + workspace.root() + " was closed (released while idle); "
+                    + "reconnect to open it again");
+        }
         lastUsedNanos = System.nanoTime();
+        String staleOk = Freshness.staleOkUri();
+        Snapshot published = snapshot;
+        if (staleOk != null && isDirty() && published.version() > 0 && compiled >= reconfiguredAt
+                && Objects.equals(published.result().sources().get(staleOk), workspace.text(staleOk))) {
+            revalidate();
+            return published;
+        }
+        if (isDirty() && published.version() > 0 && org.groovyscope.engine.concurrent.MemoryGuard.pressure()) {
+            // Under heap pressure a compile is the whole-workspace step refused; a light request keeps the
+            // published snapshot (E-18).
+            if (staleOk != null) {
+                return published;
+            }
+            org.groovyscope.engine.concurrent.MemoryGuard.requireHeadroom();
+        }
         while (isDirty()) {
             CompileJob job;
             boolean owner;
@@ -565,8 +679,22 @@ public final class LanguageServices {
         return lastUsedNanos;
     }
 
-    /** Releases what this workspace holds: the kept compile's loader, pending saves and the background thread. */
+    /** Marks this workspace as just used (a connection was handed it), so an idle eviction leaves it. */
+    public void touch() {
+        lastUsedNanos = System.nanoTime();
+    }
+
+    /** True once {@link #close} ran: the workspace answers nothing more. */
+    public boolean isClosed() {
+        return closed;
+    }
+
+    /**
+     * Releases what this workspace holds: the kept compile's loader, pending saves and the background thread, which
+     * is drained (bounded) before the symbol store closes so no save runs against a closed database.
+     */
     public void close() {
+        closed = true;
         synchronized (lock) {
             if (openLoader != null) {
                 openLoader.close();
@@ -576,6 +704,14 @@ public final class LanguageServices {
             quality = null;
         }
         background.shutdownNow();
+        try {
+            if (!background.awaitTermination(CLOSE_DRAIN_SECONDS, TimeUnit.SECONDS)) {
+                org.groovyscope.engine.log.EngineLog.warn("%s", "background work of " + workspace.root()
+                        + " still running at close; the symbol cache closes anyway");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         if (store != null) {
             try {
                 store.close();
@@ -693,12 +829,11 @@ public final class LanguageServices {
 
     /** Drops every cache that can be rebuilt from the snapshot: what memory pressure asks for. */
     public void shed() {
-        synchronized (lock) {
-            graph = null;
-            graphVersion = -1;
-            quality = null;
-            folded = null;
-        }
+        // The fields are volatile and only caches: no lock, so shedding never waits behind a request (E-18).
+        graph = null;
+        graphVersion = -1;
+        quality = null;
+        folded = null;
         cachedSymbols = null;
     }
 
@@ -748,7 +883,11 @@ public final class LanguageServices {
 
     List<Reference> referencesTo(Snapshot current, ASTNode declaration, boolean includeDeclaration) {
         List<Reference> references = new ArrayList<>();
+        int visited = 0;
         for (NodeEntry candidate : current.index().allEntries()) {
+            if (++visited % CHECKPOINT_EVERY == 0) {
+                Cancellation.checkpoint(); // a whole-workspace walk: a cancelled request leaves part-way
+            }
             if (candidate.role() == NodeEntry.Role.OTHER) {
                 continue;
             }
@@ -900,7 +1039,10 @@ public final class LanguageServices {
     }
 
     public RenamePreparation prepareRename(String uri, Position position) {
-        Snapshot current = snapshot();
+        return prepareRename(snapshot(), uri, position);
+    }
+
+    private RenamePreparation prepareRename(Snapshot current, String uri, Position position) {
         Optional<NodeEntry> entry = current.index().nodeAt(uri, position);
         if (entry.isEmpty()) {
             return RenamePreparation.refused("nothing to rename at this position");
@@ -927,11 +1069,12 @@ public final class LanguageServices {
         if (newName == null || !IDENTIFIER.matcher(newName).matches()) {
             return RenameResult.refused("'" + newName + "' is not a valid identifier");
         }
-        RenamePreparation preparation = prepareRename(uri, position);
+        // One snapshot for the check and the edits: an edit in between cannot pull the node out from under it.
+        Snapshot current = snapshot();
+        RenamePreparation preparation = prepareRename(current, uri, position);
         if (preparation.isRefused()) {
             return RenameResult.refused(preparation.refusalReason());
         }
-        Snapshot current = snapshot();
         NodeEntry entry = current.index().nodeAt(uri, position).orElseThrow();
         ASTNode declaration = current.resolver().resolve(entry).orElseThrow().primary();
         List<Reference> references = referencesTo(current, declaration, true);

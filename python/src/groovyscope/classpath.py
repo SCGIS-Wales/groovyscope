@@ -16,12 +16,14 @@ import os
 import shutil
 import signal
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import NotRequired, TypedDict
+
+from groovyscope import atomic
+from groovyscope.process import text_options
 
 LOG = logging.getLogger("groovyscope.classpath")
 MARKER = "GROOVYSCOPE_CLASSPATH "
@@ -79,8 +81,8 @@ def default_runner(
             env=dict(environ),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
             start_new_session=True,
+            **text_options(),
         )
     except OSError as exc:
         return (-1, str(exc))
@@ -252,19 +254,7 @@ def write_file(target: Path, result: Export, *, fingerprint: str | None = None) 
     ]
     if fingerprint:
         header.append(f"{FINGERPRINT_MARKER}{fingerprint}")
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as handle:
-        handle.write("\n".join([*header, *result["paths"]]) + "\n")
-        temporary = Path(handle.name)
-    try:
-        if target.exists():
-            shutil.copymode(target, temporary)
-        else:
-            mask = os.umask(0)
-            os.umask(mask)
-            temporary.chmod(0o666 & ~mask)
-        temporary.replace(target)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic.write_text(target, "\n".join([*header, *result["paths"]]) + "\n")
 
 
 def read_file(path: Path) -> list[str]:

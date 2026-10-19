@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
+from groovyscope import atomic
 from groovyscope import config as config_module
 
 # Tool ids Kiro uses for file writes, in V2 and V3 catalogues; anything else is not a write.
@@ -147,6 +148,39 @@ def changed_groovy_files(root: Path, runner: Runner) -> list[Path]:
         if is_groovy_source(path) and path.is_file():
             found.append(path)
     return found
+
+
+def file_stamps(paths: Sequence[Path]) -> dict[str, list[int]]:
+    """``{path: [mtime_ns, size]}`` from stat alone: no file is read."""
+    stamps: dict[str, list[int]] = {}
+    for path in paths:
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        stamps[str(path)] = [info.st_mtime_ns, info.st_size]
+    return stamps
+
+
+def record_baseline(root: Path, runner: Runner, target: Path) -> int:
+    """At session start: the Groovy files already changed in the working tree, so the stop gate holds the agent to
+    the files it changes, not to someone's earlier work in progress. Returns how many were recorded."""
+    stamps = file_stamps(changed_groovy_files(root, runner))
+    atomic.write_text(target, json.dumps(stamps, sort_keys=True) + "\n")
+    return len(stamps)
+
+
+def changed_since_baseline(changed: Sequence[Path], target: Path) -> list[Path]:
+    """``changed`` without the files that were already changed at session start and have not been touched since;
+    all of ``changed`` when no baseline was recorded (or it cannot be read)."""
+    try:
+        baseline = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return list(changed)
+    if not isinstance(baseline, dict):
+        return list(changed)
+    now = file_stamps(changed)
+    return [path for path in changed if baseline.get(str(path)) != now.get(str(path))]
 
 
 def stop_decision(rows: Sequence[Mapping[str, Any]], limit: int) -> dict[str, str] | None:
