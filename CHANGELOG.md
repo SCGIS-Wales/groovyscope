@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.21.1...v0.22.0) (2026-10-19)
+
+
+### Features
+
+* **kiro:** attach groovyscope to any agent ([#91](https://github.com/SCGIS-Wales/groovyscope/issues/91)) ([97cdab2](https://github.com/SCGIS-Wales/groovyscope/commit/97cdab29431e640a9fabdee341b36a6d4d766780))
+
 ## [0.21.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.21.0...v0.21.1) (2026-10-19)
 
 
