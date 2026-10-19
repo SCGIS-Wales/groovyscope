@@ -313,12 +313,14 @@ def test_explain_review_and_fix(
         "applied": {target.as_uri(): ["GS001"]},
         "appliedCounts": {target.as_uri(): {"GS001": 1}},
         "left": {target.as_uri(): {"NoDef": 7}},
+        "needsReview": {target.as_uri(): {"GS001": 2}},
         "rejected": {(tmp_path / "src" / "B.groovy").as_uri(): "does not parse"},
     }
     dry = local_tools["fix"](paths=["Fix.groovy"])
     assert dry["files"][0]["codes"] == ["GS001"] and dry["files"][0]["applied"] is False
     assert dry["files"][0]["fixed"] == {"GS001": 1} and dry["files"][0]["linesChanged"] == 1
     assert dry["left"] == {"Fix.groovy": {"NoDef": 7}} and "by hand" in dry["leftNote"]
+    assert dry["needsReview"] == {"Fix.groovy": {"GS001": 2}} and "codes" in dry["needsReviewNote"]
     assert dry["rejected"] == {"src/B.groovy": "does not parse"}
     assert target.read_text(encoding="utf-8") == "int x = a / b\n"
     local_tools["fix"](paths=["Fix.groovy"], codes=["GS001"], apply=True)

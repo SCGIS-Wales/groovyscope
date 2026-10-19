@@ -344,6 +344,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             response.put("appliedCounts", result.appliedCounts());
             response.put("left", result.left());
             response.put("rejected", result.rejected());
+            response.put("needsReview", result.needsReview());
             return response;
         });
     }

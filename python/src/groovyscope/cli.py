@@ -1744,6 +1744,9 @@ def fix(
     applied_codes = {uri_to_path(uri): codes for uri, codes in result.get("applied", {}).items()}
     fixed = counts_by_path(result.get("appliedCounts", {}))
     left = {shown_path(path, obj["root"]): counts for path, counts in counts_by_path(result.get("left", {})).items()}
+    review = {
+        shown_path(path, obj["root"]): counts for path, counts in counts_by_path(result.get("needsReview", {})).items()
+    }
     for edit in changed:
         if apply_changes and not write_if_unchanged(edit, refused):
             continue
@@ -1759,7 +1762,7 @@ def fix(
     rejected = {shown_path(uri_to_path(uri), obj["root"]): why for uri, why in result.get("rejected", {}).items()}
     rejected.update({shown_path(uri_to_path(uri), obj["root"]): "outside the workspace; refused" for uri in refused})
     if as_json:
-        click.echo(compact_json({"files": rows, "left": left, "rejected": rejected}))
+        click.echo(compact_json({"files": rows, "left": left, "needsReview": review, "rejected": rejected}))
     else:
         for row in rows:
             state = " (applied)" if row["applied"] else ""
@@ -1767,6 +1770,9 @@ def fix(
             click.echo(f"{row['path']}: {summary}, {row['lines']} line(s){state}")
         for path, counts in left.items():
             click.echo(f"{path}: left without a safe fix: {', '.join(f'{k} {v}' for k, v in counts.items())}")
+        for path, counts in review.items():
+            listed = ", ".join(f"{k} {v}" for k, v in counts.items())
+            click.echo(f"{path}: needs review, the fix changes behaviour (name it with --code to apply): {listed}")
         for skipped, why in rejected.items():
             click.echo(f"{skipped}: skipped, {why}")
         click.echo(f"{len(rows)} file(s) {'fixed' if apply_changes else 'with fixes available'}")

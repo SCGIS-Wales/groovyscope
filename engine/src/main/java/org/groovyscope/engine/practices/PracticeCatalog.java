@@ -36,10 +36,22 @@ public final class PracticeCatalog {
 
     static final String RESOURCE = "org/groovyscope/engine/practices/practices.json";
 
-    /** One catalogue entry. */
+    /** One catalogue entry; {@code safety} says whether its automatic fix keeps behaviour (see {@link #safety}). */
     public record Entry(String code, String kind, String group, String title, String why, String fix, String severity,
-            String section) {
+            String section, String safety) {
     }
+
+    /** The automatic fix keeps what the code does: the bulk fix applies it. */
+    public static final String PRESERVING = "preserving";
+    /** The automatic fix changes what the code does: applied only when its code is asked for by name. */
+    public static final String CHANGING = "changing";
+    /**
+     * Fixable CodeNarc rules without a catalogue entry whose fixes only touch layout or redundant syntax. Any other
+     * fixable code without an entry counts as changing.
+     */
+    static final java.util.Set<String> PRESERVING_WITHOUT_ENTRY = java.util.Set.of("UnnecessarySemicolon",
+            "TrailingWhitespace", "ConsecutiveBlankLines", "UnnecessaryDefInMethodDeclaration",
+            "UnnecessaryDefInFieldDeclaration");
 
     private static final PracticeCatalog BUNDLED = load();
 
@@ -58,6 +70,18 @@ public final class PracticeCatalog {
 
     public Optional<Entry> find(String code) {
         return Optional.ofNullable(code == null ? null : entries.get(code));
+    }
+
+    /** Whether {@code code}'s automatic fix keeps behaviour ({@link #PRESERVING}) or not ({@link #CHANGING}). */
+    public String safety(String code) {
+        Entry entry = code == null ? null : entries.get(code);
+        if (entry != null && PRESERVING.equals(entry.safety())) {
+            return PRESERVING;
+        }
+        if (entry == null && PRESERVING_WITHOUT_ENTRY.contains(code)) {
+            return PRESERVING;
+        }
+        return CHANGING;
     }
 
     /** A link to the documentation section for a code, or {@code null} when the catalogue has no entry. */
@@ -79,7 +103,7 @@ public final class PracticeCatalog {
             for (JsonElement element : root.getAsJsonArray("entries")) {
                 JsonObject e = element.getAsJsonObject();
                 Entry entry = new Entry(text(e, "code"), text(e, "kind"), text(e, "group"), text(e, "title"),
-                        text(e, "why"), text(e, "fix"), text(e, "severity"), text(e, "section"));
+                        text(e, "why"), text(e, "fix"), text(e, "severity"), text(e, "section"), text(e, "safety"));
                 entries.put(entry.code(), entry);
             }
             return new PracticeCatalog(text(root, "docs"), entries);

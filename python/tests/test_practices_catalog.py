@@ -31,6 +31,13 @@ def test_catalog_is_complete_and_consistent() -> None:
         assert entry["severity"] in {"error", "warning", "info"}
         assert entry["groovy"] in {"5", "6", "both"}
         assert entry["why"] and entry["fix"] and entry["section"]
+        assert entry["safety"] in {"preserving", "changing", "none"}, entry["code"]
+    safety = {e["code"]: e["safety"] for e in data["entries"]}
+    # The fixes that change what code does are never applied in bulk (docs/improvement-plan.md 1.4).
+    assert {
+        code for code in ("GS001", "GS002", "GS003", "GS004", "GS012", "CompileStatic") if safety[code] != "changing"
+    } == set()
+    assert safety["GS007"] == "none" and safety["UnnecessaryGString"] == "preserving"
 
 
 @pytest.mark.skipif(not DOCS.is_file(), reason="repository checkout required")

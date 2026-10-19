@@ -60,6 +60,7 @@ import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.ast.stmt.IfStatement;
+import org.codehaus.groovy.ast.stmt.ReturnStatement;
 import org.codehaus.groovy.ast.stmt.Statement;
 import org.codehaus.groovy.ast.stmt.WhileStatement;
 import org.codehaus.groovy.control.SourceUnit;
@@ -85,14 +86,31 @@ public final class PracticeFinder {
     /** Reported as the diagnostic source. */
     public static final String SOURCE = "groovyscope";
 
-    /** A finding with an optional fix. */
-    public record Practice(Diagnostic diagnostic, String fixTitle, List<TextEdit> fix) {
+    /** Another way to fix a finding, offered as a code action next to the first (never applied in bulk). */
+    public record Alternative(String title, List<TextEdit> edits) {
+        public Alternative {
+            edits = List.copyOf(edits);
+        }
+    }
+
+    /** A finding with an optional fix, and other fixes when the intent is not clear from the code. */
+    public record Practice(Diagnostic diagnostic, String fixTitle, List<TextEdit> fix, List<Alternative> alternatives) {
         public Practice {
             fix = List.copyOf(fix);
+            alternatives = List.copyOf(alternatives);
+        }
+
+        public Practice(Diagnostic diagnostic, String fixTitle, List<TextEdit> fix) {
+            this(diagnostic, fixTitle, fix, List.of());
         }
 
         public boolean fixable() {
             return !fix.isEmpty();
+        }
+
+        /** Whether the fix keeps behaviour, so the bulk fix may apply it (see {@link PracticeCatalog#safety}). */
+        public boolean preserving() {
+            return PracticeCatalog.PRESERVING.equals(PracticeCatalog.bundled().safety(diagnostic.code()));
         }
     }
 
@@ -285,6 +303,9 @@ public final class PracticeFinder {
         private final boolean production;
         /** Elvis expressions passed straight to an empty-rejecting parser (identity, not equality). */
         private final Set<Expression> parsed = Collections.newSetFromMap(new IdentityHashMap<>());
+        /** Divisions whose result is narrowed to an integral type (truncated anyway): not GS001 findings. */
+        private final Set<Expression> narrowed = Collections.newSetFromMap(new IdentityHashMap<>());
+        private MethodNode currentMethod;
         private boolean inSpock;
         private String block = "";
 
@@ -337,6 +358,11 @@ public final class PracticeFinder {
         }
 
         void report(String code, ASTNode node, String message, String fixTitle, List<TextEdit> fix) {
+            report(code, node, message, fixTitle, fix, List.of());
+        }
+
+        void report(String code, ASTNode node, String message, String fixTitle, List<TextEdit> fix,
+                List<Alternative> alternatives) {
             Severity severity = severity(code, config);
             Range range = AstRanges.rangeOf(node);
             if (severity == null || range == null) {
@@ -344,7 +370,7 @@ public final class PracticeFinder {
             }
             String title = PracticeCatalog.bundled().find(code).map(PracticeCatalog.Entry::title).orElse(code);
             out.add(new Practice(new Diagnostic(uri, range, severity, SOURCE, code, title + ": " + message),
-                    fixTitle, fix));
+                    fixTitle, fix, alternatives));
         }
 
         String source(ASTNode node) {
@@ -361,9 +387,12 @@ public final class PracticeFinder {
             for (AnnotationNode annotation : node.getAnnotations()) {
                 String name = annotation.getClassNode().getNameWithoutPackage();
                 if (production && Set.of("Grab", "Grapes", "GrabResolver", "GrabConfig", "GrabExclude").contains(name)) {
-                    String text = source(annotation);
-                    report("GS007", annotation, "@" + name + " resolves dependencies at compile time",
-                            "Remove @" + name, text == null ? List.of() : List.of(replace(annotation, "")));
+                    // No automatic fix: removing the annotation leaves code that no longer compiles.
+                    String coordinates = grabCoordinates(annotation);
+                    report("GS007", annotation, "@" + name + " resolves dependencies at compile time"
+                            + (coordinates == null ? "; declare the dependency in the build instead"
+                                    : "; declare implementation '" + coordinates + "' in the build instead"), null,
+                            List.of());
                 }
                 if (name.equals("SafeRegex") && config.groovy().mustCompileOnGroovy5()) {
                     report("GS010", annotation, "@SafeRegex is Groovy 6 only, but groovy.compat includes 5.x", null,
@@ -376,6 +405,21 @@ public final class PracticeFinder {
                 }
             }
             super.visitAnnotations(node);
+        }
+
+        /** {@code group:module:version} of a {@code @Grab}, from its value or its group, module and version. */
+        static String grabCoordinates(AnnotationNode annotation) {
+            Expression value = annotation.getMember("value");
+            if (value instanceof ConstantExpression constant && constant.getValue() instanceof String text) {
+                return text;
+            }
+            Expression group = annotation.getMember("group");
+            Expression module = annotation.getMember("module");
+            Expression version = annotation.getMember("version");
+            if (group instanceof ConstantExpression g && module instanceof ConstantExpression m) {
+                return g.getText() + ":" + m.getText() + (version instanceof ConstantExpression v ? ":" + v.getText() : "");
+            }
+            return null;
         }
 
         @Override
@@ -411,13 +455,18 @@ public final class PracticeFinder {
         @Override
         public void visitBinaryExpression(BinaryExpression expression) {
             int op = expression.getOperation().getType();
-            if (op == Types.DIVIDE && named(typeOf(expression.getLeftExpression()), INTEGRAL)
+            if (op == Types.ASSIGN && named(typeOf(expression.getLeftExpression()), INTEGRAL)) {
+                narrowed.add(expression.getRightExpression());
+            }
+            if (op == Types.DIVIDE && !narrowed.contains(expression)
+                    && named(typeOf(expression.getLeftExpression()), INTEGRAL)
                     && named(typeOf(expression.getRightExpression()), INTEGRAL)) {
                 String left = source(expression.getLeftExpression());
                 String right = source(expression.getRightExpression());
                 List<TextEdit> fix = left == null || right == null ? List.of()
                         : List.of(replace(expression, wrap(expression.getLeftExpression(), left) + ".intdiv(" + right + ")"));
-                report("GS001", expression, "both operands are integral, so / yields a BigDecimal", "Use intdiv", fix);
+                report("GS001", expression, "both operands are integral, so / yields a BigDecimal (a fraction); intdiv "
+                        + "truncates, which changes the value, so only where truncation is meant", "Use intdiv", fix);
             }
             if (op == Types.ASSIGN && !(expression instanceof DeclarationExpression)) {
                 checkPrimitiveSafeNavigation(expression.getLeftExpression(), expression.getRightExpression());
@@ -432,6 +481,10 @@ public final class PracticeFinder {
 
         @Override
         public void visitDeclarationExpression(DeclarationExpression expression) {
+            if (!expression.isMultipleAssignmentDeclaration() && !expression.getVariableExpression().isDynamicTyped()
+                    && named(expression.getVariableExpression().getOriginType(), INTEGRAL)) {
+                narrowed.add(expression.getRightExpression());
+            }
             if (!expression.isMultipleAssignmentDeclaration()) {
                 checkPrimitiveSafeNavigation(expression.getVariableExpression(), expression.getRightExpression());
                 String text = source(expression);
@@ -454,6 +507,30 @@ public final class PracticeFinder {
                 report("GS003", value, "null when the receiver is null, which a " + type.getName() + " cannot hold",
                         "Default with ?: " + fallback, fix);
             }
+        }
+
+        @Override
+        public void visitCastExpression(CastExpression expression) {
+            if (named(expression.getType(), INTEGRAL)) {
+                narrowed.add(expression.getExpression());
+            }
+            super.visitCastExpression(expression);
+        }
+
+        @Override
+        public void visitReturnStatement(ReturnStatement statement) {
+            if (currentMethod != null && named(currentMethod.getReturnType(), INTEGRAL)) {
+                narrowed.add(statement.getExpression());
+            }
+            super.visitReturnStatement(statement);
+        }
+
+        @Override
+        protected void visitConstructorOrMethod(MethodNode node, boolean isConstructor) {
+            MethodNode saved = currentMethod;
+            currentMethod = node;
+            super.visitConstructorOrMethod(node, isConstructor);
+            currentMethod = saved;
         }
 
         @Override
@@ -517,8 +594,14 @@ public final class PracticeFinder {
                 Expression whole = condition.getExpression();
                 List<TextEdit> fix = text == null ? List.of()
                         : List.of(replace(whole, text + (negated ? " == null" : " != null")));
-                report("GS004", whole, "a File or Path is truthy only if it exists (Groovy 5)",
-                        negated ? "Compare with == null" : "Compare with != null", fix);
+                boolean path = "java.nio.file.Path".equals(typeOf(tested).getName());
+                String exists = path ? "java.nio.file.Files.exists(" + text + ")" : wrap(tested, text) + ".exists()";
+                List<Alternative> alternatives = text == null ? List.of()
+                        : List.of(new Alternative(negated ? "Test that it does not exist" : "Test that it exists",
+                                List.of(replace(whole, (negated ? "!" : "") + exists))));
+                report("GS004", whole, "a File or Path is truthy only if it exists (Groovy 5); say whether you mean "
+                        + "present (!= null) or existing (exists())",
+                        negated ? "Compare with == null" : "Compare with != null", fix, alternatives);
             }
         }
 

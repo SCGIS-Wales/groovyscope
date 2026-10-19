@@ -49,7 +49,8 @@ class PracticeFinderSpec extends Specification {
     def 'numeric, Elvis and safe-navigation pitfalls are found only where the types are known'() {
         expect:
         found('Numbers.groovy') == [['GS001', 5], ['GS002', 14], ['GS003', 22]]
-        fixed('Numbers.groovy', 'GS001').contains('int result = total.intdiv(parts)')
+        services.quality().practices(uri('Numbers.groovy')).count { it.diagnostic().code() == 'GS001' } == 1
+        fixed('Numbers.groovy', 'GS001').contains('def result = total.intdiv(parts)')
         fixed('Numbers.groovy', 'GS002').contains('return requested != null ? requested : 50')
         // `parseText(body ?: '{}')` (line 43) is absent from the list above: the parser rejects an empty body, so
         // defaulting empty and null alike is deliberate.
@@ -84,6 +85,12 @@ class PracticeFinderSpec extends Specification {
         found('Files.groovy') == [['GS004', 5], ['GS004', 8]]
         fixed('Files.groovy', 'GS004').contains('if (config != null) {')
         services.quality().practices(uri('Files.groovy'))[1].fix()*.newText() == ['other == null']
+        services.quality().practices(uri('Files.groovy'))[0].alternatives()*.title() == ['Test that it exists']
+        services.quality().practices(uri('Files.groovy'))[0].alternatives()[0].edits()*.newText() == ['config.exists()']
+        services.quality().practices(uri('Files.groovy'))[1].alternatives()[0].edits()*.newText() ==
+            ['!java.nio.file.Files.exists(other)']
+        services.quality().codeActions(uri('Files.groovy'), new Range(new Position(4, 0), new Position(4, 30)))*.title()
+            .containsAll(['Compare with != null', 'Test that it exists'])
     }
 
     def 'GStrings in log calls become placeholders'() {
@@ -99,7 +106,9 @@ class PracticeFinderSpec extends Specification {
             .every { it.diagnostic().severity() == Diagnostic.Severity.ERROR }
         fixed('Security.groovy', 'GS008').contains("['git', 'log', '--oneline'].execute()")
         fixed('Security.groovy', 'GS012').contains('sql.rows("SELECT * FROM users WHERE name = $name")')
-        !fixed('Security.groovy', 'GS007').contains('@Grab')
+        services.quality().practices(uri('Security.groovy')).find { it.diagnostic().code() == 'GS007' }.with {
+            !it.fixable() && it.diagnostic().message().contains("declare implementation 'org.example:library:1.0' in the build")
+        }
     }
 
     def 'Groovy 6-only constructs are flagged only while groovy.compat includes 5.x'() {
@@ -155,17 +164,29 @@ class PracticeFinderSpec extends Specification {
         actions*.title().contains('Use intdiv')
     }
 
-    def 'the batch fix picks @CompileStatic only where the class then type-checks, and never touches tests'() {
+    def 'the batch fix applies only fixes that keep behaviour; the others need their code named'() {
         when:
         def result = services.quality().fix([], [] as Set)
-        def annotation = { String file -> result.edits()[uri(file)].find { it.newText().contains('@Compile') }?.newText()?.trim() }
+        def annotation = { String file -> result.edits()[uri(file)]?.find { it.newText().contains('@Compile') }?.newText()?.trim() }
 
-        then:
-        annotation('Clean.groovy') == '@CompileStatic'
+        then: '@CompileDynamic is the default made explicit; @CompileStatic and GS011 change behaviour'
+        annotation('Clean.groovy') == null
+        result.needsReview()[uri('Clean.groovy')].CompileStatic == 1
         annotation('Numbers.groovy') == '@CompileDynamic'
         annotation('Logging.groovy') == '@CompileDynamic'
-        result.applied()[uri('ThingSpec.groovy')] == ['GS011']
+        result.applied()[uri('ThingSpec.groovy')] == null
+        result.needsReview()[uri('ThingSpec.groovy')] == [GS011: 1]
+        result.needsReview()[uri('Numbers.groovy')].keySet().containsAll(['GS001', 'GS002', 'GS003'])
         result.rejected().isEmpty()
+
+        when: 'the codes are named'
+        def named = services.quality().fix([], ['CompileStatic', 'GS011'] as Set)
+        def namedAnnotation = { String file -> named.edits()[uri(file)].find { it.newText().contains('@Compile') }?.newText()?.trim() }
+
+        then: '@CompileStatic only where the class then type-checks, and never in tests'
+        namedAnnotation('Clean.groovy') == '@CompileStatic'
+        namedAnnotation('Numbers.groovy') == '@CompileDynamic'
+        named.applied()[uri('ThingSpec.groovy')] == ['GS011']
 
         when: 'only some codes'
         def only = services.quality().fix([uri('Numbers.groovy')], ['GS001'] as Set)
@@ -174,7 +195,7 @@ class PracticeFinderSpec extends Specification {
         only.applied() == [(uri('Numbers.groovy')): ['GS001']]
 
         when: 'only the changed lines: GS001 is on line 5, GS002 on line 14'
-        def changed = services.quality().fix([uri('Numbers.groovy')], [] as Set,
+        def changed = services.quality().fix([uri('Numbers.groovy')], ['GS001', 'GS002'] as Set,
                 [(uri('Numbers.groovy')): [[14, 15] as int[]]])
         def nothing = services.quality().fix([uri('Numbers.groovy')], [] as Set, [(uri('Numbers.groovy')): []])
 

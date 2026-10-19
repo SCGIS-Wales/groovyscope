@@ -679,6 +679,17 @@ def fix_request(
     return ({**params, **scope}, None)
 
 
+def unfixed(raw: Mapping[str, Any], root: Path, cap: int) -> dict[str, Any]:
+    """What a fix left: findings with no safe fix (``left``) and fixes that change behaviour (``needsReview``)."""
+    answer: dict[str, Any] = {}
+    for key, note in (("left", LEFT_NOTE), ("needsReview", NEEDS_REVIEW_NOTE)):
+        counts = counts_by_path(raw.get(key, {}))
+        if counts:
+            answer[key] = {relative_path(path.as_uri(), root): c for path, c in list(counts.items())[:cap]}
+            answer[f"{key}Note"] = note
+    return answer
+
+
 def practice_tools(
     root: Path,
     call: Call,
@@ -758,7 +769,6 @@ def practice_tools(
             decision = confirm_edits(confirm_policy, f"Apply safe fixes to {len(changed)} file(s)", changed, root)
             apply = not declined(decision)
         fixed = counts_by_path(raw.get("appliedCounts", {}))
-        left = counts_by_path(raw.get("left", {}))
         files: list[dict[str, Any]] = []
         for edit in changed:
             if apply and not write_if_unchanged(edit, refused):
@@ -778,9 +788,7 @@ def practice_tools(
             **{relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused},
         }
         answer: dict[str, Any] = {"changed": len(files), "files": files[:cap], "rejected": rejected}
-        if left:
-            answer["left"] = {relative_path(path.as_uri(), root): counts for path, counts in list(left.items())[:cap]}
-            answer["leftNote"] = LEFT_NOTE
+        answer.update(unfixed(raw, root, cap))
         return with_decision(answer, decision)
 
     return {
@@ -1287,6 +1295,10 @@ def prompt_for(skill: skills.Skill) -> Callable[[str], str]:
     return prompt
 
 
+NEEDS_REVIEW_NOTE = (
+    "these fixes change what the code does (intdiv, a null check, @CompileStatic...): read each finding, then pass "
+    "its code in `codes` to apply it, or fix it by hand"
+)
 LEFT_NOTE = (
     "findings of fixable codes with no safe fix here: the type of a def local could not be inferred (no classpath, or "
     "a dynamic value) or the fix clashed with another; fix them by hand, or run `groovyscope classpath` and fix again"

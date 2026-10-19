@@ -51,6 +51,7 @@ import org.groovyscope.engine.profiles.ProfileFinder;
 import org.groovyscope.engine.profiles.ProfileNavigation;
 import org.groovyscope.engine.profiles.Profiles;
 import org.groovyscope.engine.profiles.RemoteCompiler;
+import org.groovyscope.engine.practices.PracticeCatalog;
 import org.groovyscope.engine.practices.PracticeFinder;
 import org.groovyscope.engine.practices.PracticeFixes;
 import org.groovyscope.engine.typecheck.TypeCheckAnalyzer;
@@ -127,10 +128,10 @@ public final class QualityServices {
      */
     public record FixResult(Map<String, List<TextEdit>> edits, Map<String, List<String>> applied,
             Map<String, Map<String, Integer>> appliedCounts, Map<String, Map<String, Integer>> left,
-            Map<String, String> rejected) {
+            Map<String, String> rejected, Map<String, Map<String, Integer>> needsReview) {
         public FixResult(Map<String, List<TextEdit>> edits, Map<String, List<String>> applied,
                 Map<String, String> rejected) {
-            this(edits, applied, Map.of(), Map.of(), rejected);
+            this(edits, applied, Map.of(), Map.of(), rejected, Map.of());
         }
     }
 
@@ -683,6 +684,11 @@ public final class QualityServices {
             if (practice.fixable() && overlaps(practice.diagnostic().range(), range)) {
                 actions.add(new CodeAction(practice.fixTitle(), practice.diagnostic(), practice.fix()));
             }
+            if (overlaps(practice.diagnostic().range(), range)) {
+                for (PracticeFinder.Alternative alternative : practice.alternatives()) {
+                    actions.add(new CodeAction(alternative.title(), practice.diagnostic(), alternative.edits()));
+                }
+            }
         }
         return unprotected(uri, text, actions);
     }
@@ -711,6 +717,7 @@ public final class QualityServices {
         Map<String, Map<String, Integer>> appliedCounts = new TreeMap<>();
         Map<String, Map<String, Integer>> left = new TreeMap<>();
         Map<String, String> rejected = new TreeMap<>();
+        Map<String, Map<String, Integer>> needsReview = new TreeMap<>();
         Map<String, Boolean> staticOk = staticVerdicts(targets, sources, codes);
         for (String uri : targets) {
             org.groovyscope.engine.concurrent.Cancellation.checkpoint();
@@ -719,8 +726,26 @@ public final class QualityServices {
                 continue;
             }
             Map<String, Integer> missed = new TreeMap<>();
+            Map<String, Integer> review = new TreeMap<>();
             List<int[]> only = onlyLines == null ? null : onlyLines.getOrDefault(uri, List.of());
             List<CodeAction> chosen = chooseFixes(uri, text, codes, staticOk, missed, only);
+            // A fix that changes behaviour goes in only when its code was asked for by name; otherwise it is listed.
+            chosen.removeIf(action -> {
+                String code = action.diagnostic().code();
+                boolean asked = codes != null && codes.contains(code);
+                // @CompileDynamic is Groovy's default made explicit; a runtime profile's fixes are the migrations its
+                // author declares; both keep behaviour.
+                boolean keeps = PracticeFixes.ADD_COMPILE_DYNAMIC.equals(action.title())
+                        || ProfileFinder.SOURCE.equals(action.diagnostic().source());
+                if (asked || keeps || PracticeCatalog.PRESERVING.equals(PracticeCatalog.bundled().safety(code))) {
+                    return false;
+                }
+                review.merge(code, 1, Integer::sum);
+                return true;
+            });
+            if (!review.isEmpty()) {
+                needsReview.put(uri, review);
+            }
             if (chosen.isEmpty()) {
                 if (!missed.isEmpty()) {
                     left.put(uri, missed);
@@ -755,7 +780,7 @@ public final class QualityServices {
                 left.put(uri, missed);
             }
         }
-        return new FixResult(edits, applied, appliedCounts, left, rejected);
+        return new FixResult(edits, applied, appliedCounts, left, rejected, needsReview);
     }
 
     private static boolean onLines(Diagnostic diagnostic, List<int[]> ranges) {

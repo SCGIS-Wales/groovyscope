@@ -2,7 +2,7 @@ package sample
 
 class Numbers {
     int half(int total, int parts) {
-        int result = total / parts
+        def result = total / parts
         return result
     }
 
@@ -41,5 +41,13 @@ class Numbers {
 
     Object read(String body) {
         return new groovy.json.JsonSlurper().parseText(body ?: '{}')
+    }
+
+    int narrowed(int total, int parts) {
+        int whole = total / parts
+        whole = total / parts
+        whole /= parts
+        long cast = (total / parts) as long
+        return total / parts
     }
 }
