@@ -10,12 +10,14 @@ checks depends on pasting a block of shell. Everything here is pure or takes its
 from __future__ import annotations
 
 import shutil
-import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from groovyscope import process
+
 # Written into the workspace so `prepare --force` only ever replaces a workspace it made itself.
 MARKER = ".groovyscope-checks"
+CHECKS_COMMAND_SECONDS = 120  # git init, add or commit in the throwaway workspace
 DEFAULT_DIRECTORY = "gs-check"
 BRANCH_BASE = "main"
 BRANCH_CHANGE = "change"
@@ -57,7 +59,7 @@ Runner = Callable[[Sequence[str], Path], None]
 
 
 def default_runner(command: Sequence[str], cwd: Path) -> None:
-    subprocess.run(list(command), cwd=cwd, check=True, capture_output=True, text=True)
+    process.run_text(command, cwd=cwd, timeout=CHECKS_COMMAND_SECONDS, check=True)
 
 
 def is_checks_workspace(target: Path) -> bool:

@@ -1059,6 +1059,15 @@ def hook_command(obj: dict[str, Any], event: str | None) -> None:
     """What Kiro's hooks run: reads the hook JSON from stdin. After a write (PostToolUse) the Groovy file just
     written is checked and the findings printed for the agent; on Stop, with hooks.stopGate on, the turn is refused
     while changed Groovy files have compile errors. Never fails the session."""
+    try:
+        run_hook(obj, event)
+    except Exception as exc:  # a broken .groovyscope.yaml or anything else: logged, and the session goes on
+        LOG.warning("hook failed: %s", exc, exc_info=True)
+        click.echo(f"groovyscope: hook skipped ({exc})", err=True)
+
+
+def run_hook(obj: dict[str, Any], event: str | None) -> None:
+    """The body of ``groovyscope hook`` (see hook_command)."""
     payload = hooks.parse_payload(sys.stdin.read())
     name = hooks.event_name(payload, event)
     if name not in {"postToolUse", "stop"}:

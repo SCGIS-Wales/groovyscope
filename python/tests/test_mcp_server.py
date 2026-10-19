@@ -459,6 +459,7 @@ def test_a_queued_call_never_takes_longer_than_its_one_budget() -> None:
         return {"ok": method}
 
     call = mcp_server.single_flight(dispatch, budget=0.5, max_in_flight=1, progress_every=0.1)
+
     def hold() -> None:
         with pytest.raises(RuntimeError, match="did not answer within 0s"):
             call("groovyscope/check", {"n": 1})

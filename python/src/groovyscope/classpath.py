@@ -23,6 +23,8 @@ from importlib import resources
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
+from groovyscope.process import text_options
+
 LOG = logging.getLogger("groovyscope.classpath")
 MARKER = "GROOVYSCOPE_CLASSPATH "
 DEFAULT_FILE = ".groovyscope/classpath.txt"
@@ -79,8 +81,8 @@ def default_runner(
             env=dict(environ),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
             start_new_session=True,
+            **text_options(),
         )
     except OSError as exc:
         return (-1, str(exc))
