@@ -80,7 +80,7 @@ class CloneFinderSpec extends Specification {
         tokens.containsAll(['for', 'String', 'if', '!', 'continue', 'break', 'while', 'post--', 'do',
                             'pre++', 'try', 'assert', 'catch', 'IOException', 'throw', 'switch', 'case', '-',
                             '+', 'synchronized', '~', '[:', ':', '*', '?:', '?', '?.', '*.', '.@', '.&', 'array', '..',
-                            '..<', 'closure', 'gstring', 'class', 'cast', 'bool', '?call', '*call', 'return', 'LIT'])
+                            '..<', 'closure', 'text', 'class', 'cast', 'bool', '?call', '*call', 'return', 'LIT'])
     }
 
     def 'maximal runs are reported once, contained runs are dropped and similarity is graded'() {
@@ -118,6 +118,54 @@ class CloneFinderSpec extends Specification {
         groups[0].occurrences*.enclosing == ['A.one', 'A.two', 'A.three']
         clones(snapshot, 6, 3).size() == 1
         clones(snapshot, 20, 3).isEmpty()
+    }
+
+    def 'strings are one text token, so a block pasted with reworded messages is still a copy'() {
+        given:
+        String template = '''
+                String body = mapper.write(values)
+                String url = base + '/applications/' + id
+                int attempts = maxAttempts
+                for (int attempt = 1; attempt <= attempts; attempt++) {
+                    int status = patch(url, body, headers)
+                    if (status == 204) {
+                        log(OK)
+                        return
+                    } else if ((status == 429 || status == 503) && attempt < attempts) {
+                        log(RETRY)
+                        Thread.sleep(delay)
+                        continue
+                    } else {
+                        log(FAILED)
+                        return
+                    }
+                }'''
+        String stamp = template.replace('OK', '"stamped ${id}"').replace('RETRY', '"HTTP ${status} on PATCH, waiting"')
+                .replace('FAILED', '"WARNING: PATCH failed: HTTP ${status}"')
+        String unique = template.replace('OK', "'set ' + name").replace('RETRY', '"uniqueName: HTTP ${status} (attempt ${attempt})"')
+                .replace('FAILED', '"WARNING: uniqueName PATCH failed for ${id}: HTTP ${status} " + "after ${attempt} attempt(s). " + \'rerun\'')
+        def snapshot = SearchFixtures.compile(root, ['src/main/groovy/Plugin.groovy': """\
+            class Plugin {
+                def mapper; def headers; String base; int maxAttempts; long delay
+                int patch(String url, String body, Map headers) { 204 }
+                void log(String message) { }
+                void stamp(Map values, String id) {${stamp}
+                }
+                void unique(Map values, String id, String name) {${unique}
+                }
+            }
+            """.stripIndent()])
+
+        when:
+        def groups = clones(snapshot)
+
+        then:
+        CloneFinder.isText(new org.codehaus.groovy.ast.expr.ConstantExpression('x'))
+        !CloneFinder.isText(new org.codehaus.groovy.ast.expr.ConstantExpression(1))
+        groups.size() == 1
+        groups[0].statements == 4
+        !groups[0].exact
+        groups[0].occurrences*.enclosing == ['Plugin.stamp', 'Plugin.unique']
     }
 
     def 'copies inside one block never overlap'() {

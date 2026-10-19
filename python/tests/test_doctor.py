@@ -110,6 +110,7 @@ def test_build_report_and_failures(
         "engine jar",
         "kiro files",
         "kiro agent",
+        "kiro steering",
         "profiles",
         "daemon",
         "mcp client",

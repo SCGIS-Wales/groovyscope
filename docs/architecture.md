@@ -301,10 +301,11 @@ deliberately loose so shared runners do not fail the build.
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
 | `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing); one-shot requests and persistent sessions |
 | `mcp_server.py` | the MCP server: twenty-seven tool functions over one engine session, compact output through `render.py`; reloads the engine configuration in place when it changes |
-| `mcp_search.py`, `mcp_server_support.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview`; the shared helpers (paging, paths, clipping) |
+| `mcp_search.py`, `mcp_server_support.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview`; the shared helpers (paging, paths, clipping, and the guard that refuses `path` and `paths` the workspace does not have before any tool runs) |
 | `relay.py` | asyncio byte relay between this process's stdio and the socket |
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
 | `kiro_agent.py` | agent format detection (V2, universal, out of sync, V3) and format-preserving merges; the servers an agent's `tools` hides |
+| `kiro_steer.py` | other Kiro agents that can call groovyscope but do not load its steering (`doctor`), and adding it to them (`kiro steer`) |
 | `checkup.py` | `groovyscope checkup`: the post-install report with the fix per item and the safe repairs the agent start hook applies |
 | `benchmark.py` | the bundled CodeNarc corpus (`_benchmark/`), unpacked into the user's home with a version stamp |
 | `changes.py` | changed files and line ranges from git, the pure review rules (split, bucket, touched declarations, verdict) and the merge request comment drafts |

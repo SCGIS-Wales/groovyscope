@@ -609,3 +609,11 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   of all 900 classes still answers in 1.4 s. Found on the way: `daemon restart` counted as a crash, so three
   restarts in ten minutes refused a fourth, and the refusal's own advice (`daemon start`) was refused too; a stop
   or start someone asks for now empties the crash-loop window.
+- 2026-10-19: the owner's Kiro session (a `platform-python` agent adding a Graph `uniqueName` step to a Groovy
+  plugin) showed three gaps, fixed at the owner's yes. A review of a path outside the workspace (Kiro was started in
+  a neighbouring repository) answered clean, having checked nothing: every MCP tool now refuses `path` and `paths`
+  the workspace does not have and names its root. The pasted PATCH retry loop with reworded log lines was not
+  found as a copy: the clone finder now treats any string expression as one `text` token. The agent grepped and
+  read 48 KB where `read_symbol` answers in one call, because its own agent did not load groovyscope's steering:
+  `doctor` names such agents and `groovyscope kiro steer` adds the steering. The steering also says groovyscope
+  answers for the folder Kiro was started in. release-please now bumps the package's own version in `uv.lock`.

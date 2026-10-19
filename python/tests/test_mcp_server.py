@@ -892,3 +892,28 @@ def test_review_changes_lists_uncovered_methods_in_the_change(
     assert result["counts"]["blocking"] == 1 and result["blocking"][0]["code"] == "NP_NULL"
     assert result["imported"] == {"spotbugs": 1}
     assert result["verdict"].startswith("request changes")
+
+
+def test_paths_the_workspace_does_not_have_are_refused_before_any_tool_runs(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "A.groovy").write_text("class A {}\n", encoding="utf-8")
+    calls: list[str] = []
+
+    def call(method: str, _params: dict[str, Any]) -> Any:
+        calls.append(method)
+        return {"summary": {}, "groups": []}
+
+    server = mcp_server.build_server(tmp_path, call, {"maxResults": 50, "maxBytes": 16000}, {})
+    asked = asyncio.run(server.call_tool("review", {"paths": ["src/A.groovy", "src/Gone.groovy", "../other/B.groovy"]}))
+    answer = json.loads(asked.content[0].text)
+    assert answer["missing"] == ["src/Gone.groovy", "../other/B.groovy"] and answer["workspace"] == str(tmp_path)
+    assert (
+        answer["error"].startswith(f"not found in the workspace {tmp_path}")
+        and "Nothing was checked" in answer["error"]
+    )
+    assert calls == []  # the engine never saw the request
+    asyncio.run(server.call_tool("read_symbol", {"path": "src", "symbol": "A"}))  # folders and files that exist pass
+    assert calls == ["groovyscope/readSymbol"]
+    assert mcp_server.missing_paths(tmp_path, {"paths": None, "path": None}) == []
+    many = mcp_server.missing_paths_answer(tmp_path, [f"F{i}.groovy" for i in range(7)])
+    assert "F4.groovy and 2 more" in many["error"] and len(many["missing"]) == 7

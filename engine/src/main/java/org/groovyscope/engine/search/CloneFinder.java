@@ -85,6 +85,7 @@ import org.codehaus.groovy.ast.stmt.ThrowStatement;
 import org.codehaus.groovy.ast.stmt.TryCatchStatement;
 import org.codehaus.groovy.ast.stmt.WhileStatement;
 import org.codehaus.groovy.control.SourceUnit;
+import org.codehaus.groovy.syntax.Types;
 import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.index.TextLines;
 import org.groovyscope.engine.log.EngineLog;
@@ -92,7 +93,8 @@ import org.groovyscope.engine.model.Range;
 
 /**
  * AST clone detection. Every block's statements are normalised to token sequences (names become {@code ID},
- * literals {@code LIT}; method names, operators, statement kinds and type names stay) and hashed. Windows of
+ * literals {@code LIT}, any string expression {@code text}; method names, operators, statement kinds and type names
+ * stay) and hashed. Windows of
  * {@code minStatements} equal statement hashes seed candidate pairs, which are extended to their maximal common run;
  * runs spanning at least {@code minLines} lines at two or more non-overlapping places form a group. Groups whose
  * every occurrence lies inside an occurrence of a larger group are dropped.
@@ -373,6 +375,22 @@ public final class CloneFinder {
     }
 
     /** Folds a statement's normalised tokens into a 64-bit hash (and optionally records them). */
+    /**
+     * A message rather than logic: a string literal, a GString, or a concatenation with one. Copies that differ only
+     * in their wording (a log line or an error text reworded, split differently or with other values in it)
+     * normalise alike, so a pasted block with new messages is still found.
+     */
+    static boolean isText(Expression expression) {
+        if (expression instanceof ConstantExpression constant) {
+            return constant.getValue() instanceof String;
+        }
+        if (expression instanceof GStringExpression) {
+            return true;
+        }
+        return expression instanceof BinaryExpression binary && binary.getOperation().getType() == Types.PLUS
+                && (isText(binary.getLeftExpression()) || isText(binary.getRightExpression()));
+    }
+
     private static final class Normaliser extends CodeVisitorSupport {
 
         long hash = 0xcbf29ce484222325L;
@@ -529,6 +547,10 @@ public final class CloneFinder {
 
         @Override
         public void visitBinaryExpression(BinaryExpression expression) {
+            if (isText(expression)) {
+                token("text");
+                return;
+            }
             token("bin");
             token(expression.getOperation().getText());
             super.visitBinaryExpression(expression);
@@ -663,7 +685,7 @@ public final class CloneFinder {
 
         @Override
         public void visitConstantExpression(ConstantExpression expression) {
-            token("LIT");
+            token(expression.getValue() instanceof String ? "text" : "LIT");
         }
 
         @Override
@@ -716,10 +738,7 @@ public final class CloneFinder {
 
         @Override
         public void visitGStringExpression(GStringExpression expression) {
-            token("gstring");
-            for (Expression value : expression.getValues()) {
-                value.visit(this);
-            }
+            token("text");
         }
 
         @Override
