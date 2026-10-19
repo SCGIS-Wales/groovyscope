@@ -147,6 +147,17 @@ def exit_cause(log_file: Path, state: DaemonState) -> str:
     return EXIT_OOM if OOM_MARKER in written else EXIT_OTHER
 
 
+def kept_heap(state: DaemonState, configured_heap: str) -> str | None:
+    """The heap grown earlier that the next start keeps: only while ``daemon.heap`` is still the value it grew from
+    and only when it is larger (the user changed or raised ``daemon.heap`` since: theirs stands)."""
+    previous = state["heap"]
+    if not previous:
+        return None
+    if state["configured"] is not None and state["configured"] != configured_heap:
+        return None
+    return previous if parse_heap(previous) > parse_heap(configured_heap) else None
+
+
 def plan_restart(
     state: DaemonState,
     cause: str,
@@ -166,12 +177,7 @@ def plan_restart(
     only when it is larger than ``daemon.heap``."""
     recent = [t for t in state["restarts"] if 0 <= now - t < WINDOW_SECONDS]
     budget = max(1, int(settings.get("maxRestartsPerTenMinutes", 3)))
-    previous = state["heap"]
-    if previous and (
-        (state["configured"] is not None and state["configured"] != configured_heap)
-        or parse_heap(previous) <= parse_heap(configured_heap)
-    ):
-        previous = None  # the user changed daemon.heap since, or raised it past the grown heap: theirs stands
+    previous = kept_heap(state, configured_heap)
     current = previous or configured_heap
     if len(recent) >= budget:
         reason = (

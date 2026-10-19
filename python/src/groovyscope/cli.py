@@ -805,6 +805,10 @@ def run_through_daemon(obj: dict[str, Any], command: list[str], effective: dict[
         try:
             socket_file, _ = ensure_daemon(obj, command, effective)
             return _RELAY(socket_file)
+        except daemon_lifecycle.CrashLoopRefusedError as exc:
+            # A JVM started directly would die the same way: say why and start nothing.
+            click.echo(f"groovyscope: {exc}", err=True)
+            sys.exit(1)
         except OSError as exc:
             if attempt == 0:
                 click.echo(f"groovyscope: daemon went away before the session started ({exc})", err=True)
@@ -858,13 +862,18 @@ POSITION_PARTS = 3  # path:line:col
 
 def daemon_socket_for(obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     """Make sure the workspace daemon runs and return its socket with the effective configuration."""
-    command, effective = resolve_engine(obj)
-    hand_over_config(obj, effective)
     try:
-        socket_file, _ = ensure_daemon(obj, command, effective)
+        return start_daemon_for(obj)
     except (OSError, RuntimeError) as exc:
         click.echo(f"groovyscope: {exc}", err=True)
         sys.exit(1)
+
+
+def start_daemon_for(obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    """``daemon_socket_for`` that raises instead of exiting (``CrashLoopRefusedError`` names what to change)."""
+    command, effective = resolve_engine(obj)
+    hand_over_config(obj, effective)
+    socket_file, _ = ensure_daemon(obj, command, effective)
     return (socket_file, effective)
 
 
@@ -963,6 +972,7 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
         if code is not None:
             sys.exit(code)
     # The engine replaces this process, which only now runs no other thread: its environment is the engine's.
+    command = daemon_lifecycle.direct_heap(command, daemon_paths(obj["root"])[1], effective["daemon"])
     engine_env = engine_environ(obj, os.environ)
     if CONFIG_ENV in engine_env:
         os.environ[CONFIG_ENV] = engine_env[CONFIG_ENV]
@@ -1982,9 +1992,10 @@ def mcp(obj: dict[str, Any]) -> None:
 
     def reconnect() -> Path:
         try:
-            return daemon_socket_for(obj)[0]
-        except SystemExit as exc:
-            msg = "the engine daemon could not be restarted; run `groovyscope doctor`"
+            return start_daemon_for(obj)[0]
+        except (OSError, RuntimeError, SystemExit) as exc:
+            # The agent reads this: the refusal's own reason says what to change.
+            msg = f"the engine daemon could not be restarted: {exc}; run `groovyscope doctor`"
             raise ConnectionError(msg) from exc
 
     settings = tool_settings(effective, classpath_settings(obj, effective))

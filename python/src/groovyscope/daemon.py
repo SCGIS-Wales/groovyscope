@@ -309,6 +309,18 @@ def ensure_running(
         return launch(command, socket_file, log_file, environ, probe_fn=check)
 
 
+class CrashLoopRefusedError(RuntimeError):
+    """The daemon keeps exiting as fast as it is started; no JVM is started, the reason says what to change."""
+
+
+def direct_heap(command: list[str], log_file: Path, settings: Mapping[str, Any]) -> list[str]:
+    """``command`` with the heap the self-healing grew for this workspace, for an engine started without the
+    daemon: a heap that ran out of memory there would run out here too."""
+    configured = selfheal.configured_heap(command, str(settings.get("heap", "1g")))
+    grown = selfheal.kept_heap(selfheal.load_state(selfheal.state_path(log_file)), configured)
+    return selfheal.with_heap(command, grown) if grown else command
+
+
 def forget_restarts(log_file: Path) -> None:
     """Empties the crash-loop window after a deliberate stop, so asking for a start (as the refusal says to) or
     restarting after an upgrade is never refused as a crash loop."""
@@ -334,7 +346,7 @@ def prepare_start(
     moment = now()
     plan = selfheal.plan_restart(previous, cause, settings, configured, moment, physical=selfheal.physical_memory())
     if not plan["allowed"]:
-        raise RuntimeError(plan["reason"])
+        raise CrashLoopRefusedError(plan["reason"])
     if plan["reason"]:
         LOG.warning("%s", plan["reason"])
     if plan["delay"] > 0:
