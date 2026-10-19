@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.24.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.23.1...v0.24.0) (2026-10-19)
+
+
+### Features
+
+* **review:** accurate findings and fixes limited to the changed lines ([#100](https://github.com/SCGIS-Wales/groovyscope/issues/100)) ([c9a6ba7](https://github.com/SCGIS-Wales/groovyscope/commit/c9a6ba7a3ca091dc2af5a60518bd4a63bfdead9f))
+* **tests:** test seams in explain_code and checks for test doubles that cannot take effect ([#103](https://github.com/SCGIS-Wales/groovyscope/issues/103)) ([257ba84](https://github.com/SCGIS-Wales/groovyscope/commit/257ba84e24e863323b1010be00a221b0686e82b8))
+* **verify:** test results from JUnit XML, method filters, verify --failed and --coverage ([#102](https://github.com/SCGIS-Wales/groovyscope/issues/102)) ([a39e39b](https://github.com/SCGIS-Wales/groovyscope/commit/a39e39b6521e394047833ea25fae2b9032e08dc2))
+
 ## [0.23.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.23.0...v0.23.1) (2026-10-19)
 
 
