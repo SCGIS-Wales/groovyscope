@@ -173,7 +173,7 @@ class PracticeFinderSpec extends Specification {
         annotation('Clean.groovy') == null
         result.needsReview()[uri('Clean.groovy')].CompileStatic == 1
         annotation('Numbers.groovy').startsWith('@CompileDynamic // TODO justify')
-        annotation('Logging.groovy').startsWith('@CompileDynamic')
+        annotation('Logging.groovy') == null // it type-checks: @CompileStatic, which needs review
         result.applied()[uri('ThingSpec.groovy')] == null
         result.needsReview()[uri('ThingSpec.groovy')] == [GS011: 1]
         result.needsReview()[uri('Numbers.groovy')].keySet().containsAll(['GS001', 'GS002', 'GS003'])
