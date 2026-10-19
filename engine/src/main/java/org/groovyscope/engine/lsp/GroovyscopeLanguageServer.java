@@ -837,6 +837,9 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
                         facts.put("class", method.getDeclaringClass().getName());
                         facts.put("uri", snapshot.index().declarationEntry(method).map(
                                 org.groovyscope.engine.index.NodeEntry::uri).orElse(null));
+                        facts.put("testing", ExplainJson.seams(org.groovyscope.engine.explain.TestSeams.of(method,
+                                graph, current::declarationOf, snapshot.result().modules(),
+                                current.workspace()::text)));
                         items.add(facts);
                     } else if (declaration instanceof org.codehaus.groovy.ast.PropertyNode property) {
                         Map<String, Object> facts = ExplainJson.fieldFacts(

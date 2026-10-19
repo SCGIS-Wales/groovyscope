@@ -75,7 +75,8 @@ import org.groovyscope.engine.semantics.Members;
 import org.groovyscope.engine.workspace.TestSources;
 
 /**
- * groovyscope's own practice diagnostics, GS001 to GS012 (docs/practices.md, section 16). Each one reports only
+ * groovyscope's own practice diagnostics, GS001 to GS012 (docs/practices.md, section 16); GS013 to GS016 come from
+ * {@link TestDoubleFinder} and GS020 to GS027 from {@link NamingFinder}. Each one reports only
  * when the tree says so for certain (a statically known type, a literal); untyped code is left alone rather than
  * guessed about. Where a mechanical fix is safe, the finding carries it as text edits.
  */
@@ -136,6 +137,7 @@ public final class PracticeFinder {
         Visitor visitor = new Visitor(uri, module, new TextLines(text), config, out);
         visitor.visitModule();
         out.addAll(NamingFinder.find(uri, module, config));
+        out.addAll(TestDoubleFinder.find(uri, module, config));
         return out;
     }
 

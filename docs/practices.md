@@ -389,6 +389,11 @@ sql.rows('SELECT * FROM users WHERE name = ?', [name])
 - Use `where:` tables for data driven tests; 2.5 allows final locals inside them.\[15\]
 - Mock only collaborators you own, and never value types.
 - Test statically compiled code through its public API.
+- Stub only package-private or public methods with Mockito or Spock: a double is a generated subclass and cannot
+  intercept a private method, so the real one runs (GS013). A metaClass override never reaches calls inside
+  `@CompileStatic` code (GS014), and one on a Mockito or Spock double mixes two mechanisms (GS015).
+- A dynamic Groovy test can call a private method directly; no reflection is needed.
+- Every test asserts, verifies an interaction or expects an exception (GS016).
 - Groovy 6 adds `groovy-test-junit6`.\[1\]
 - JaCoCo filters members annotated `@Generated`; this was not re-verified for 6.0.
 - CodeNarc 4.1 (unreleased) adds a `spock` rule set: SpockIgnoreRestUsed, SpockMissingAssert, SpockUseVerifyEach, SpockUnnecessaryAssert.\[14\]
@@ -619,6 +624,8 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Randomness | InsecureRandom | none | Use SecureRandom |
 | Concurrency | concurrency rule set | CombinerChecker (6) | Immutability or `@Synchronized` |
 | Spock | SpockMissingAssert, SpockUseVerifyEach (4.1 spock rule set) | none | Replace `.with {}` with `with(obj) {}` |
+| Test doubles | none | none | GS013: Mockito or Spock stub on a private method; GS014: metaClass override `@CompileStatic` callers bypass; GS015: metaClass on a double |
+| Tests that check nothing | JUnitTestMethodWithoutAssert (junit rule set) | none | GS016: a JUnit test with no assert, verify or expected exception, helpers followed |
 | Version gating | none | none | GS010: Groovy 6 construct under a 5.x target |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 

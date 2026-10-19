@@ -611,3 +611,21 @@ def test_hook_command_checks_written_files_and_gates_stop(
     monkeypatch.setattr(cli, "_PROBE", lambda _socket_file: None)
     unavailable = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
     assert unavailable.exit_code == 0 and "daemon is not running" in unavailable.output
+
+
+def test_testing_lines_show_seams_and_tests() -> None:
+    testing = {
+        "direct": "private: call it directly",
+        "collaborators": [
+            {"target": "app.A.fetch", "visibility": "private", "stub": "no double"},
+            {"target": "app.A.save", "visibility": "public", "stub": "spy", "stubbedAt": "AT.groovy:4", "example": "x"},
+        ],
+        "tests": [{"class": "app.ATest", "path": "src/test/ATest.groovy", "helpers": []}],
+    }
+    assert cli.testing_lines(testing) == [
+        "  testing: private: call it directly",
+        "  seam app.A.fetch [private]: no double",
+        "  seam app.A.save [public]: spy (stubbed at AT.groovy:4: x)",
+        "  tested in app.ATest (src/test/ATest.groovy): helpers none",
+    ]
+    assert cli.testing_lines({}) == []

@@ -196,6 +196,6 @@ class PracticeFinderSpec extends Specification {
         PracticeFixes.apply('012 456', edits).edits().size() == 2
         PracticeCatalog.bundled().link('GS001').endsWith('docs/practices.md#23-numeric-pitfalls')
         PracticeCatalog.bundled().link('NoSuchCode') == null
-        (1..12).every { PracticeCatalog.bundled().find(String.format('GS%03d', it)).present }
+        (1..16).every { PracticeCatalog.bundled().find(String.format('GS%03d', it)).present }
     }
 }

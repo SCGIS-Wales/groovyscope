@@ -1488,6 +1488,17 @@ def workspace_tools(obj: dict[str, Any], socket_file: Path, effective: dict[str,
     return tools
 
 
+def testing_lines(testing: Mapping[str, Any]) -> list[str]:
+    """A method's test seams: each collaborator and how to replace it, then the tests and their helpers."""
+    lines = [f"  testing: {testing['direct']}"] if testing.get("direct") else []
+    for item in testing.get("collaborators", []):
+        stubbed = f" (stubbed at {item['stubbedAt']}: {item['example']})" if item.get("stubbedAt") else ""
+        lines.append(f"  seam {item['target']} [{item['visibility']}]: {item['stub']}{stubbed}")
+    for test in testing.get("tests", []):
+        lines.append(f"  tested in {test['class']} ({test['path']}): helpers {', '.join(test['helpers']) or 'none'}")
+    return lines
+
+
 def render_explanation(result: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     for item in result.get("items", []):
@@ -1505,6 +1516,7 @@ def render_explanation(result: dict[str, Any]) -> list[str]:
                 if item.get(key):
                     shown = [c["target"] if isinstance(c, dict) else str(c) for c in item[key]]
                     lines.append(f"  {key}: {', '.join(shown)}")
+            lines += testing_lines(item.get("testing") or {})
             continue
         if kind in {"field", "property"}:
             lines.append(f"{item.get('class')}.{item['name']}: {item.get('type')} {kind} ({item.get('visibility')})")

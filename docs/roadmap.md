@@ -664,3 +664,12 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   one project is not a failure, and reads the reports the run wrote; `--failed` runs only the last failures again,
   also from a CI archive (`--results`); `--coverage` adds `verify.coverageTask` when the build applies JaCoCo and
   lists changed methods no test executed.
+- 2026-10-19: writing tests, from the owner's sessions where the agent spent about 14 calls collecting a method's
+  collaborators and how the tests stub them, stubbed a private method on a Mockito spy (the real method ran and
+  the leaked matchers failed another test) and planned metaClass overrides that `@CompileStatic` code never sees.
+  `explain_code` on a method now answers `testing`: each collaborator with its visibility and how a test replaces
+  it, the line where the tests already stub it, the test classes that exercise the class with their helpers, and
+  for a private method that a dynamic Groovy test calls it directly. New checks in test sources: GS013 (Mockito or
+  Spock stub on a private method), GS014 (metaClass override bypassed by `@CompileStatic`), GS015 (metaClass on a
+  double) and GS016 (a JUnit test with no assertion, verification or expected exception, helpers followed). The
+  steering says the same in two lines.

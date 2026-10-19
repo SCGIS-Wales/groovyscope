@@ -32,7 +32,7 @@ Packages under `org.groovyscope.engine`:
 | `search` | 10 | `CodeSearch` (structural search over the compiled trees: catch clauses, throws, calls, constructor calls, `return null`, string literals, annotations, `def` declarations, empty blocks, fields and methods, each with filters), `CloneFinder` (duplicated code by normalised statement hashes), `SymbolReader` (the source of one declaration with the comments and annotations above it) and `WorkspaceOverview` (sizes per package, largest files and classes, untested classes). Java documents are never searched. |
 | `compile.MissingDependencies` | 10 | Folds the unresolved-class errors of a file with no configured classpath into one `GS100` warning naming the missing packages. |
 | `services.DocumentSupport` | 10 | Per-document editor features: implementations, highlights, folding ranges and inlay type hints. |
-| `explain` | 11 | `CodeFacts`: what a class or method does as facts (members, calls and callers from the call graph, field reads and writes, throws and catches, external calls by category, branch count, public methods grouped by verb). |
+| `explain` | 11 | `CodeFacts`: what a class or method does as facts (members, calls and callers from the call graph, field reads and writes, throws and catches, external calls by category, branch count, public methods grouped by verb). `TestSeams`: for one method, each collaborator with its visibility and how a test replaces it, the line where the tests already stub it, and the test classes with their helpers. |
 | `graph` | 11 | `RelationshipGraph`: classes as nodes; `extends`, `implements`, `has`, `uses` and aggregated `calls` edges with the weakest confidence; scoped to seeds and a hop depth, capped best-connected first; a method-level view of one class. `Effects`: whether each method only reads or changes state (its own fields, another object, a parameter, a file, a database, a remote service, a process, a system property), propagated up static and inferred calls; a constructor filling its own fields is a read, a call resolved only by name is `unknown`; every call edge and method node carries its effect. `DiagramLayout`: the layered layout. |
 | `practices.NamingFinder` | 11 | GS020 to GS027 from the declared types and the body (a getter that assigns a field, a plural on a single string), with the team's abbreviations and vocabulary from `naming`. |
 
@@ -224,7 +224,8 @@ analysis (Stage 4) will report those sites for manual review.
 ## Practices and runtime profiles (Stage 8)
 
 `practices/` holds the catalogue (`practices.json`, mirrored from `config/practices/`), `PracticeFinder`
-(GS001-GS012, a visitor over the snapshot's trees that uses the resolver for static types),
+(GS001-GS012, a visitor over the snapshot's trees that uses the resolver for static types), `TestDoubleFinder`
+(GS013-GS016 in test sources),
 `PracticeFixes` (AST-aware edits, applied with earlier edits winning on overlap) and `Explanations` (the
 `groovyscope/explain` request, hover notes and `codeDescription` links). Findings are cached per snapshot
 version. `QualityServices.fix` applies every safe fix, re-parses the result and rejects a document that no
