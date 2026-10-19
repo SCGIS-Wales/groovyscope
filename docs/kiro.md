@@ -173,7 +173,7 @@ The full list of checks, with Kiro CLI prompts and a report table: [kiro-checks.
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
 > /code logs -l ERROR   # empty is good
-> /mcp                  # expect: groovyscope running 28 tools, next to your other servers
+> /mcp                  # expect: groovyscope running 29 tools, next to your other servers
 > /context show         # expect: steering/groovyscope.md among the context files
 > /tools                # the other servers' tools are listed too (available, prompting)
 ```
@@ -267,13 +267,14 @@ the `GROOVYSCOPE_CONFIG_JSON` variable that `groovyscope lsp` sets, so `workspac
 ## What the MCP tools add
 
 The `code` tool stops at what LSP can express. The `groovyscope` MCP server (one process per Kiro session,
-sharing the workspace daemon with the LSP side) adds 28 tools; the README lists their arguments and
+sharing the workspace daemon with the LSP side) adds 29 tools; the README lists their arguments and
 [docs/prompts.md](prompts.md) the prompts. Typical turns in the `groovy` agent:
 
 - "Review this branch as a merge request reviewer" → `review_changes(base="main")`: verdict, blocking and
   should-fix findings on the changed lines, impact of the changed declarations, risky constructs added,
   uncovered methods, with the build's SpotBugs findings merged in
 - "Which methods have no test coverage?" → `coverage_gaps()` on the JaCoCo report
+- "Why did the tests fail?" → `test_results()` on the last run, or `test_results(["artifacts.zip"])` on a CI archive
 - "Explain what `ResourceExecutionPlugin` does" → `explain_code(symbol=...)`: members, calls, callers, field
   writes, exceptions and the external world it touches, as facts the agent turns into prose
 - "Draw the class diagram around `OrderService` for draw.io" → `relationship_graph(symbols=[...], depth=2,

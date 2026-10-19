@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -70,11 +72,29 @@ def test_affected_tests_and_the_gradle_command() -> None:
         "--tests",
         "app.OtherSpec",
         "--tests",
-        "app.StoreSpec",
+        "app.StoreSpec.writes",
     ]
     assert verify.not_run(tests, tasks, ["test"]) == {"integrationTest": ["app.StoreIT"]}
     assert verify.gradle_command("gradle", [], [], tasks, ["test"]) == []
     assert verify.quoted(["./gradlew", "test", "--tests", "app.A*"]) == "./gradlew test --tests 'app.A*'"
+
+
+def test_method_filters_touched_test_methods_and_whole_classes() -> None:
+    reports = [{"tests": [site("app.StoreSpec", "writes", "src/test/groovy/app/StoreSpec.groovy")]}]
+    touched = [
+        {"path": "src/test/groovy/app/OtherSpec.groovy", "symbol": "OtherSpec.reads", "kind": "method"},
+        {"path": "src/test/groovy/app/OtherSpec.groovy", "symbol": "OtherSpec", "kind": "class"},
+        {"path": "src/main/groovy/app/Store.groovy", "symbol": "Store.save", "kind": "method"},
+    ]
+    changed = ["src/test/groovy/app/OtherSpec.groovy", "src/test/groovy/app/StoreSpec.groovy"]
+    tests = verify.affected_tests(reports, changed, verify.is_test_path, touched)
+    assert [(t["className"], t["method"]) for t in tests] == [
+        ("app.OtherSpec", "reads"),
+        ("app.StoreSpec", ""),
+        ("app.StoreSpec", "writes"),
+    ]
+    assert verify.filters_by_task(tests, {}, ["test"]) == {"test": ["app.OtherSpec.reads", "app.StoreSpec"]}
+    assert verify.filters_by_task(tests, {}, ["integrationTest"]) == {}
 
 
 def test_plan_reads_the_build_and_says_when_there_is_none(tmp_path: Path) -> None:
@@ -84,7 +104,7 @@ def test_plan_reads_the_build_and_says_when_there_is_none(tmp_path: Path) -> Non
     assert planned["count"] == 1 and planned["inCi"] == {"integrationTest": ["app.StoreIT"]}
     assert planned["command"] == "./gradlew compileGroovy" and planned["commandArgs"] == ["./gradlew", "compileGroovy"]
     run_it = verify.plan(tmp_path, reports, [], {"runTasks": ["integrationTest"]}, limit=5, read=files.get)
-    assert run_it["command"] == "./gradlew integrationTest --tests app.StoreIT" and "inCi" not in run_it
+    assert run_it["command"] == "./gradlew integrationTest --tests app.StoreIT.shouldRead" and "inCi" not in run_it
     bare = verify.plan(tmp_path, reports, [], {}, limit=5, read=lambda _p: None)
     assert "command" not in bare and bare["note"].startswith("no build.gradle")
     (tmp_path / "build.gradle").write_text("x", encoding="utf-8")
@@ -137,8 +157,13 @@ def review(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", {"verify": {"timeoutSeconds": 9}}))
     monkeypatch.setattr(cli, "workspace_tools", lambda *_a: {"review_changes": lambda *_a: state["result"]})
 
-    def runner(command: Sequence[str], _cwd: Path, timeout: int) -> tuple[int, str]:
+    def runner(command: Sequence[str], cwd: Path, timeout: int) -> tuple[int, str]:
         state["ran"].append((list(command), timeout))
+        if "--init-script" in command:
+            state["script"] = Path(command[command.index("--init-script") + 1]).read_text(encoding="utf-8")
+        for name, text in state.get("reports", {}).items():
+            (cwd / name).parent.mkdir(parents=True, exist_ok=True)
+            (cwd / name).write_text(text, encoding="utf-8")
         return state.get("build", (0, "BUILD SUCCESSFUL"))
 
     monkeypatch.setattr(cli, "_VERIFY_RUNNER", runner)
@@ -156,16 +181,162 @@ def test_verify_runs_the_planned_build_once(review: dict[str, Any], tmp_path: Pa
     review["build"] = (1, "S > t() FAILED\nFAILURE: Build failed")
     failed = runner.invoke(cli.main, ["--root", str(tmp_path), "verify", "--json"])
     payload = json.loads(failed.output)
-    assert failed.exit_code == 1 and payload["build"] == {
-        "exitCode": 1,
-        "failed": ["S > t()"],
-        "tail": ["S > t() FAILED", "FAILURE: Build failed"],
-    }
+    assert failed.exit_code == 1 and payload["build"]["failed"] == ["S > t()"]
+    assert payload["build"]["tail"] == ["S > t() FAILED", "FAILURE: Build failed"]
+    assert payload["build"]["results"]["reports"] == 0 and "coverage" not in payload
     review["build"] = (2, "compile error: x")
     broken = runner.invoke(cli.main, ["--root", str(tmp_path), "verify"])
     assert "build: FAILED (exit 2)" in broken.output and "  compile error: x" in broken.output
     review["result"] = {"error": "no git"}
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "verify"]).exit_code == 1
+
+
+REPORT = """<testsuite name="app.S" tests="2" failures="1" errors="0">
+  <testcase name="t" classname="app.S"><failure message="expected 2">x
+\tat app.Store.save(Store.groovy:7)
+</failure></testcase>
+  <testcase name="u" classname="app.S"/>
+</testsuite>"""
+JACOCO = """<report name="r"><package name="app">
+  <class name="app/Store" sourcefilename="Store.groovy">
+    <method name="save" desc="()V" line="3"><counter type="LINE" missed="2" covered="0"/></method>
+    <method name="load" desc="()V" line="9"><counter type="LINE" missed="1" covered="0"/></method>
+    <counter type="LINE" missed="3" covered="0"/>
+  </class>
+  <sourcefile name="Store.groovy"><counter type="LINE" missed="3" covered="0"/></sourcefile>
+  <counter type="LINE" missed="3" covered="0"/>
+</package><counter type="LINE" missed="3" covered="0"/></report>"""
+
+
+def test_verify_reads_the_reports_the_run_wrote(review: dict[str, Any], tmp_path: Path) -> None:
+    stale = tmp_path / "old/build/test-results/test/TEST-app.Old.xml"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(REPORT.replace("app.S", "app.Old"), encoding="utf-8")
+    os.utime(stale, (1, 1))
+    review["result"]["tests"]["commandArgs"] = ["gradle", "test", "--tests", "app.S.t"]
+    review["reports"] = {"build/test-results/test/TEST-app.S.xml": REPORT}
+    review["build"] = (1, "FAILURE: Build failed")
+    out = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify"])
+    assert out.exit_code == 1, out.output
+    assert "2 test(s) in 1 report(s): 1 failed" in out.output
+    assert "  failure: app.S.t: expected 2 at Store.groovy:7 in app.Store.save" in out.output
+    command = review["ran"][0][0]
+    assert command[:2] == ["gradle", "--init-script"] and command[3:] == ["test", "--tests", "app.S.t"]
+    assert "failOnNoMatchingTests = false" in review["script"] and not Path(command[2]).exists()
+    review["reports"] = {"build/test-results/test/TEST-app.S.xml": '<testsuite name="app.S" tests="0"/>'}
+    review["build"] = (0, "BUILD SUCCESSFUL")
+    none = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify"])
+    assert "the --tests filters matched no test" in none.output
+    review["reports"] = {}
+    for report in (tmp_path / "build/test-results/test").iterdir():
+        report.unlink()
+    nothing = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify"])
+    assert "no test report was written" in nothing.output
+
+
+def test_verify_coverage_lists_changed_methods_no_test_ran(
+    review: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    review["result"]["tests"]["coverageTask"] = "jacocoTestReport"
+    review["reports"] = {"build/reports/jacoco/test/jacocoTestReport.xml": JACOCO}
+    (tmp_path / "src/main/groovy/app").mkdir(parents=True)
+    (tmp_path / "src/main/groovy/app/Store.groovy").write_text("x", encoding="utf-8")
+    change = {"base": "master", "mode": "branch", "files": [
+        {"path": "src/main/groovy/app/Store.groovy", "status": "modified", "ranges": [[2, 4]]}]}  # fmt: skip
+    monkeypatch.setattr(cli.changes, "changed_files", lambda *_a, **_k: change)
+    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", {"reports": {}}))
+    out = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage"])
+    assert review["ran"][0][0] == ["gradle", "test", "jacocoTestReport"]
+    assert "coverage: 1 changed method(s) no test executed" in out.output
+    assert "  src/main/groovy/app/Store.groovy:3: Store.save" in out.output
+    change["files"][0]["ranges"] = [[20, 30]]
+    payload = json.loads(
+        CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage", "--json"]).output
+    )
+    assert payload["coverage"]["count"] == 0 and payload["tests"]["command"] == "gradle test jacocoTestReport"
+    assert (
+        "every changed method" in CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage"]).output
+    )
+    (tmp_path / "build/reports/jacoco/test/jacocoTestReport.xml").write_text("<html/>", encoding="utf-8")
+    review["reports"] = {}
+    broken = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage"])
+    assert "coverage: " in broken.output and "changed method" not in broken.output
+    (tmp_path / "build/reports/jacoco/test/jacocoTestReport.xml").unlink()
+    gone = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage"])
+    assert "coverage: no JaCoCo report at" in gone.output
+    del review["result"]["tests"]["coverageTask"]
+    plain = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage"])
+    assert "the build does not apply JaCoCo" in plain.output and review["ran"][-1][0] == ["gradle", "test"]
+
+
+def test_verify_failed_runs_the_last_failures_again(review: dict[str, Any], tmp_path: Path) -> None:
+    report = tmp_path / "store/build/test-results/integrationTest/TEST-app.S.xml"
+    report.parent.mkdir(parents=True)
+    report.write_text(REPORT.replace('name="t"', 'name="t()[1]"'), encoding="utf-8")
+    surefire = tmp_path / "target/surefire-reports/TEST-app.M.xml"
+    surefire.parent.mkdir(parents=True)
+    surefire.write_text(REPORT.replace("app.S", "app.M"), encoding="utf-8")
+    (tmp_path / "gradlew").write_text("#!/bin/sh", encoding="utf-8")
+    runner = CliRunner()
+    dry = runner.invoke(cli.main, ["--root", str(tmp_path), "verify", "--failed", "--dry-run"])
+    assert dry.exit_code == 0 and "2 failed test(s) in 2 report(s)" in dry.output
+    assert "run: ./gradlew integrationTest --tests app.S.t" in dry.output and "dry run" in dry.output
+    assert "run it with its own build: app.M.t" in dry.output and review["ran"] == []
+    review["build"] = (1, "FAILURE")
+    ran = runner.invoke(cli.main, ["--root", str(tmp_path), "verify", "--failed", "--json"])
+    payload = json.loads(ran.output)
+    assert ran.exit_code == 1 and payload["command"] == ["./gradlew", "integrationTest", "--tests", "app.S.t"]
+    assert payload["unplaced"] == ["app.M.t"] and payload["build"]["exitCode"] == 1
+    archive = tmp_path / "ci.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("m/build/test-results/test/TEST-app.Z.xml", REPORT.replace("app.S", "app.Z"))
+    from_ci = runner.invoke(cli.main, ["--root", str(tmp_path), "verify", "--failed", "--results", str(archive)])
+    assert "run: ./gradlew test --tests app.Z.t" in from_ci.output
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "verify", "--results", str(archive)]).exit_code == 2
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    none = runner.invoke(cli.main, ["--root", str(clean), "verify", "--failed"])
+    assert none.exit_code == 0 and none.output.startswith("0 failed test(s) in 0 report(s)")
+    (clean / ".groovyscope.yaml").write_text("verify: [", encoding="utf-8")
+    assert runner.invoke(cli.main, ["--root", str(clean), "verify", "--failed"]).exit_code == 1
+
+
+def test_rerun_and_coverage_helpers() -> None:
+    assert verify.method_name("shouldRead()") == "shouldRead" and verify.method_name("reads [x: 1, #0]") == "reads"
+    assert verify.method_name("param[2]") == "param" and verify.method_name("writes a row") == "writes a row"
+    assert verify.task_of_report("a.zip!m/build/test-results/test/TEST-x.xml") == "test"
+    assert verify.task_of_report("target/surefire-reports/TEST-x.xml") is None
+    failure = {"className": "app.S", "name": "", "report": "build/test-results/test/TEST-app.S.xml"}
+    assert verify.rerun_command("gradle", [failure, failure]) == (["gradle", "test", "--tests", "app.S"], [])
+    assert verify.rerun_command("gradle", []) == ([], [])
+    assert verify.with_coverage(["gradle", "test"], "jacocoTestReport") == ["gradle", "test", "jacocoTestReport"]
+    assert verify.with_coverage(["gradle", "jacocoTestReport"], "jacocoTestReport") == ["gradle", "jacocoTestReport"]
+    assert verify.with_coverage([], "jacocoTestReport") == [] and verify.with_init_script(["g", "test"], Path("i")) == [
+        "g",
+        "test",
+    ]
+    keep = verify.written_since(10.0, lambda label: 5.0 if label == "old" else 20.0)
+    assert keep("new") and not keep("old")
+
+    def missing(_label: str) -> float:
+        raise OSError
+
+    assert not verify.written_since(0.0, missing)("x")
+    gaps = [
+        {"path": "a", "line": 3, "kind": "method", "status": "uncovered", "name": "A.m"},
+        {"path": "a", "line": 3, "kind": "method", "status": "partial", "name": "A.p"},
+        {"path": "a", "line": 3, "kind": "class", "status": "uncovered", "name": "A"},
+        {"path": "b", "line": 3, "kind": "method", "status": "uncovered", "name": "B.m"},
+    ]
+    assert [g["name"] for g in verify.uncovered_in_change(gaps, {"a": [[1, 5]]})] == ["A.m"]
+
+
+def test_plan_names_the_coverage_task_when_the_build_uses_jacoco(tmp_path: Path) -> None:
+    files = {tmp_path / "build.gradle": "plugins { id 'jacoco' }"}
+    planned = verify.plan(tmp_path, [], [], {"coverageTask": "cov"}, limit=5, read=files.get)
+    assert planned["coverageTask"] == "cov"
+    assert verify.plan(tmp_path, [], [], {}, limit=5, read=files.get)["coverageTask"] == "jacocoTestReport"
+    assert "coverageTask" not in verify.plan(tmp_path, [], [], {}, limit=5, read={tmp_path / "build.gradle": "x"}.get)
 
 
 def test_run_build_reports_missing_tools_and_timeouts(tmp_path: Path) -> None:

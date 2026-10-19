@@ -200,6 +200,7 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "find_code",
         "find_duplicates",
         "workspace_overview",
+        "test_results",
     }
     result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
     structured = result[1] if isinstance(result, tuple) else result
@@ -796,7 +797,7 @@ def test_review_changes_composes_findings_impact_and_risky_sites(
     monkeypatch.setattr(mcp_server.changes, "changed_files", refuse)
     assert tools["review_changes"]() == {"error": "git is not installed"}
     assert mcp_server.TOOL_INFO["review_changes"][1] is True
-    assert len(mcp_server.TOOL_INFO) == 28
+    assert len(mcp_server.TOOL_INFO) == 29
 
 
 SARIF_LOG = {
@@ -933,3 +934,14 @@ def test_paths_the_workspace_does_not_have_are_refused_before_any_tool_runs(tmp_
     assert mcp_server.missing_paths(tmp_path, {"paths": None, "path": None}) == []
     many = mcp_server.missing_paths_answer(tmp_path, [f"F{i}.groovy" for i in range(7)])
     assert "F4.groovy and 2 more" in many["error"] and len(many["missing"]) == 7
+
+
+def test_test_results_tool_reads_folders_and_archives(tmp_path: Path) -> None:
+    suite = '<testsuite name="app.S" tests="1" failures="1">'
+    case = '<testcase name="t" classname="app.S"><failure message="m"/></testcase>'
+    (tmp_path / "build/test-results/test").mkdir(parents=True)
+    (tmp_path / "build/test-results/test/TEST-app.S.xml").write_text(f"{suite}{case}</testsuite>", "utf-8")
+    tool = mcp_server.test_tools(tmp_path, 1)["test_results"]
+    found = tool()
+    assert found["failures"] == 1 and found["failedCount"] == 1 and found["failed"][0]["message"] == "m"
+    assert tool(["missing.zip"])["notes"] == [f"{(tmp_path / 'missing.zip').resolve()}: not found"]

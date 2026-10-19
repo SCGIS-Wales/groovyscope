@@ -31,7 +31,8 @@
     "@groovyscope/coverage_gaps",
     "@groovyscope/explain_code",
     "@groovyscope/check_naming",
-    "@groovyscope/symbol_context"
+    "@groovyscope/symbol_context",
+    "@groovyscope/test_results"
   ],
   "toolsSettings": {
     "shell": {
