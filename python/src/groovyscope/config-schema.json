@@ -146,6 +146,10 @@
           "type": "integer",
           "minimum": 1
         },
+        "diskCheckMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
         "heapPressurePercent": {
           "type": "integer",
           "minimum": 1,

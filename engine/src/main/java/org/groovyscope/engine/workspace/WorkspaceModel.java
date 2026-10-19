@@ -235,8 +235,24 @@ public final class WorkspaceModel {
      * agent's write tool, a checkout), or when the contract baseline or a profile's descriptor changes.
      */
     public String diskFingerprint() {
+        return fingerprint(discoverCompileFiles());
+    }
+
+    /** The compile's sources and the disk fingerprint they were read under, from one walk of the tree. */
+    public record CompileInput(Map<String, String> sources, String fingerprint) {
+    }
+
+    /** {@link #compileSources()} and {@link #diskFingerprint()} from a single discovery of the files. */
+    public CompileInput compileInput() {
+        List<Path> files = discoverCompileFiles();
+        String fingerprint = fingerprint(files);
+        return new CompileInput(read(files, config.javaSources()), fingerprint);
+    }
+
+    private String fingerprint(List<Path> compileFiles) {
+        fingerprintsTaken.incrementAndGet();
         StringBuilder text = new StringBuilder();
-        List<Path> files = new ArrayList<>(discoverCompileFiles());
+        List<Path> files = new ArrayList<>(compileFiles);
         files.addAll(profileInputs());
         // A rebuilt module jar or classes folder on the classpath changes what resolves, too.
         files.addAll(classpath());
@@ -249,7 +265,25 @@ public final class WorkspaceModel {
             }
             text.append('\n');
         }
-        return Integer.toHexString(text.toString().hashCode()) + ":" + text.length();
+        return fingerprintOf(text.toString());
+    }
+
+    /** 64 bits of the SHA-256 of {@code text}, as 16 hex digits (a 32-bit hash collides too easily on big trees). */
+    public static String fingerprintOf(String text) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    private final java.util.concurrent.atomic.AtomicInteger fingerprintsTaken = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** How many disk fingerprints this model has taken (each one walks the tree; for specs). */
+    public int fingerprintsTaken() {
+        return fingerprintsTaken.get();
     }
 
     /** Groovy documents keyed by file URI: disk contents overlaid with open documents. Lint and format use these. */

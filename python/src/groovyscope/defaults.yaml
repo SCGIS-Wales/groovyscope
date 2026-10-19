@@ -31,6 +31,7 @@ daemon:
   workspaceIdleMinutes: 30  # a workspace nobody asked about for this long is released from memory while no client is connected
   heapPressurePercent: 85 # past this share of the heap still in use after a collection the engine sheds its caches and
                           # refuses whole-workspace requests until memory frees
+  diskCheckMillis: 0      # how long one look at the files on disk is trusted before the next request looks again; 0 = every request
   maxHeap: "auto"         # ceiling for the heap the self-healing grows to after an out-of-memory exit: auto = a quarter of
                           # physical memory, at most 4g; or a size such as 3g
   heapGrowthFactor: 1.5   # how much the heap grows after an out-of-memory exit (once per exit, up to maxHeap)

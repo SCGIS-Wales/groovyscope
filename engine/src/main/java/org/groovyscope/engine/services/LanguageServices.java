@@ -292,12 +292,25 @@ public final class LanguageServices {
     }
 
     private volatile String compiledFingerprint;
+    private volatile long lastDiskCheck = Long.MIN_VALUE;
+    private volatile java.util.function.LongSupplier clock = System::nanoTime;
+
+    /** For specs: the clock the disk check window is measured on. */
+    void clock(java.util.function.LongSupplier replacement) {
+        clock = replacement;
+    }
 
     /**
      * Marks the snapshot stale when files changed on disk since the last compile. Requests from the CLI and the
      * MCP server call this first: they have no editor sending change notifications.
      */
     public void syncWithDisk() {
+        long window = workspace.config().daemon().diskCheckMillis() * 1_000_000L;
+        long now = clock.getAsLong();
+        if (window > 0 && lastDiskCheck != Long.MIN_VALUE && now - lastDiskCheck < window) {
+            return; // checked within daemon.diskCheckMillis: trusted for the rest of the window
+        }
+        lastDiskCheck = now;
         String recorded = compiledFingerprint;
         if (recorded != null && !recorded.equals(workspace.diskFingerprint())) {
             markDirty();
@@ -344,8 +357,9 @@ public final class LanguageServices {
             try {
                 // Taken before the sources are read, so an edit racing this compile shows up as a later change.
                 long started = System.nanoTime();
-                fingerprint = workspace.diskFingerprint();
-                sources = workspace.compileSources();
+                WorkspaceModel.CompileInput input = workspace.compileInput();
+                fingerprint = input.fingerprint();
+                sources = input.sources();
                 CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
                 org.groovyscope.engine.log.EngineLog.debug("compiled %d file(s) of %s in %d ms (%d with diagnostics)",
                         sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,

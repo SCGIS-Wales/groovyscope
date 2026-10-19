@@ -136,4 +136,32 @@ class LightRequestsSpec extends Specification {
         services.workspace().close(other)
         services.close()
     }
+
+    def 'the disk check runs once per daemon.diskCheckMillis window, and every request when it is 0 (E-22)'() {
+        given:
+        def every = Fixtures.services('basic-app')
+        def daemon = new EngineConfig.Daemon(0, 64, 30, 85, 1000)
+        def windowed = new LanguageServices(new WorkspaceModel(Fixtures.project('basic-app'),
+                EngineConfig.DEFAULTS.withDaemon(daemon)), new GroovyCompiler())
+        long now = 0
+        windowed.clock { now }
+        every.snapshot()
+        windowed.snapshot()
+        int everyBefore = every.workspace().fingerprintsTaken()
+        int windowedBefore = windowed.workspace().fingerprintsTaken()
+
+        when: 'three requests inside one window, then one after it'
+        3.times { every.syncWithDisk(); windowed.syncWithDisk() }
+        now += 1_000_000_000L
+        windowed.syncWithDisk()
+
+        then:
+        every.workspace().fingerprintsTaken() - everyBefore == 3
+        windowed.workspace().fingerprintsTaken() - windowedBefore == 2
+        WorkspaceModel.fingerprintOf('x').length() == 16
+
+        cleanup:
+        every.close()
+        windowed.close()
+    }
 }
