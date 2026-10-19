@@ -690,3 +690,10 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   fixed list of read-only commands and `trust` needs a person; fixes that change behaviour need `--code`; the
   `@CompileStatic` verdict is per class and only from a check that ran; the formatter never edits inside strings;
   a daemon serves one root; the shaded JAR keeps every Groovy extension module, so the shipped type check works.
+- 2026-10-19: Phase 2 of `docs/improvement-plan.md`: concurrency and resilience. Hover and other light requests no
+  longer wait for a compile when their document is unchanged; a closed connection cancels its requests; an idle
+  daemon serves connected clients before exiting and then answers "daemon is exiting"; one type check per snapshot;
+  memory pressure refuses compiles; eviction cannot hand out a closing workspace; a file that crashes the type
+  checker is isolated; the symbol store runs in WAL mode. The front end reconnects on a broken channel, writes the
+  engine configuration to a private file, runs the classpath export in the background and never starts a JVM
+  after a crash loop refusal.

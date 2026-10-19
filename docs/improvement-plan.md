@@ -395,7 +395,7 @@ Tick each box in the phase PR.
 
 - [x] Phase 0: baseline and probes (0.1 to 0.5)
 - [x] Phase 1: security and fix safety (1.1 to 1.12)
-- [ ] Phase 2: concurrency and resilience (engine E-11 to E-28, Python P-11 to P-27, P9/P10 rest)
+- [x] Phase 2: concurrency and resilience (engine E-11 to E-28, Python P-11 to P-27, P9/P10 rest)
 - [ ] Phase 3: release, build and supply chain (D-01 to D-23, Q-15, P-31)
 - [ ] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27)
 - [ ] Phase 5: new quality checks (GS017 to GS052, GS035 to GS038)
@@ -452,3 +452,16 @@ Independent review of the Phase 1 diff (an `opus` subagent, without the author's
 - The engine log accepted the shared temporary directory, was not re-checked when reopened, and kept the previous file after a refused reconfigure; NEL and the Unicode line separators were not escaped (Python's `splitlines` breaks on them). All fixed; `daemon.logMaxBytes` was declared twice and is now the one key for both logs.
 - Any non syntax message was read as a checker that failed to load; now only a message about a type checking extension is, and a compile that stopped before static checking with nothing to show is a failed check, never a clean one.
 - Kept as is: Groovy 6.0.0's `FormatStringChecker` NPE appears only beside a real error and is reported as `typecheck-incomplete`.
+
+### Phase 2 (19 October 2026)
+
+| Item | Result |
+|---|---|
+| E-11 | Light requests about one document answer from the published snapshot when that document is unchanged (stale while revalidating; the compile runs on the workspace's background thread); a request about a changed document waits. `references`, `rename` and the diagnostics push run on the heavy lane; hover reads lint notes from the caches only. Two hovers during a 300-file compile: 5 ms (target 200 ms, `PerformanceReportSpec`). |
+| E-12, E-13 | One type check per snapshot version, on the snapshot's own sources; the compile holds a lock a waiter polls with its cancel flag; `refresh()` returns early when nothing changed. |
+| E-14, E-15 | Confirmed (probe 0.4). Each connection has a view of the lanes that cancels its requests on close. An idle exit closes the socket, serves connected clients for the grace period, then shuts the lanes; later requests get -32099 "daemon is exiting", which the front end reconnects on. |
+| E-16, E-17 | Every compile attempt's loader is released on every exit (a cancel in the parse-only pass leaked the kept one). The compiler already isolated a too deep file; the type checker did not (a 1,500 term expression turned every file's result into `typecheck-failed`): the culprit is now found by halving. One `Containment.recoverable` rule. |
+| E-18, E-19 | Shedding takes no lock; pressure refuses compiles and type checks (light requests keep the published snapshot). Handing a workspace out and evicting it are atomic per root; a closed workspace fails fast and drains its pending save. |
+| E-22 | `daemon.diskCheckMillis` added, **default 0** (every request, as before): any window would let a check right after a write miss the write. The fingerprint is 64 bits and shares the compile's walk. |
+| E-23, E-24, E-25, E-27b, E-28 | Symbol store: changed documents only, WAL, busy timeout and immediate transactions (WAL alone still failed with SQLITE_BUSY on a read that upgrades). Rename from one snapshot. Socket folder owner from a created file. Safety flags set first in `Main`. `oomExit` in status, warned by `doctor`, `daemon status` and `checkup`. |
+| P-11 to P-27, P9/P10 | All done, none rejected (see the commits): reload inside the reconnecting path, heap kept only while the configured one is unchanged, a separate write timeout and `ChannelBrokenError`, the engine configuration in a 0600 file passed with `--config` (the engine now hashes the configuration it actually reads), no fallback JVM after a crash loop refusal, a background classpath export with `classpath.timeoutSeconds`, one deadline per MCP call on a bounded pool, a hook that always exits 0, locked JDK installs, no `umask(0)`, bounded start lock and unique temporary names, heap growth only for heap exhaustion, relay back pressure, a three state classpath reload, a Stop gate baseline, a reaped daemon process and symlink safe edits. |
