@@ -15,6 +15,7 @@
  */
 package org.groovyscope.engine.lint;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -79,7 +80,7 @@ public final class CodeNarcAnalyzer {
      * not fetch configuration over the network, so a warning goes to stderr and {@code fallback} is used.
      */
     public RuleSet ruleSet(String path, Path root, String fallback) {
-        return ruleSets.computeIfAbsent(resolve(path, root, fallback), CodeNarcAnalyzer::load);
+        return ruleSets.computeIfAbsent(resolve(path, root, fallback), this::load);
     }
 
     /**
@@ -122,11 +123,80 @@ public final class CodeNarcAnalyzer {
         return new org.codenarc.ruleset.ListRuleSet(kept);
     }
 
-    private static RuleSet load(String resolved) {
+    /** Rule names a loaded rule set used that this CodeNarc does not know, per rule set (Q-15). */
+    private final Map<String, java.util.Set<String>> unknownRules = new ConcurrentHashMap<>();
+
+    /**
+     * One message per rule set that named rules this CodeNarc does not know (a newer or older release, a typo): the
+     * rest of the set still runs. Empty when every rule was known.
+     */
+    public List<String> configProblems() {
+        List<String> problems = new ArrayList<>();
+        new java.util.TreeMap<>(unknownRules).forEach((name, rules) -> problems.add("the CodeNarc rule set " + name
+                + " names rule(s) this CodeNarc does not know, skipped: " + String.join(", ", rules)));
+        return problems;
+    }
+
+    /** CodeNarc's runner fills the registry of rule names; the engine does not use the runner, so it does it once. */
+    private static final Object REGISTRY = initializeRegistry();
+
+    private static Object initializeRegistry() {
+        new org.codenarc.ruleregistry.RuleRegistryInitializer().initializeRuleRegistry();
+        return Boolean.TRUE;
+    }
+
+    private RuleSet load(String resolved) {
+        java.util.Objects.requireNonNull(REGISTRY, "rule registry");
+        String text = null;
+        java.util.Set<String> unknown = new java.util.TreeSet<>();
+        for (int attempt = 0; attempt <= MAX_UNKNOWN_RULES; attempt++) {
+            try {
+                RuleSet loaded = text == null ? new GroovyDslRuleSet(resolved) : loadText(text);
+                if (!unknown.isEmpty()) {
+                    unknownRules.put(resolved, unknown);
+                    org.groovyscope.engine.log.EngineLog.warn("%s", configProblems().get(0));
+                }
+                return loaded;
+            } catch (Exception | AssertionError e) {
+                java.util.regex.Matcher missing = NO_SUCH_RULE.matcher(String.valueOf(e.getMessage()));
+                if (!missing.find()) {
+                    throw new IllegalStateException("cannot load CodeNarc rule set " + resolved + ": " + e.getMessage(), e);
+                }
+                String rule = missing.group(1);
+                if (!unknown.add(rule)) {
+                    throw new IllegalStateException("cannot load CodeNarc rule set " + resolved + ": " + e.getMessage(), e);
+                }
+                text = withoutRule(text == null ? read(resolved) : text, rule);
+            }
+        }
+        throw new IllegalStateException("cannot load CodeNarc rule set " + resolved + ": too many unknown rules");
+    }
+
+    static final int MAX_UNKNOWN_RULES = 64;
+    private static final java.util.regex.Pattern NO_SUCH_RULE = java.util.regex.Pattern.compile("No such rule named \\[(\\w+)\\]");
+
+    /** The rule set text with every reference to {@code rule} (bare, with arguments, with a block) taken out. */
+    static String withoutRule(String text, String rule) {
+        return text.replaceAll("(?m)^([ \\t]*)" + java.util.regex.Pattern.quote(rule)
+                + "\\b(?:\\s*\\([^()]*\\))?(?:\\s*\\{[^{}]*\\})?", "$1// " + rule + " (unknown to this CodeNarc)");
+    }
+
+    private static String read(String resolved) {
+        try (java.io.InputStream in = new org.codenarc.util.io.DefaultResourceFactory().getResource(resolved)
+                .getInputStream()) {
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot read CodeNarc rule set " + resolved + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static RuleSet loadText(String text) throws IOException {
+        Path copy = Files.createTempFile("groovyscope-ruleset", ".groovy");
         try {
-            return new GroovyDslRuleSet(resolved);
-        } catch (Exception e) {
-            throw new IllegalStateException("cannot load CodeNarc rule set " + resolved + ": " + e.getMessage(), e);
+            Files.writeString(copy, text, java.nio.charset.StandardCharsets.UTF_8);
+            return new GroovyDslRuleSet(copy.toUri().toString());
+        } finally {
+            Files.deleteIfExists(copy);
         }
     }
 

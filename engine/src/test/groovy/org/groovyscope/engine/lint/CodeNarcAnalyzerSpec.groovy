@@ -104,4 +104,28 @@ class CodeNarcAnalyzerSpec extends Specification {
         findings.size() <= 2
         findings.every { it.severity() != null }
     }
+
+    def 'a rule set naming rules this CodeNarc does not know still lints, and the names are reported once (Q-15)'() {
+        given:
+        Path file = temp.resolve('unknown-rules.groovy')
+        Files.writeString(file, '''\
+ruleset {
+    NoSuchRuleAnywhere
+    AnotherMissingRule(priority: 1)
+    GoneRule {
+        priority = 2
+    }
+    UnnecessarySemicolon
+}
+''')
+        def analyzer = new CodeNarcAnalyzer()
+
+        when:
+        def found = analyzer.analyze('file:///w/A.groovy', 'int a = 1;\n', analyzer.ruleSet(file.toString()))
+
+        then:
+        found*.code() == ['UnnecessarySemicolon']
+        analyzer.configProblems().size() == 1
+        analyzer.configProblems()[0].contains('AnotherMissingRule, GoneRule, NoSuchRuleAnywhere')
+    }
 }
