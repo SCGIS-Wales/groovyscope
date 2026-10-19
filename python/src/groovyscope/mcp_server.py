@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent import futures
 from concurrent.futures import Future
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -426,6 +426,7 @@ def quality_tools(
     """check, format, find_dynamic_code, coverage_gaps, refresh_classpath and workspace_status."""
     settings = report_settings or {}
     classpath = classpath_settings or {}
+    export_job = new_export_job()
 
     def check(
         *,
@@ -516,9 +517,7 @@ def quality_tools(
             "engine": status,
         }
         result.update(client_entry())
-        state = classpath_state(root, classpath)
-        if state is not None:
-            result["classpath"] = state
+        result.update(classpath_report(root, classpath, export_job))
         return result
 
     return {
@@ -527,7 +526,7 @@ def quality_tools(
         "find_dynamic_code": find_dynamic_code,
         "workspace_status": workspace_status,
         **coverage_tools(root, paged, settings),
-        **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy),
+        **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy, job=export_job),
     }
 
 
@@ -549,6 +548,56 @@ def classpath_state(root: Path, settings: Mapping[str, Any]) -> dict[str, Any] |
         return {"state": "unknown", "entries": 0, "message": f"classpath file unreadable: {exc}"}
 
 
+class ExportJob(TypedDict):
+    """The classpath export the MCP server runs in the background: the build outlives one tool call's budget."""
+
+    lock: threading.Lock
+    thread: threading.Thread | None
+    started: float
+    outcome: dict[str, Any] | None
+    reported: bool
+
+
+DEFAULT_EXPORT_WAIT_SECONDS = 90.0
+
+
+def new_export_job() -> ExportJob:
+    return {"lock": threading.Lock(), "thread": None, "started": 0.0, "outcome": None, "reported": True}
+
+
+def export_status(job: ExportJob, clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
+    """``running`` with the seconds so far, the last outcome not yet read, or None when no export ran."""
+    with job["lock"]:
+        thread, outcome = job["thread"], job["outcome"]
+        if thread is not None and thread.is_alive():
+            return {"state": "running", "elapsedSeconds": round(clock() - job["started"])}
+        if outcome is None:
+            return None
+        return {"state": "failed" if "error" in outcome else "finished", **outcome}
+
+
+def classpath_report(root: Path, settings: Mapping[str, Any], job: ExportJob) -> dict[str, Any]:
+    """workspace_status's ``classpath`` (does it still match the build) and ``classpathExport`` (a background
+    export running, or its outcome), each only when there is something to say."""
+    report: dict[str, Any] = {}
+    state = classpath_state(root, settings)
+    if state is not None:
+        report["classpath"] = state
+    export = export_status(job)
+    if export is not None:
+        report["classpathExport"] = export
+    return report
+
+
+def still_running(job: ExportJob, clock: Callable[[], float] = time.monotonic) -> dict[str, Any]:
+    return {
+        "state": "running",
+        "elapsedSeconds": round(clock() - job["started"]),
+        "note": "the build still runs in the background; call refresh_classpath again, or workspace_status, for its "
+        "result (check keeps working against the previous classpath meanwhile)",
+    }
+
+
 def classpath_tools(
     root: Path,
     environ: Mapping[str, str],
@@ -556,15 +605,30 @@ def classpath_tools(
     *,
     clip_at: int = MESSAGE_CHARS,
     confirm_policy: str = interaction.POLICY_AUTO,
+    job: ExportJob | None = None,
 ) -> dict[str, Callable[..., Any]]:
-    """refresh_classpath: the build's classpath exported again after dependencies changed."""
+    """refresh_classpath: the build's classpath exported again after dependencies changed, in the background, so
+    the tool answers within its budget however long the build runs."""
+    export_job = job if job is not None else new_export_job()
+    limit = max(1, int(settings.get("timeoutSeconds") or classpath_export.DEFAULT_TIMEOUT_SECONDS))
+    wait_for = max(0.0, float(settings.get("waitSeconds", DEFAULT_EXPORT_WAIT_SECONDS)))
+    every = max(0.5, float(settings.get("progressSeconds", DEFAULT_PROGRESS_SECONDS)))
 
-    def refresh_classpath(timeout: int = classpath_export.DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
+    def refresh_classpath(timeout: int | None = None) -> dict[str, Any]:
         """Export the compile and test classpath again from the project's Gradle or Maven build, after a
         dependency changed in build.gradle, pom.xml or libs.versions.toml (check and workspace_status say
         `classpath.state: stale`); the engine picks the new classpath up on its next request, no restart. Runs
         the build, which can take minutes, and only in a trusted workspace: otherwise ask the user to run
-        `groovyscope trust` and `groovyscope classpath`."""
+        `groovyscope trust` and `groovyscope classpath`. When the build outlasts this call the answer says
+        `state: running`; call again (or workspace_status) for the result. TIMEOUT is capped at
+        classpath.timeoutSeconds."""
+        with export_job["lock"]:
+            thread = export_job["thread"]
+            if thread is not None and thread.is_alive():
+                return still_running(export_job)
+            if export_job["outcome"] is not None and not export_job["reported"]:
+                export_job["reported"] = True  # the export the agent started earlier finished: its result
+                return dict(export_job["outcome"])
         if not settings.get("file"):
             return {"error": "no classpath settings in this session; run `groovyscope classpath` in a terminal"}
         # Read now, not when the session started: `groovyscope trust --revoke` takes effect at once.
@@ -587,36 +651,70 @@ def classpath_tools(
         if not env.get("JAVA_HOME") and settings.get("javaHome"):
             env["JAVA_HOME"] = str(settings["javaHome"])
         target = Path(str(settings["file"]))
+        seconds = min(limit, max(1, int(timeout))) if timeout else limit
 
-        def waiting(elapsed: float) -> None:
-            interaction.progress(elapsed, None, f"{build} build running ({elapsed:.0f}s)")
+        def run() -> None:
+            outcome = export_outcome(root, env, target, seconds, decision=decision, clip_at=clip_at)
+            with export_job["lock"]:
+                export_job["outcome"] = outcome
 
+        worker = threading.Thread(target=run, name="groovyscope-classpath-export", daemon=True)
+        with export_job["lock"]:
+            export_job["thread"] = worker
+            export_job["started"] = time.monotonic()
+            export_job["outcome"] = None
+            export_job["reported"] = False
         interaction.progress(0, None, f"starting the {build} build")
-        try:
-            with classpath_export.exclusive(target):
-                export = classpath_export.export(
-                    root,
-                    env,
-                    timeout=max(1, int(timeout)),
-                    runner=functools.partial(classpath_export.default_runner, on_wait=waiting),
-                )
-                classpath_export.write_file(target, export, fingerprint=classpath_export.build_fingerprint(root))
-        except ValueError as exc:
-            return {"error": clip(str(exc), clip_at)}
-        except OSError as exc:
-            return {"error": f"the classpath could not be written to {target}: {exc}"}
-        return with_decision(
-            {
-                "tool": export["tool"],
-                "entries": len(export["paths"]),
-                "missing": len(export["missing"]),
-                "file": relative_path(target.resolve().as_uri(), root),
-                "note": "the engine reloads the classpath on its next request",
-            },
-            decision,
-        )
+        worker.start()
+        return await_export(export_job, worker, wait_for, every, build)
 
     return {"refresh_classpath": refresh_classpath}
+
+
+def export_outcome(
+    root: Path, env: Mapping[str, str], target: Path, seconds: int, *, decision: str, clip_at: int
+) -> dict[str, Any]:
+    """Runs the export under its lock and writes the file; the answer refresh_classpath gives for it."""
+    try:
+        with classpath_export.exclusive(target):
+            export = classpath_export.export(
+                root,
+                env,
+                timeout=seconds,
+                # the build runs on its own thread; the caller's thread reports progress while it waits
+                runner=functools.partial(classpath_export.default_runner, on_wait=lambda _elapsed: None),
+            )
+            classpath_export.write_file(target, export, fingerprint=classpath_export.build_fingerprint(root))
+    except ValueError as exc:
+        return {"error": clip(str(exc), clip_at)}
+    except OSError as exc:
+        return {"error": f"the classpath could not be written to {target}: {exc}"}
+    return with_decision(
+        {
+            "tool": export["tool"],
+            "entries": len(export["paths"]),
+            "missing": len(export["missing"]),
+            "file": relative_path(target.resolve().as_uri(), root),
+            "note": "the engine reloads the classpath on its next request",
+        },
+        decision,
+    )
+
+
+def await_export(job: ExportJob, worker: threading.Thread, wait_for: float, every: float, build: str) -> dict[str, Any]:
+    """Waits up to ``wait_for`` seconds for the export, with a progress note every ``every`` seconds; its outcome
+    when it finished, else "still running" (the build goes on and a later call or workspace_status reports it)."""
+    deadline = time.monotonic() + wait_for
+    while worker.is_alive() and time.monotonic() < deadline:
+        worker.join(min(every, max(0.0, deadline - time.monotonic())))
+        if worker.is_alive():
+            elapsed = time.monotonic() - job["started"]
+            interaction.progress(elapsed, None, f"{build} build running ({elapsed:.0f}s)")
+    with job["lock"]:
+        if worker.is_alive() or job["outcome"] is None:
+            return still_running(job)
+        job["reported"] = True
+        return dict(job["outcome"])
 
 
 def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:

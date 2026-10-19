@@ -1402,16 +1402,30 @@ def trusted_now(obj: dict[str, Any]) -> bool:
 
 def classpath_settings(obj: dict[str, Any], effective: Mapping[str, Any]) -> dict[str, Any]:
     """Where the exported classpath lives, whether jars are listed by hand, whether the workspace is trusted
-    (so `refresh_classpath` may run the build) and which JDK the build should use."""
+    (so `refresh_classpath` may run the build), which JDK the build should use, how long the build may run and
+    how long the MCP tool waits for it before answering that it still runs."""
     workspace = effective.get("workspace", {})
     listed = workspace.get("classpathFile") or classpath_export.DEFAULT_FILE
+    budget = float((effective.get("mcp") or {}).get("requestTimeoutSeconds", 100))
     return {
         "file": str(obj["root"] / Path(listed).expanduser()),
         "configured": bool(workspace.get("classpath")),
         "trusted": bool(workspace.get("trust")),
         "isTrusted": lambda: trusted_now(obj),
         "javaHome": obj.get("jdk_home"),
+        "timeoutSeconds": export_timeout(effective),
+        "waitSeconds": max(1.0, budget - EXPORT_REPLY_MARGIN_SECONDS),
+        "progressSeconds": float((effective.get("mcp") or {}).get("progressSeconds", 5)),
     }
+
+
+EXPORT_REPLY_MARGIN_SECONDS = 10.0  # refresh_classpath answers this long before the call's budget runs out
+
+
+def export_timeout(effective: Mapping[str, Any]) -> int:
+    """``classpath.timeoutSeconds``: how long a classpath export (the build) may run."""
+    section = effective.get("classpath") or {}
+    return max(1, int(section.get("timeoutSeconds", classpath_export.DEFAULT_TIMEOUT_SECONDS)))
 
 
 def triage_lines(triage: Mapping[str, Any]) -> list[str]:
@@ -2052,9 +2066,11 @@ def jdk_install(feature: int, vendor: str) -> None:
 
 @main.command("classpath")
 @click.option("--tool", type=click.Choice(["gradle", "maven"]), default=None, help="Build tool (default: detected).")
-@click.option("--timeout", default=classpath_export.DEFAULT_TIMEOUT_SECONDS, show_default=True, help="Seconds.")
+@click.option(
+    "--timeout", type=int, default=None, help="Seconds the build may run (default: classpath.timeoutSeconds)."
+)
 @click.pass_obj
-def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int) -> None:
+def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int | None) -> None:
     """Ask the project's Gradle or Maven build for its compile and test classpath and write it to
     workspace.classpathFile, so dependencies resolve. Runs the build tool, so only in a trusted workspace."""
     try:
@@ -2078,7 +2094,9 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int) -> No
     target = obj["root"] / Path(effective["workspace"].get("classpathFile") or classpath_export.DEFAULT_FILE)
     try:
         with classpath_export.exclusive(target):
-            result = classpath_export.export(obj["root"], environ, tool=tool, timeout=timeout)
+            result = classpath_export.export(
+                obj["root"], environ, tool=tool, timeout=timeout or export_timeout(effective)
+            )
             classpath_export.write_file(target, result, fingerprint=classpath_export.build_fingerprint(obj["root"]))
     except ValueError as exc:
         click.echo(f"groovyscope: {exc}", err=True)

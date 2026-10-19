@@ -233,6 +233,38 @@ def test_refresh_classpath_runs_the_export_only_in_a_trusted_workspace(
     assert "run `groovyscope classpath`" in classpath_tools(tmp_path, engine, file="")["refresh_classpath"]()["error"]
 
 
+def test_refresh_classpath_answers_within_its_budget_while_the_build_goes_on(
+    tmp_path: Path, engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(tmp_path / "build.gradle", "plugins {}\n")
+    entered = threading.Event()
+    release = threading.Event()
+    timeouts: list[int] = []
+
+    def slow_export(_root: Path, _environ: Mapping[str, str], **kwargs: Any) -> classpath.Export:
+        timeouts.append(kwargs["timeout"])
+        entered.set()
+        release.wait(10)
+        return EXPORT
+
+    monkeypatch.setattr(mcp_server.classpath_export, "export", slow_export)
+    engine["responses"]["groovyscope/status"] = {"engine": "1"}
+    tools = classpath_tools(tmp_path, engine, trusted=True, timeoutSeconds=600, waitSeconds=0)
+    first = tools["refresh_classpath"](timeout=5000)
+    assert first["state"] == "running" and "call refresh_classpath again" in first["note"]
+    assert entered.wait(5) and timeouts == [600]  # the agent's timeout is capped at classpath.timeoutSeconds
+    assert tools["refresh_classpath"]()["state"] == "running"  # no second build
+    assert tools["workspace_status"]()["classpathExport"]["state"] == "running"
+    release.set()
+    for _ in range(100):
+        if tools["workspace_status"]()["classpathExport"]["state"] != "running":
+            break
+        entered.wait(0.05)
+    assert tools["workspace_status"]()["classpathExport"]["state"] == "finished"
+    assert tools["refresh_classpath"]()["entries"] == 2  # the result of the export started earlier
+    assert timeouts == [600]
+
+
 def test_cli_reloads_a_daemon_running_an_older_configuration(
     runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

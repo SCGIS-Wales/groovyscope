@@ -469,6 +469,16 @@
         }
       }
     },
+    "classpath": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "reports": {
       "type": "object",
       "additionalProperties": false,
