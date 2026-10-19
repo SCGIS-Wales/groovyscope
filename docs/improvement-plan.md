@@ -396,7 +396,7 @@ Tick each box in the phase PR.
 - [x] Phase 0: baseline and probes (0.1 to 0.5)
 - [x] Phase 1: security and fix safety (1.1 to 1.12)
 - [x] Phase 2: concurrency and resilience (engine E-11 to E-28, Python P-11 to P-27, P9/P10 rest)
-- [ ] Phase 3: release, build and supply chain (D-01 to D-23, Q-15, P-31)
+- [x] Phase 3: release, build and supply chain (D-01 to D-23, Q-15, P-31)
 - [ ] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27)
 - [ ] Phase 5: new quality checks (GS017 to GS052, GS035 to GS038)
 - [ ] Phase 6: hygiene and deduplication (6.1 to 6.6)
@@ -475,3 +475,21 @@ is closed when not published; the MCP `groovyscope/*` navigation handlers now us
 closes outside the map; queued requests at shutdown are answered "daemon is exiting"; the type check cache never
 goes back to an older snapshot; no stale answers after a reconfigure; the Python channel's pending replies have
 their own lock, a reload is bounded by the call's deadline, and the start lock timeout covers the restart backoff.
+
+### Phase 3 (19 October 2026)
+
+| Item | Result |
+|---|---|
+| Exit | **Met.** Two clean builds of one commit give byte-identical JARs. The only difference was the date Shadow's Groovy extension merge stamps into the descriptor (`Properties.store`; `java.properties.date` cannot help, because Gradle sets `-D` properties after the daemon starts); a small transformer in `build.gradle.kts` now merges the descriptors without a date (and without the empty entries Shadow left in `staticExtensionClasses`). |
+| D-01 | CodeNarc pinned in the catalogue; the latest-release lookup is opt in (`-PcodenarcResolve=true`) and runs in the weekly `codenarc-canary.yml`, which builds and tests with it and notes a newer passing release. It opens no PR itself: Dependabot already proposes the bump, and a PR opened with the workflow token would start no CI. AGENTS.md, README and `jar.py` updated. |
+| Q-15 | Confirmed, and worse: an unknown rule name raised an `AssertionError` that `load` did not catch. Also found that the CodeNarc rule registry was never initialised (the engine does not use CodeNarc's runner), so a rule set naming rules by bare name could not load at all. Fixed both; unknown names are skipped and reported once per check as `lint-config`. |
+| D-03, D-04, D-05 | The publish workflow verifies the tag (`vX.Y.Z`, existing, equal to pyproject and `gradle.properties`; `bundle_jar.py` adds the JAR and its embedded version), waits for the tagged commit's required checks and refuses a red one, runs one publish per tag, attests the checksums, SBOMs and hashed requirements too, and attaches assets only after PyPI accepted the upload, without `--clobber`. `workflow_call` removed. The ruleset, the `pypi` environment's tag rule and approvals are repository settings, listed in `docs/ci.md` for the owner. |
+| D-06 | `uv.lock` already followed releases (release-please `extra-files`); CI now runs `uv lock --check`, and `bundle_jar.py` chooses the JAR of the declared version and refuses versions that disagree. |
+| D-07 | Integration tests run on the built JAR with Temurin 17, 21 and 25 and Corretto 21, and on every Python of the matrix; `GROOVYSCOPE_REQUIRE_ENGINE=1` turns their skips into failures. |
+| D-08 | Gradle dependency submission from `main`, dependency review on PRs, CodeQL for `actions`, zizmor (clean after annotating the title check's `pull_request_target`, which checks out nothing). Dependency review calls the REST comparison directly and zizmor runs from PyPI: this session may read no repository but this one, so it could not resolve commit SHAs for new third-party actions. **Deferred: OpenSSF Scorecard** needs `ossf/scorecard-action` pinned by SHA (owner to add). `groovy-ant` and `groovy-templates` are not needed by the engine, but workspace scripts using `AntBuilder` or `SimpleTemplateEngine` would no longer resolve, so they stay, now listed with the other commonly used modules. |
+| D-09 | JaCoCo and the JUnit launcher (versionless, aligned by the JUnit BOM) moved into the catalogue; the unused Spotless entries deleted. **Deferred: dependency lockfiles and verification metadata.** Dependabot is not known to refresh them (unverifiable from here), so they would fail every Gradle update PR; every direct dependency and the one version range are already pinned, and the JAR is reproducible. Owner to decide. |
+| D-10 | `python/NOTICE` had drifted (the Eclipse and Guava paragraph was missing); it and `THIRD-PARTY-NOTICES.md` are now test-enforced copies. Licence expression `Apache-2.0 AND EPL-2.0 AND EPL-1.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT`, taken from the CycloneDX SBOM; Apache NOTICE files merged into the JAR with fixed inputs. Shadow's licence transformer was not used: it would drop the EPL texts. |
+| D-11 | The release workflow mints a GitHub App installation token with `openssl` and the REST API when `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` exist, else falls back to `RELEASE_PLEASE_TOKEN`, then `GITHUB_TOKEN`. Creating the App is the owner's step (`docs/ci.md`). |
+| D-12 | `CODEOWNERS` moved to `.github/` (owner `@api-py`, the account that merges). Requiring code owner review is left to the owner: it would require an approval on every PR, release PRs included. |
+| D-22, P-31 | Timeouts on every job, the dead upload step gone, ruff and mypy strict over `scripts/`, sleeps replaced by events in the relay and progress tests. |
+| D-20, D-23 | The benchmark corpus refuses a checkout without its licence and notice. The Homebrew formula installs the dependencies by hash from the release's attested `groovyscope-requirements.txt` (`--require-hashes`, then the package with `--no-deps`), with an `all_of` licence; releases before 0.24.4 fall back to the unhashed install with a warning. |
