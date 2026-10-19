@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
@@ -251,6 +252,7 @@ def start(
     secure_dir(socket_file.parent)
     secure_dir(log_file.parent)
     LOG.debug("starting daemon: %s", " ".join(command))
+    reap_children()
     with log_file.open("ab") as log:
         process = spawn(
             list(command),
@@ -261,6 +263,7 @@ def start(
             start_new_session=True,
             close_fds=True,
         )
+    keep_child(process)
     deadline = time.monotonic() + timeout
     while True:
         status = check(socket_file)
@@ -277,6 +280,28 @@ def start(
             msg = f"daemon on {socket_file} {reason}; log {log_file} ends with:\n{log_tail(log_file)}"
             raise RuntimeError(msg)
         sleep(0.2)
+
+
+# Daemons this process started. The daemon outlives a CLI call but is still this process's child while it runs
+# (a long MCP session, say): kept here and polled, so one that exits is reaped instead of left a zombie.
+_CHILDREN: list[Any] = []
+_CHILDREN_LOCK = threading.Lock()
+
+
+def keep_child(process: Any) -> None:
+    if hasattr(process, "poll"):
+        with _CHILDREN_LOCK:
+            _CHILDREN.append(process)
+
+
+def reap_children() -> int:
+    """Polls the daemons this process started and forgets those that exited (which reaps them). Returns how
+    many were reaped."""
+    with _CHILDREN_LOCK:
+        running = [child for child in _CHILDREN if child.poll() is None]
+        reaped = len(_CHILDREN) - len(running)
+        _CHILDREN[:] = running
+    return reaped
 
 
 def ensure_running(

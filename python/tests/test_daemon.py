@@ -352,3 +352,26 @@ def test_two_writers_never_lose_the_state_file(tmp_path: Path) -> None:
     assert failures == []
     assert json.loads(path.read_text(encoding="utf-8"))["heap"] in {"1g", "2g"}
     assert [p.name for p in tmp_path.iterdir()] == [path.name]  # no temporary file left behind
+
+
+def test_a_started_daemon_is_kept_and_reaped_once_it_exits(tmp_path: Path) -> None:
+    class Child:
+        def __init__(self) -> None:
+            self.code: int | None = None
+
+        def poll(self) -> int | None:
+            return self.code
+
+    child = Child()
+    daemon.start(
+        ["java"],
+        tmp_path / "s.sock",
+        tmp_path / "logs" / "d.log",
+        {},
+        spawn=lambda *_a, **_k: child,
+        probe_fn=lambda _p: {"engine": "x"},
+        sleep=lambda _s: None,
+    )
+    assert child in daemon._CHILDREN and daemon.reap_children() == 0
+    child.code = 0  # the daemon exited (idle, or stopped)
+    assert daemon.reap_children() == 1 and child not in daemon._CHILDREN
