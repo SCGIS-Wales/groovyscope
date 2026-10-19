@@ -161,4 +161,38 @@ class DiagnosticsPublisherSpec extends Specification {
         then:
         sent.get() == 1
     }
+
+    def 'a publish runs on the heavy lane, and a full lane defers it instead of running beside it (E-11)'() {
+        given: 'a heavy lane of one thread and no queue room left'
+        def services = Fixtures.services('practices-sample')
+        def client = new RecordingLanguageClient()
+        def lanes = new RequestExecutors(1, 1)
+        def publisher = new DiagnosticsPublisher({ services }, { client }, { services.workspace().sources().keySet() as Set },
+                lanes)
+        def hold = new java.util.concurrent.CountDownLatch(1)
+        def running = new java.util.concurrent.CountDownLatch(1)
+        def busy = lanes.heavy { cancel -> running.countDown(); hold.await(30, java.util.concurrent.TimeUnit.SECONDS) }
+        running.await(30, java.util.concurrent.TimeUnit.SECONDS)
+        def queued = lanes.heavy { cancel -> 'queued' }
+
+        when: 'the lane is full: the publish is refused busy and nothing is sent'
+        boolean sent = publisher.publishNow()
+
+        then:
+        !sent
+        client.received.empty
+
+        when: 'the lane frees up'
+        hold.countDown()
+        busy.get(30, java.util.concurrent.TimeUnit.SECONDS)
+        queued.get(30, java.util.concurrent.TimeUnit.SECONDS)
+
+        then: 'the publish goes through the lane'
+        publisher.publishNow()
+        client.received.size() == services.workspace().sources().size()
+
+        cleanup:
+        publisher.shutdown()
+        lanes.shutdown()
+    }
 }

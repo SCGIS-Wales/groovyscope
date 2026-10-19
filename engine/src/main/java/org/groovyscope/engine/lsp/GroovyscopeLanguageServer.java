@@ -140,7 +140,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             this.reloader = reloader;
         }
         this.requests = (executors == null ? RequestExecutors.forConfig(config) : executors).forConnection();
-        this.diagnostics = new DiagnosticsPublisher(services::get, client::get);
+        this.diagnostics = new DiagnosticsPublisher(services::get, client::get, java.util.Set::of, requests);
         this.textDocumentService = new GroovyscopeTextDocumentService(services::get, diagnostics, requests);
         this.diagnostics.openDocuments(textDocumentService::openedDocuments);
         this.workspaceService = new GroovyscopeWorkspaceService(services::get, diagnostics, requests);

@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -32,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.groovyscope.engine.concurrent.Cancellation;
+import org.groovyscope.engine.concurrent.Freshness;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -79,6 +81,8 @@ import org.groovyscope.engine.workspace.WorkspaceModel;
 public final class LanguageServices {
 
     static final int WORKSPACE_SYMBOL_LIMIT = 500;
+    /** Index entries visited between two cancellation checks in a whole-workspace walk. */
+    static final int CHECKPOINT_EVERY = 256;
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 
     private final WorkspaceModel workspace;
@@ -90,7 +94,10 @@ public final class LanguageServices {
         thread.setDaemon(true);
         return thread;
     });
-    private final AtomicBoolean backgroundRefreshQueued = new AtomicBoolean();
+    private final AtomicBoolean backgroundCompileQueued = new AtomicBoolean();
+    private volatile java.util.concurrent.Future<?> backgroundCompile = CompletableFuture.completedFuture(null);
+    // Held for the whole of a compile; a waiter polls its cancel flag instead of blocking on a monitor (E-13).
+    private final java.util.concurrent.locks.ReentrantLock compileLock = new java.util.concurrent.locks.ReentrantLock();
     private volatile Snapshot snapshot = Snapshot.empty();
     /** Bumped on every workspace change; the snapshot is stale while it differs from {@link #compiled}. */
     private final AtomicLong changes = new AtomicLong(1);
@@ -319,9 +326,13 @@ public final class LanguageServices {
         return compiled != changes.get();
     }
 
-    /** Recompiles the workspace now and returns the fresh snapshot. */
+    /** Recompiles the workspace when it changed since the last compile, and returns the snapshot. */
     public Snapshot refresh() {
-        synchronized (lock) {
+        acquireCompileLock();
+        try {
+            if (!isDirty()) {
+                return snapshot;
+            }
             // Captured before the sources are read: an edit that arrives while this compile runs leaves the
             // snapshot stale, so the next query recompiles instead of serving the pre-edit result.
             long target = changes.get();
@@ -337,32 +348,38 @@ public final class LanguageServices {
                         sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,
                         result.diagnostics().values().stream().filter(list -> !list.isEmpty()).count());
                 Map<String, ModuleNode> modules = new HashMap<>(result.modules());
-                // A file that no longer parses keeps a tree of its last good text, parsed again into this
-                // generation: a tree carried over from the previous compile would pin that whole generation
-                // (every file's AST and the loader with its jars) in memory for as long as the error lasts.
-                for (Map.Entry<String, String> source : sources.entrySet()) {
-                    String uri = source.getKey();
-                    if (modules.containsKey(uri)) {
-                        lastGood.put(uri, source.getValue());
-                    } else {
-                        String text = lastGood.get(uri);
-                        if (text != null) {
-                            compiler.parseOnly(uri, text).ifPresent(module -> modules.put(uri, module));
+                Map<String, String> lastTexts;
+                synchronized (lock) {
+                    // A file that no longer parses keeps a tree of its last good text, parsed again into this
+                    // generation: a tree carried over from the previous compile would pin that whole generation
+                    // (every file's AST and the loader with its jars) in memory for as long as the error lasts.
+                    for (Map.Entry<String, String> source : sources.entrySet()) {
+                        if (modules.containsKey(source.getKey())) {
+                            lastGood.put(source.getKey(), source.getValue());
                         }
                     }
+                    lastGood.keySet().retainAll(sources.keySet());
+                    lastTexts = new HashMap<>(lastGood);
                 }
-                lastGood.keySet().retainAll(sources.keySet());
+                for (String uri : sources.keySet()) {
+                    String text = lastTexts.get(uri);
+                    if (!modules.containsKey(uri) && text != null) {
+                        compiler.parseOnly(uri, text).ifPresent(module -> modules.put(uri, module));
+                    }
+                }
                 AstIndex index = AstIndex.build(modules, sources);
                 Resolver resolver = new Resolver(index);
-                version++;
-                snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
-                graph = null;
-                graphVersion = -1;
-                // Nothing references the previous generation now: release the jars its loader held open.
-                if (openLoader != null) {
-                    openLoader.close();
+                synchronized (lock) {
+                    version++;
+                    snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
+                    graph = null;
+                    graphVersion = -1;
+                    // Nothing references the previous generation now: release the jars its loader held open.
+                    if (openLoader != null) {
+                        openLoader.close();
+                    }
+                    openLoader = result.loader();
                 }
-                openLoader = result.loader();
                 persistSymbols(snapshot, sources);
             } catch (CancellationException e) {
                 // Every request that wanted this compile is gone: nothing is recorded, the next request compiles.
@@ -373,12 +390,59 @@ public final class LanguageServices {
                 // Recorded as a snapshot with the failure as a diagnostic, so later requests answer from it until
                 // something changes, instead of repeating the same failure on every request.
                 org.groovyscope.engine.log.EngineLog.warn("%s", "analysis failed: " + e);
-                version++;
-                snapshot = failedSnapshot(snapshot, sources, e, version);
+                synchronized (lock) {
+                    version++;
+                    snapshot = failedSnapshot(snapshot, sources, e, version);
+                }
             }
             compiled = target;
             compiledFingerprint = fingerprint;
             return snapshot;
+        } finally {
+            compileLock.unlock();
+        }
+    }
+
+    /** Waits for the compile lock, leaving (cancelled) when the request is cancelled or interrupted meanwhile. */
+    private void acquireCompileLock() {
+        try {
+            while (!compileLock.tryLock(100, TimeUnit.MILLISECONDS)) {
+                Cancellation.checkpoint();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CancellationException("interrupted while waiting for the compile");
+        }
+    }
+
+    /** The snapshot last published, without compiling. */
+    public Snapshot currentSnapshot() {
+        return snapshot;
+    }
+
+    /** The compile last queued on the background thread (done when none is queued). */
+    public java.util.concurrent.Future<?> backgroundCompile() {
+        return backgroundCompile;
+    }
+
+    /** Queues one compile on the background thread, unless one is already queued. */
+    private void revalidate() {
+        if (!backgroundCompileQueued.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            backgroundCompile = background.submit(() -> {
+                try {
+                    snapshot();
+                } catch (RuntimeException e) {
+                    org.groovyscope.engine.log.EngineLog.debug("background compile of %s failed: %s",
+                            workspace.root(), e);
+                } finally {
+                    backgroundCompileQueued.set(false);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            backgroundCompileQueued.set(false); // closed: nothing more to compile
         }
     }
 
@@ -450,15 +514,7 @@ public final class LanguageServices {
         if (store == null || hasCompiled() || cachedSymbols().isEmpty()) {
             return false;
         }
-        if (backgroundRefreshQueued.compareAndSet(false, true)) {
-            background.submit(() -> {
-                try {
-                    refresh();
-                } finally {
-                    backgroundRefreshQueued.set(false);
-                }
-            });
-        }
+        revalidate();
         return true;
     }
 
@@ -482,9 +538,20 @@ public final class LanguageServices {
         }
     }
 
-    /** The current snapshot, rebuilt first when stale; one compile per change however many requests need it. */
+    /**
+     * The current snapshot, rebuilt first when stale; one compile per change however many requests need it. A light
+     * request about a document unchanged since the published compile (see {@link Freshness}) gets the published
+     * snapshot at once while the compile runs in the background.
+     */
     public Snapshot snapshot() {
         lastUsedNanos = System.nanoTime();
+        String staleOk = Freshness.staleOkUri();
+        Snapshot published = snapshot;
+        if (staleOk != null && isDirty() && published.version() > 0
+                && Objects.equals(published.result().sources().get(staleOk), workspace.text(staleOk))) {
+            revalidate();
+            return published;
+        }
         while (isDirty()) {
             CompileJob job;
             boolean owner;
@@ -748,7 +815,11 @@ public final class LanguageServices {
 
     List<Reference> referencesTo(Snapshot current, ASTNode declaration, boolean includeDeclaration) {
         List<Reference> references = new ArrayList<>();
+        int visited = 0;
         for (NodeEntry candidate : current.index().allEntries()) {
+            if (++visited % CHECKPOINT_EVERY == 0) {
+                Cancellation.checkpoint(); // a whole-workspace walk: a cancelled request leaves part-way
+            }
             if (candidate.role() == NodeEntry.Role.OTHER) {
                 continue;
             }
@@ -900,7 +971,10 @@ public final class LanguageServices {
     }
 
     public RenamePreparation prepareRename(String uri, Position position) {
-        Snapshot current = snapshot();
+        return prepareRename(snapshot(), uri, position);
+    }
+
+    private RenamePreparation prepareRename(Snapshot current, String uri, Position position) {
         Optional<NodeEntry> entry = current.index().nodeAt(uri, position);
         if (entry.isEmpty()) {
             return RenamePreparation.refused("nothing to rename at this position");
@@ -927,11 +1001,12 @@ public final class LanguageServices {
         if (newName == null || !IDENTIFIER.matcher(newName).matches()) {
             return RenameResult.refused("'" + newName + "' is not a valid identifier");
         }
-        RenamePreparation preparation = prepareRename(uri, position);
+        // One snapshot for the check and the edits: an edit in between cannot pull the node out from under it.
+        Snapshot current = snapshot();
+        RenamePreparation preparation = prepareRename(current, uri, position);
         if (preparation.isRefused()) {
             return RenameResult.refused(preparation.refusalReason());
         }
-        Snapshot current = snapshot();
         NodeEntry entry = current.index().nodeAt(uri, position).orElseThrow();
         ASTNode declaration = current.resolver().resolve(entry).orElseThrow().primary();
         List<Reference> references = referencesTo(current, declaration, true);

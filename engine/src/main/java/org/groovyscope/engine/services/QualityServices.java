@@ -404,6 +404,30 @@ public final class QualityServices {
                 navigation.snapshot().result().modules().get(uri));
     }
 
+    /**
+     * The lint findings already computed for this exact text, or none: for hover, which must not run CodeNarc on the
+     * light lane (the diagnostics pass fills the cache).
+     */
+    public List<Diagnostic> cachedLint(String uri, String text) {
+        LintEntry cached = lintCache.get(uri);
+        if (cached == null || text == null || !cached.key.endsWith(":" + hash(text))) {
+            return List.of();
+        }
+        Optional<Profile> governing = governing(uri);
+        if (governing.isEmpty() || governing.get().codenarcDisable().isEmpty()) {
+            return cached.diagnostics;
+        }
+        List<String> disabled = governing.get().codenarcDisable();
+        return cached.diagnostics.stream().filter(d -> !disabled.contains(d.code())).toList();
+    }
+
+    /** The practice findings already computed for the published snapshot, or none; never compiles or analyses. */
+    public List<PracticeFinder.Practice> cachedPractices(String uri) {
+        PracticeEntry cached = practiceCache.get(uri);
+        return cached != null && cached.version() == navigation.currentSnapshot().version() ? cached.practices()
+                : List.of();
+    }
+
     /** groovyscope's practice findings (GS codes) for one Groovy document, from the current snapshot. */
     public List<PracticeFinder.Practice> practices(String uri) {
         if (WorkspaceModel.isJavaUri(uri) || !workspace.config().practices().enabled()) {
