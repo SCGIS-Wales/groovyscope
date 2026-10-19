@@ -12,6 +12,7 @@ jobs:
   release-please:
     name: release PR or tag
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -19,32 +20,61 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      # With RELEASE_PLEASE_TOKEN (a fine-grained token of a maintainer: contents and pull requests, write, this
-      # repository only) the release PR is opened as that person: its CI runs without the manual approval that
-      # bot-opened PRs need, and its merge is a user push, which starts this workflow again to cut the tag.
-      # Without the secret the workflow falls back to GITHUB_TOKEN and the old manual steps apply.
+      # Preferred: a GitHub App (variable RELEASE_APP_ID, secret RELEASE_APP_PRIVATE_KEY; contents and pull
+      # requests, write, this repository only). Its short-lived installation token opens the release PR so its CI
+      # runs without manual approval, and a merge it makes starts this workflow again to cut the tag. The token is
+      # minted here with openssl and the REST API (no third-party action). Fallbacks, in order: the older
+      # RELEASE_PLEASE_TOKEN (a maintainer's fine-grained token), then GITHUB_TOKEN with the manual steps.
+      - name: Mint a GitHub App installation token
+        id: app
+        env:
+          APP_ID: ${{ vars.RELEASE_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::notice::no GitHub App configured (RELEASE_APP_ID, RELEASE_APP_PRIVATE_KEY); using the fallback token"
+            exit 0
+          fi
+          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          now=$(date +%s)
+          header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+          payload=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' $((now - 60)) $((now + 540)) "$APP_ID" | b64url)
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$APP_KEY" > "$key"
+          signature=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$key" | b64url)
+          jwt="$header.$payload.$signature"
+          api() { curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" "$@"; }
+          installation=$(api "https://api.github.com/repos/$GH_REPO/installation" | jq -r .id)
+          token=$(api -X POST "https://api.github.com/app/installations/$installation/access_tokens" \
+            -d "{\"repositories\":[\"${GH_REPO#*/}\"],\"permissions\":{\"contents\":\"write\",\"pull_requests\":\"write\"}}" \
+            | jq -r .token)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
       - name: Run release-please
         id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          token: ${{ steps.app.outputs.token || secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
       # The release PR is marked to merge itself once its checks pass. Only GitHub's own auto-merge is requested,
       # never a merge: `gh pr merge --auto` merges at once when nothing is required yet (no checks reported, no
       # branch protection), which released 0.16.1 and 0.17.0 without CI. The mutation below fails instead when
       # "Allow auto-merge" is off or the PR has no pending requirement, and the PR then waits for a person or the
-      # session that drives the release. Without RELEASE_PLEASE_TOKEN nothing is requested: a merge by the
+      # session that drives the release. Without an App or RELEASE_PLEASE_TOKEN nothing is requested: a merge by the
       # built-in token would not start the tagging run.
       - name: Mark the release PR to merge itself when its checks pass
         if: steps.release.outputs.prs_created == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          GH_TOKEN: ${{ steps.app.outputs.token || secrets.RELEASE_PLEASE_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PRS: ${{ steps.release.outputs.prs }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::notice::RELEASE_PLEASE_TOKEN is not set; merge the release PR once its checks are green"
+            echo "::notice::no GitHub App or RELEASE_PLEASE_TOKEN; merge the release PR once its checks are green"
             exit 0
           fi
           for number in $(printf '%s' "$PRS" | jq -r '.[].number'); do
@@ -64,6 +94,7 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       actions: write
     steps:

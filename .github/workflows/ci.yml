@@ -14,11 +14,14 @@ concurrency:
 
 env:
   GRADLE_OPTS: -Dorg.gradle.daemon=false
+  # The engine integration tests fail instead of skipping when the JAR or the JDK is missing.
+  GROOVYSCOPE_REQUIRE_ENGINE: "1"
 
 jobs:
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -52,12 +55,24 @@ jobs:
           path: engine/build/reports/tests/
           if-no-files-found: ignore
 
+      - name: Upload the engine JAR for the other jobs
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-jar
+          path: engine/build/libs/groovyscope-engine-*-all.jar
+          if-no-files-found: error
+
       - name: Set up uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
           cache-dependency-glob: python/uv.lock
           python-version: "3.12"
+
+      - name: The lock file matches pyproject.toml
+        working-directory: python
+        run: uv lock --check
 
       - name: Bundle the engine JAR into the package
         run: python3 scripts/bundle_jar.py
@@ -66,17 +81,19 @@ jobs:
         working-directory: python
         run: uv sync --frozen
 
-      - name: Lint
+      - name: Lint (package, tests and scripts)
         working-directory: python
         run: |
-          uv run ruff check .
-          uv run ruff format --check .
+          uv run ruff check . ../scripts
+          uv run ruff format --check . ../scripts
 
-      - name: Type check
+      - name: Type check (package and scripts)
         working-directory: python
-        run: uv run mypy
+        run: |
+          uv run mypy
+          uv run mypy --strict ../scripts
 
-      - name: Test (coverage gate 90%, includes the engine lifecycle integration test)
+      - name: Test (coverage gate 90%, includes the engine integration tests)
         working-directory: python
         run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
 
@@ -96,7 +113,9 @@ jobs:
 
   python-versions:
     name: python ${{ matrix.python-version }}
+    needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +126,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Download the engine JAR
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-jar
+          path: engine/build/libs
+
       - name: Set up uv with Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
@@ -114,9 +145,11 @@ jobs:
           cache-dependency-glob: python/uv.lock
           python-version: ${{ matrix.python-version }}
 
-      - name: Sync Python dependencies
-        working-directory: python
-        run: uv sync --frozen
+      - name: Bundle the engine JAR and sync Python dependencies
+        run: |
+          python3 scripts/bundle_jar.py
+          cd python
+          uv sync --frozen
 
       - name: Lint and type check
         working-directory: python
@@ -125,17 +158,56 @@ jobs:
           uv run ruff format --check .
           uv run mypy
 
-      - name: Test (the engine integration tests are skipped without the JAR; the build job runs them)
+      - name: Test (the engine integration tests included)
         working-directory: python
         run: uv run pytest -p no:cacheprovider
 
-      - name: Upload distributions
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+  # The engine targets Java 17 bytecode and the front end accepts JDK 17 and later: the integration tests run the
+  # built JAR on the oldest supported JDK, the recommended one from two vendors and the newest LTS.
+  engine-jdks:
+    name: engine on ${{ matrix.distribution }} ${{ matrix.java }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { distribution: temurin, java: "17" }
+          - { distribution: temurin, java: "21" }
+          - { distribution: corretto, java: "21" }
+          - { distribution: temurin, java: "25" }
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: dist
-          path: |
-            python/dist/*.whl
-            python/dist/*.tar.gz
-            engine/build/libs/groovyscope-engine-*-all.jar
-          if-no-files-found: error
+          persist-credentials: false
+
+      - name: Set up JDK ${{ matrix.java }} (${{ matrix.distribution }})
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ matrix.java }}
+
+      - name: Download the engine JAR
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-jar
+          path: engine/build/libs
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+          python-version: "3.12"
+
+      - name: Bundle the engine JAR and sync Python dependencies
+        run: |
+          python3 scripts/bundle_jar.py
+          cd python
+          uv sync --frozen
+
+      - name: Integration tests on this JDK
+        working-directory: python
+        run: uv run pytest -m integration -p no:cacheprovider

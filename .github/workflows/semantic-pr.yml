@@ -1,7 +1,9 @@
 name: Semantic PR
 
+# pull_request_target so the title of a PR from a fork is checked too; safe here: nothing is checked out or run,
+# the job reads the title through the API with a read-only token.
 on:
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened, edited, synchronize, reopened]
 
 permissions:
@@ -11,6 +13,7 @@ jobs:
   title:
     name: Conventional Commit title
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6
         env:

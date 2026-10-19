@@ -198,10 +198,16 @@ def test_the_sdk_hands_the_request_context_to_the_tool_and_hides_it_from_the_sch
 
 def test_waiting_calls_send_progress_notes(monkeypatch: pytest.MonkeyPatch) -> None:
     notes: list[str] = []
-    monkeypatch.setattr(interaction, "progress", lambda _d, _t, message, **_k: notes.append(message))
+    heard = threading.Event()
+
+    def note(_d: object, _t: object, message: str, **_k: object) -> None:
+        notes.append(message)
+        heard.set()
+
+    monkeypatch.setattr(interaction, "progress", note)
 
     def slow(method: str, params: dict[str, Any], _timeout: float | None = None) -> Any:
-        time.sleep(0.35)
+        assert heard.wait(10), "no progress note while the engine call was running"
         return {"method": method, "params": params}
 
     call = mcp_server.single_flight(slow, budget=10, max_in_flight=2, progress_every=0.1)

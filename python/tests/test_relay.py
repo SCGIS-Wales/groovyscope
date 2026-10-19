@@ -33,15 +33,18 @@ async def test_relay_copies_both_ways_and_ends_when_the_socket_closes(short_dir:
     received: list[bytes] = []
     out_closed = asyncio.Event()
 
+    echoed = asyncio.Event()
+
     async def write_out(data: bytes) -> None:
         received.append(data)
+        echoed.set()
 
     async def close_out() -> None:
         out_closed.set()
 
     task = asyncio.create_task(relay.relay(path, stdin, write_out, close_out))
     stdin.feed_data(b"hello")
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(echoed.wait(), 10)  # the echo came back: the request was relayed before EOF
     stdin.feed_eof()
     code = await asyncio.wait_for(task, 10)
     server.close()
@@ -80,15 +83,18 @@ async def test_relay_uses_a_connection_opened_before_stdin_is_touched(short_dir:
     stdin = asyncio.StreamReader()
     received: list[bytes] = []
 
+    echoed = asyncio.Event()
+
     async def write_out(data: bytes) -> None:
         received.append(data)
+        echoed.set()
 
     async def close_out() -> None:
         pass
 
     task = asyncio.create_task(relay.relay(path, stdin, write_out, close_out, connection))
     stdin.feed_data(b"init")
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(echoed.wait(), 10)
     stdin.feed_eof()
     assert await asyncio.wait_for(task, 10) == 0
     assert b"".join(received) == b"echo:init"

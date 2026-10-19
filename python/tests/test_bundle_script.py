@@ -98,4 +98,5 @@ def test_bundle_refuses_versions_that_disagree(tmp_path: Path, capsys: pytest.Ca
         archive.writestr("org/groovyscope/engine/engine-version.properties", "version=1.2.2\n")
     assert script.main(["--repo", str(repo), "--jar-dir", str(tmp_path / "out")]) == 1
     assert "1.2.2" in capsys.readouterr().err
-    assert script.main(["--repo", str(fake_repo(tmp_path / "empty", "2.0.0", "2.0.0")), "--jar-dir", str(tmp_path)]) == 1
+    empty = fake_repo(tmp_path / "empty", "2.0.0", "2.0.0")
+    assert script.main(["--repo", str(empty), "--jar-dir", str(tmp_path)]) == 1
