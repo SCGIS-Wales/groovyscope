@@ -292,6 +292,7 @@ def test_verify_failed_runs_the_last_failures_again(review: dict[str, Any], tmp_
         zipped.writestr("m/build/test-results/test/TEST-app.Z.xml", REPORT.replace("app.S", "app.Z"))
     from_ci = runner.invoke(cli.main, ["--root", str(tmp_path), "verify", "--failed", "--results", str(archive)])
     assert "run: ./gradlew test --tests app.Z.t" in from_ci.output
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "verify", "--results", str(archive)]).exit_code == 2
     clean = tmp_path / "clean"
     clean.mkdir()
     none = runner.invoke(cli.main, ["--root", str(clean), "verify", "--failed"])

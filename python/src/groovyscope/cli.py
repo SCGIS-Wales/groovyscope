@@ -1181,6 +1181,17 @@ def coverage_lines(coverage: Mapping[str, Any]) -> list[str]:
     return lines + [f"  {g['path']}:{g['line']}: {g['name']}" for g in coverage["uncovered"]]
 
 
+def coverage_plan(plan_result: Mapping[str, Any]) -> dict[str, Any]:
+    """The plan with the JaCoCo report task added to its command, or a note when the build has none."""
+    args = list(plan_result.get("commandArgs") or [])
+    if not args:
+        return dict(plan_result)
+    if not plan_result.get("coverageTask"):
+        return {**plan_result, "note": "the build does not apply JaCoCo: --coverage has nothing to read"}
+    args = verify.with_coverage(args, plan_result["coverageTask"])
+    return {**plan_result, "commandArgs": args, "command": verify.quoted(args)}
+
+
 @main.command("verify")
 @click.option("--base", default=None, help="Base branch (default: the repository's default branch).")
 @click.option("--staged", is_flag=True, help="Verify the index instead of the branch.")
@@ -1215,6 +1226,8 @@ def verify_command(
     test methods the change reaches (through the call graph) with one Gradle command, and read the JUnit XML
     reports the run wrote. Tests of tasks outside `verify.runTasks` (integration tests that need CI credentials)
     are listed, not run. Exit 1 on a failed build or test, or a blocking finding."""
+    if results_from and not failed:
+        raise click.UsageError("--results goes with --failed")
     if failed:
         verify_failed(obj, results_from, dry_run=dry_run, as_json=as_json)
         return
@@ -1228,13 +1241,9 @@ def verify_command(
     plan_result = result.get("tests") or {}
     lines = [f"verify against {result.get('base')}: {result.get('verdict')}"]
     lines += triage_lines(result.get("triage") or {})
+    if coverage:
+        plan_result = coverage_plan(plan_result)
     args = list(plan_result.get("commandArgs") or [])
-    if coverage and args:
-        if plan_result.get("coverageTask"):
-            args = verify.with_coverage(args, plan_result["coverageTask"])
-            plan_result = {**plan_result, "commandArgs": args, "command": verify.quoted(args)}
-        else:
-            plan_result = {**plan_result, "note": "the build does not apply JaCoCo: --coverage has nothing to read"}
     lines += verify.test_lines(plan_result)
     gradle: dict[str, Any] | None = None
     uncovered: dict[str, Any] | None = None

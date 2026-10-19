@@ -214,7 +214,8 @@ def lines(summary: Mapping[str, Any], limit: int = 20) -> list[str]:
     for item in failed[:limit]:
         where = f" at {item['at']}" if item["at"] else ""
         test = f" (test {item['test']})" if item["test"] and item["test"] != item["at"] else ""
-        out.append(f"  {item['kind']}: {item['className']}.{item['name']}: {item['message']}{where}{test}")
+        message = " ".join(item["message"].split())  # a Spock condition diagram spans lines
+        out.append(f"  {item['kind']}: {item['className']}.{item['name']}: {message}{where}{test}")
     if len(failed) > limit:
         out.append(f"  +{len(failed) - limit} more")
     out += [f"  note: {note}" for note in summary.get("notes") or []]

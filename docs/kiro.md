@@ -274,6 +274,7 @@ sharing the workspace daemon with the LSP side) adds 29 tools; the README lists 
   should-fix findings on the changed lines, impact of the changed declarations, risky constructs added,
   uncovered methods, with the build's SpotBugs findings merged in
 - "Which methods have no test coverage?" → `coverage_gaps()` on the JaCoCo report
+- "Why did the tests fail?" → `test_results()` on the last run, or `test_results(["artifacts.zip"])` on a CI archive
 - "Explain what `ResourceExecutionPlugin` does" → `explain_code(symbol=...)`: members, calls, callers, field
   writes, exceptions and the external world it touches, as facts the agent turns into prose
 - "Draw the class diagram around `OrderService` for draw.io" → `relationship_graph(symbols=[...], depth=2,

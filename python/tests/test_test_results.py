@@ -128,7 +128,8 @@ def test_a_single_file_keep_and_default_sources(tmp_path: Path) -> None:
 
 
 def test_lines_name_each_failure_and_cap_the_list() -> None:
-    failure = {"className": "app.S", "name": "t", "kind": "failure", "message": "boom", "at": "S.groovy:3 in app.S.t"}
+    failure = {"className": "app.S", "name": "t", "kind": "failure", "message": "bo\n  om"}
+    failure["at"] = "S.groovy:3 in app.S.t"
     summary = {
         "reports": 1,
         "tests": 2,
@@ -140,11 +141,11 @@ def test_lines_name_each_failure_and_cap_the_list() -> None:
     }
     assert test_results.lines(summary, 1) == [
         "2 test(s) in 1 report(s): 2 failed, 0 error(s), 0 skipped",
-        "  failure: app.S.t: boom at S.groovy:3 in app.S.t",
+        "  failure: app.S.t: bo om at S.groovy:3 in app.S.t",
         "  +1 more",
         "  note: n",
     ]
-    assert test_results.lines(summary)[2] == "  failure: app.S.t: boom (test x)"
+    assert test_results.lines(summary)[2] == "  failure: app.S.t: bo om (test x)"
 
 
 def test_the_cli_reads_folders_and_archives(tmp_path: Path) -> None:
