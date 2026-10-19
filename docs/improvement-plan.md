@@ -465,3 +465,13 @@ Independent review of the Phase 1 diff (an `opus` subagent, without the author's
 | E-22 | `daemon.diskCheckMillis` added, **default 0** (every request, as before): any window would let a check right after a write miss the write. The fingerprint is 64 bits and shares the compile's walk. |
 | E-23, E-24, E-25, E-27b, E-28 | Symbol store: changed documents only, WAL, busy timeout and immediate transactions (WAL alone still failed with SQLITE_BUSY on a read that upgrades). Rename from one snapshot. Socket folder owner from a created file. Safety flags set first in `Main`. `oomExit` in status, warned by `doctor`, `daemon status` and `checkup`. |
 | P-11 to P-27, P9/P10 | All done, none rejected (see the commits): reload inside the reconnecting path, heap kept only while the configured one is unchanged, a separate write timeout and `ChannelBrokenError`, the engine configuration in a 0600 file passed with `--config` (the engine now hashes the configuration it actually reads), no fallback JVM after a crash loop refusal, a background classpath export with `classpath.timeoutSeconds`, one deadline per MCP call on a bounded pool, a hook that always exits 0, locked JDK installs, no `umask(0)`, bounded start lock and unique temporary names, heap growth only for heap exhaustion, relay back pressure, a three state classpath reload, a Stop gate baseline, a reaped daemon process and symlink safe edits. |
+
+Independent review of the Phase 2 diff (an `opus` subagent, without the author's notes): the lock order is acyclic
+(compile lock, then the services monitor; nothing waits on a future or another lock while holding one), and no
+thread waits on the heavy lane from the heavy lane. Acted on before merge: a compile cancelled or failing after
+`compile` returned (at the indexing checkpoint) leaked its loader, now permanently because of the new tracking, and
+is closed when not published; the MCP `groovyscope/*` navigation handlers now use the same stale-OK light path and
+`groovyscope/references` the heavy lane; a background compile is abandoned when its workspace closes and eviction
+closes outside the map; queued requests at shutdown are answered "daemon is exiting"; the type check cache never
+goes back to an older snapshot; no stale answers after a reconfigure; the Python channel's pending replies have
+their own lock, a reload is bounded by the call's deadline, and the start lock timeout covers the restart backoff.

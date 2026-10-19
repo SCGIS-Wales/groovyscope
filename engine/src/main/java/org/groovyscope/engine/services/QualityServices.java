@@ -155,7 +155,12 @@ public final class QualityServices {
                     workspace.classpath(), workspace.config().trust(), workspace.config().typecheck(),
                     workspace.config().groovy(), current.result().unresolvedUris());
             TypeCheckEntry entry = new TypeCheckEntry(current.version(), typed);
-            typeCache = entry;
+            synchronized (typeLock) {
+                // A check of an older snapshot finishing late never replaces a newer one.
+                if (typeCache == null || typeCache.version() < entry.version()) {
+                    typeCache = entry;
+                }
+            }
             org.groovyscope.engine.log.EngineLog.debug("type-checked %d file(s) in %d ms (snapshot %d)", typed.size(),
                     (System.nanoTime() - started) / 1_000_000, current.version());
             job.complete(entry);

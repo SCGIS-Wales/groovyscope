@@ -24,7 +24,8 @@ STATUS_METHOD = "groovyscope/status"
 SHUTDOWN_METHOD = "groovyscope/shutdownDaemon"
 START_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 15.0
-LOCK_TIMEOUT_SECONDS = START_TIMEOUT_SECONDS + STOP_TIMEOUT_SECONDS  # one holder may stop an old daemon, then start
+# One healthy holder may stop an old daemon, wait out the restart backoff, then start a new one.
+LOCK_TIMEOUT_SECONDS = START_TIMEOUT_SECONDS + STOP_TIMEOUT_SECONDS + selfheal.MAX_BACKOFF_SECONDS
 LOCK_POLL_SECONDS = 0.1
 # sun_path is 104 bytes on macOS and the BSDs, 108 on Linux (including the terminating NUL).
 MAX_SOCKET_PATH = {"darwin": 103}.get(sys.platform, 107)

@@ -26,6 +26,7 @@ STATE_SUFFIX = ".state.json"
 WINDOW_SECONDS = 600.0  # the restart budget's window
 BACKOFF_BASE_SECONDS = 1.0
 BACKOFF_CAP_SECONDS = 30.0
+MAX_BACKOFF_SECONDS = BACKOFF_CAP_SECONDS * 1.5  # the cap times the largest jitter factor (0.5 + jitter)
 TAIL_BYTES = 65536  # how much of the log after the last start is searched for the exit cause
 OOM_MARKER = "OutOfMemoryError"
 # Only these mean the heap was too small: a bigger -Xmx helps. Metaspace, native threads, direct buffers and the

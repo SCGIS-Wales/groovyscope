@@ -112,6 +112,8 @@ public final class LanguageServices {
     private CompileJob inFlight;
     private volatile long lastUsedNanos = System.nanoTime();
     private volatile boolean closed;
+    /** The change count of the last reconfigure: a snapshot older than that is never served stale. */
+    private volatile long reconfiguredAt;
     /** The symbol save not yet written; a newer snapshot replaces it, so saves never queue up. */
     private final AtomicReference<Runnable> pendingSave = new AtomicReference<>();
 
@@ -336,6 +338,8 @@ public final class LanguageServices {
             folded = null;
         }
         markDirty();
+        // Until a compile under the new settings is published, no request is answered from the old one.
+        reconfiguredAt = changes.get();
     }
 
     public boolean isDirty() {
@@ -354,13 +358,15 @@ public final class LanguageServices {
             long target = changes.get();
             String fingerprint = null;
             Map<String, String> sources = Map.of();
+            CompilationResult result = null;
+            boolean published = false;
             try {
                 // Taken before the sources are read, so an edit racing this compile shows up as a later change.
                 long started = System.nanoTime();
                 WorkspaceModel.CompileInput input = workspace.compileInput();
                 fingerprint = input.fingerprint();
                 sources = input.sources();
-                CompilationResult result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
+                result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
                 org.groovyscope.engine.log.EngineLog.debug("compiled %d file(s) of %s in %d ms (%d with diagnostics)",
                         sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,
                         result.diagnostics().values().stream().filter(list -> !list.isEmpty()).count());
@@ -387,6 +393,10 @@ public final class LanguageServices {
                 AstIndex index = AstIndex.build(modules, sources);
                 Resolver resolver = new Resolver(index);
                 synchronized (lock) {
+                    if (closed) {
+                        // released while this compile ran: nothing is published, and its loader is closed below
+                        throw new CancellationException("the workspace was closed during the compile");
+                    }
                     version++;
                     snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
                     graph = null;
@@ -396,6 +406,7 @@ public final class LanguageServices {
                         openLoader.close();
                     }
                     openLoader = result.loader();
+                    published = true;
                 }
                 persistSymbols(snapshot, sources);
             } catch (CancellationException e) {
@@ -410,6 +421,12 @@ public final class LanguageServices {
                 synchronized (lock) {
                     version++;
                     snapshot = failedSnapshot(snapshot, sources, e, version);
+                }
+            } finally {
+                // A result that was not published (cancelled or failed after the compile returned) owns a loader
+                // nobody else will close.
+                if (!published && result != null && result.loader() != null) {
+                    result.loader().close();
                 }
             }
             compiled = target;
@@ -450,7 +467,8 @@ public final class LanguageServices {
         try {
             backgroundCompile = background.submit(() -> {
                 try {
-                    snapshot();
+                    // Nobody waits on it, so it is abandoned only when the workspace closes.
+                    Cancellation.run(() -> closed, this::snapshot);
                 } catch (RuntimeException e) {
                     org.groovyscope.engine.log.EngineLog.debug("background compile of %s failed: %s",
                             workspace.root(), e);
@@ -568,7 +586,7 @@ public final class LanguageServices {
         lastUsedNanos = System.nanoTime();
         String staleOk = Freshness.staleOkUri();
         Snapshot published = snapshot;
-        if (staleOk != null && isDirty() && published.version() > 0
+        if (staleOk != null && isDirty() && published.version() > 0 && compiled >= reconfiguredAt
                 && Objects.equals(published.result().sources().get(staleOk), workspace.text(staleOk))) {
             revalidate();
             return published;

@@ -977,3 +977,24 @@ def test_test_results_tool_reads_folders_and_archives(tmp_path: Path) -> None:
     found = tool()
     assert found["failures"] == 1 and found["failedCount"] == 1 and found["failed"][0]["message"] == "m"
     assert tool(["missing.zip"])["notes"] == [f"{(tmp_path / 'missing.zip').resolve()}: not found"]
+
+
+def test_a_configuration_reload_never_outlives_the_call_that_carries_it() -> None:
+    timeouts: dict[str, float] = {}
+
+    def engine(_session: object, method: str, _params: object, timeout: float) -> object:
+        timeouts[method] = timeout
+        return {"reloaded": True}
+
+    dispatch, _close = mcp_server.engine_dispatcher(
+        Path("/nonexistent.sock"),
+        None,
+        opener=lambda _path: object(),
+        engine=engine,
+        closer=lambda _session: None,
+        configuration=lambda: ("digest", "{}"),
+        budget=100.0,
+    )
+    dispatch("groovyscope/status", {}, timeout=2.0)
+    assert timeouts[mcp_server.RELOAD_METHOD] <= 2.0
+    assert timeouts["groovyscope/status"] <= 2.0

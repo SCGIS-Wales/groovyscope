@@ -214,7 +214,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(
             DefinitionParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             LanguageServices current = ready();
             String uri = params.getTextDocument().getUri();
             org.groovyscope.engine.model.Position position = Converters.fromLsp(params.getPosition());
@@ -232,7 +232,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> typeDefinition(
             TypeDefinitionParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             Optional<Definition> definition = ready().typeDefinition(params.getTextDocument().getUri(),
                     Converters.fromLsp(params.getPosition()));
             return Either.forLeft(locations(definition));
@@ -249,15 +249,6 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
             locations.add(new Location(symbol.location().uri(), Converters.toLsp(range)));
         }
         return locations;
-    }
-
-    /**
-     * A light request about one document: answered from the published snapshot while a compile is pending, unless
-     * that document itself changed since (see {@link org.groovyscope.engine.concurrent.Freshness}).
-     */
-    private <T> CompletableFuture<T> lightFor(String uri, java.util.function.Function<org.eclipse.lsp4j.jsonrpc.CancelChecker, T> work) {
-        return requests.light(cancel -> org.groovyscope.engine.concurrent.Freshness.staleOkFor(uri,
-                () -> work.apply(cancel)));
     }
 
     @Override
@@ -285,7 +276,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<Hover> hover(HoverParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             return fullHover(ready(), params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))
                     .map(Converters::hover).orElse(null);
         });
@@ -337,7 +328,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<Either<SymbolInformation, DocumentSymbol>>> documentSymbol(DocumentSymbolParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             List<Either<SymbolInformation, DocumentSymbol>> symbols = new ArrayList<>();
             for (Symbol symbol : ready().documentSymbols(params.getTextDocument().getUri())) {
                 if (symbol.location() != null) {
@@ -350,7 +341,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<Either<List<CompletionItem>, CompletionList>> completion(CompletionParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             List<CompletionItem> items = new ArrayList<>();
             for (Completion completion : ready().completion(params.getTextDocument().getUri(),
                     Converters.fromLsp(params.getPosition()))) {
@@ -362,7 +353,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<SignatureHelp> signatureHelp(SignatureHelpParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> ready()
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> ready()
                 .signatureHelp(params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))
                 .map(Converters::signatureHelp)
                 .orElse(null));
@@ -481,7 +472,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> implementation(
             ImplementationParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             List<Location> locations = new ArrayList<>();
             for (org.groovyscope.engine.model.Location location : ready().implementations(
                     params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))) {
@@ -493,7 +484,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<? extends DocumentHighlight>> documentHighlight(DocumentHighlightParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             List<DocumentHighlight> highlights = new ArrayList<>();
             for (org.groovyscope.engine.model.Highlight highlight : ready().highlights(
                     params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))) {
@@ -505,7 +496,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<FoldingRange>> foldingRange(FoldingRangeRequestParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             List<FoldingRange> ranges = new ArrayList<>();
             for (org.groovyscope.engine.model.FoldingRange range : ready().foldingRanges(params.getTextDocument().getUri())) {
                 ranges.add(Converters.foldingRange(range));
@@ -516,7 +507,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<InlayHint>> inlayHint(InlayHintParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> {
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> {
             List<InlayHint> hints = new ArrayList<>();
             for (org.groovyscope.engine.model.InlayHint hint : ready().inlayHints(params.getTextDocument().getUri(),
                     Converters.fromLsp(params.getRange()))) {
@@ -544,7 +535,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<CallHierarchyItem>> prepareCallHierarchy(CallHierarchyPrepareParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel -> ready()
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel -> ready()
                 .callHierarchyItem(params.getTextDocument().getUri(), Converters.fromLsp(params.getPosition()))
                 .map(symbol -> List.of(Converters.callHierarchyItem(symbol)))
                 .orElse(List.of()));
@@ -552,7 +543,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<CallHierarchyIncomingCall>> callHierarchyIncomingCalls(CallHierarchyIncomingCallsParams params) {
-        return lightFor(params.getItem().getUri(), cancel -> {
+        return requests.lightAbout(params.getItem().getUri(), cancel -> {
             Symbol target = Converters.symbolOf(params.getItem());
             Map<String, List<CallSite>> byCaller = new java.util.LinkedHashMap<>();
             for (CallSite site : ready().incomingCalls(target)) {
@@ -576,7 +567,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<List<CallHierarchyOutgoingCall>> callHierarchyOutgoingCalls(CallHierarchyOutgoingCallsParams params) {
-        return lightFor(params.getItem().getUri(), cancel -> {
+        return requests.lightAbout(params.getItem().getUri(), cancel -> {
             Symbol container = Converters.symbolOf(params.getItem());
             Map<String, List<CallSite>> byCallee = new java.util.LinkedHashMap<>();
             for (CallSite site : ready().outgoingCalls(container)) {
@@ -600,7 +591,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
 
     @Override
     public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
-        return lightFor(params.getTextDocument().getUri(), cancel ->
+        return requests.lightAbout(params.getTextDocument().getUri(), cancel ->
                 new SemanticTokens(ready().semanticTokens(params.getTextDocument().getUri())));
     }
 

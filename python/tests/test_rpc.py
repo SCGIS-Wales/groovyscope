@@ -5,6 +5,7 @@ import socket
 import socketserver
 import threading
 from collections.abc import Iterator
+from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
@@ -342,3 +343,28 @@ def test_a_large_frame_reaches_a_reader_that_takes_it_in_pieces(
         assert rpc.channel_alive(channel)
     finally:
         rpc.close_channel(channel)
+
+
+def test_the_reader_completes_a_reply_while_a_long_write_holds_the_write_lock() -> None:
+    left, right = socket.socketpair()
+    channel: rpc.Channel = {
+        "sock": left,
+        "lock": threading.Lock(),
+        "pending_lock": threading.Lock(),
+        "pending": {},
+        "next_id": 2,
+        "reader": threading.Thread(),
+        "closed": threading.Event(),
+        "failure": [],
+    }
+    waiting: Future[object] = Future()
+    channel["pending"][1] = waiting
+    try:
+        with channel["lock"]:  # a large frame is being written
+            reader = threading.Thread(target=rpc._dispatch, args=(channel, {"jsonrpc": "2.0", "id": 1, "result": 5}))
+            reader.start()
+            reader.join(5)
+            assert waiting.result(0) == 5
+    finally:
+        left.close()
+        right.close()

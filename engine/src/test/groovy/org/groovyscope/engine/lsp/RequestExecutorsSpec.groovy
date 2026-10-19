@@ -147,6 +147,24 @@ class RequestExecutorsSpec extends Specification {
         shared.shutdown()
     }
 
+    def 'a request still queued at shutdown is answered daemon is exiting, not dropped'() {
+        given:
+        def executors = new RequestExecutors(1, 4)
+        def view = executors.forConnection()
+        def running = new CountDownLatch(1)
+        view.heavy { cancel -> running.countDown(); new CountDownLatch(1).await(30, TimeUnit.SECONDS) }
+        running.await(30, TimeUnit.SECONDS)
+        def queued = view.heavy { cancel -> 'never' }
+
+        when:
+        executors.shutdown()
+        def failure = thrownBy { queued.get(30, TimeUnit.SECONDS) }
+
+        then:
+        failure.cause instanceof ResponseErrorException
+        failure.cause.responseError.code == RequestExecutors.DAEMON_EXITING
+    }
+
     def 'lanes that have shut down answer daemon is exiting, which a client takes as reconnect (E-14)'() {
         given:
         def executors = new RequestExecutors(1, 1)

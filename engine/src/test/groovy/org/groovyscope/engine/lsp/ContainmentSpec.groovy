@@ -147,6 +147,44 @@ class ContainmentSpec extends Specification {
         server.services() == null
     }
 
+    def 'groovyscope/references runs on the heavy lane, groovyscope/hover on the light one (E-11)'() {
+        given: 'a heavy lane of one thread that is busy, with its queue full'
+        def lanes = new RequestExecutors(1, 1)
+        def busyServer = new GroovyscopeLanguageServer({ }, root, EngineConfig.DEFAULTS,
+                { r -> new org.groovyscope.engine.services.LanguageServices(new WorkspaceModel(r, EngineConfig.DEFAULTS),
+                        new org.groovyscope.engine.compile.GroovyCompiler()) }, null, null, null, lanes)
+        def at = params(uri: uri(inside), line: 2, character: 12)
+        busyServer.hover(at).get(60, TimeUnit.SECONDS)
+        def hold = new java.util.concurrent.CountDownLatch(1)
+        def running = new java.util.concurrent.CountDownLatch(1)
+        lanes.heavy { cancel -> running.countDown(); hold.await(30, TimeUnit.SECONDS) }
+        running.await(30, TimeUnit.SECONDS)
+        lanes.heavy { cancel -> 'queued' }
+
+        when:
+        def refused = busyServer.references(at)
+        def hover = busyServer.hover(at).get(30, TimeUnit.SECONDS)
+
+        then:
+        def failure = thrownBy { refused.get(30, TimeUnit.SECONDS) }
+        failure.cause instanceof ResponseErrorException
+        failure.cause.responseError.message.contains('busy')
+        hover != null
+
+        cleanup:
+        hold.countDown()
+        lanes.shutdown()
+    }
+
+    private static Throwable thrownBy(Closure<?> action) {
+        try {
+            action()
+            null
+        } catch (Throwable failure) {
+            failure
+        }
+    }
+
     def 'a closed connection cancels its running request (E-15)'() {
         given:
         def running = new java.util.concurrent.CountDownLatch(1)

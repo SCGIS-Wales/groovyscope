@@ -211,10 +211,12 @@ CHANNEL_WRITE_SECONDS = 30.0  # a frame not fully written by then breaks the cha
 
 class Channel(TypedDict):
     """One engine connection shared by concurrent callers: a reader thread matches replies to requests by id and
-    completes each caller's future; writes are serialised by ``lock`` so frames never interleave."""
+    completes each caller's future; writes are serialised by ``lock`` so frames never interleave, and ``pending``
+    and ``next_id`` have their own ``pending_lock``, so the reader never waits behind a long write."""
 
     sock: socket.socket
     lock: threading.Lock
+    pending_lock: threading.Lock
     pending: dict[int, Future[Any]]
     next_id: int
     reader: threading.Thread
@@ -230,6 +232,7 @@ def open_channel(socket_path: Path, timeout: float = DEFAULT_TIMEOUT) -> Channel
     channel: Channel = {
         "sock": sock,
         "lock": threading.Lock(),
+        "pending_lock": threading.Lock(),
         "pending": {},
         "next_id": 1,
         "reader": threading.Thread(name="groovyscope-rpc-reader", daemon=True),
@@ -267,7 +270,7 @@ def _read_loop(channel: Channel) -> None:
         channel["failure"].append(exc)
     finally:
         channel["closed"].set()
-        with channel["lock"]:
+        with channel["pending_lock"]:
             waiting = list(channel["pending"].values())
             channel["pending"].clear()
         failure = channel["failure"][0] if channel["failure"] else ConnectionError("engine connection closed")
@@ -282,7 +285,7 @@ def _dispatch(channel: Channel, message: dict[str, Any]) -> None:
         return
     if "method" in message:
         return  # a notification: nothing waits for it
-    with channel["lock"]:
+    with channel["pending_lock"]:
         future = channel["pending"].pop(message.get("id"), None)  # type: ignore[arg-type]
     if future is None:
         return  # a reply to a request whose caller gave up (and sent a cancel) or an unknown id
@@ -319,22 +322,24 @@ def channel_submit(channel: Channel, method: str, params: Any = None) -> tuple[i
         failure = channel["failure"][0] if channel["failure"] else ConnectionError("engine connection closed")
         raise failure if isinstance(failure, OSError) else ConnectionError(str(failure))
     future: Future[Any] = Future()
-    with channel["lock"]:
+    with channel["pending_lock"]:
         request_id = channel["next_id"]
         channel["next_id"] = request_id + 1
         channel["pending"][request_id] = future
-        message = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": {} if params is None else params}
-        try:
+    message = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": {} if params is None else params}
+    try:
+        with channel["lock"]:
             _write(channel, encode(message))
-        except OSError:
+    except OSError:
+        with channel["pending_lock"]:
             channel["pending"].pop(request_id, None)
-            raise
+        raise
     return (request_id, future)
 
 
 def channel_cancel(channel: Channel, request_id: int) -> None:
     """Tell the engine the caller no longer waits for ``request_id``; the reply, if any, is dropped."""
-    with channel["lock"]:
+    with channel["pending_lock"]:
         channel["pending"].pop(request_id, None)
     with contextlib.suppress(OSError):
         _send(channel, {"jsonrpc": "2.0", "method": CANCEL_METHOD, "params": {"id": request_id}})

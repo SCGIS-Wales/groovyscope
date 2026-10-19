@@ -538,7 +538,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** The declaration under a position with its confidence, or {@code null}. Params: {@code uri}, {@code line}, {@code character}, {@code root}. */
     @JsonRequest("groovyscope/definition")
     public CompletableFuture<Map<String, Object>> definition(Map<String, Object> params) {
-        return requests.light(cancel -> {
+        return requests.lightAbout(uriOf(params), cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("definition needs a uri with line and character");
@@ -561,7 +561,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** Hover text for a position (types, documentation, runtime-profile parameters, finding notes), or null. */
     @JsonRequest("groovyscope/hover")
     public CompletableFuture<Map<String, Object>> hover(Map<String, Object> params) {
-        return requests.light(cancel -> {
+        return requests.lightAbout(uriOf(params), cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("hover needs a uri with line and character");
@@ -582,7 +582,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** The declaration of the type of the expression under a position, or null. */
     @JsonRequest("groovyscope/typeDefinition")
     public CompletableFuture<Map<String, Object>> typeDefinition(Map<String, Object> params) {
-        return requests.light(cancel -> {
+        return requests.lightAbout(uriOf(params), cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("typeDefinition needs a uri with line and character");
@@ -605,7 +605,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** The outline of one document: declarations with their children. Params: {@code uri}, {@code root}. */
     @JsonRequest("groovyscope/documentSymbols")
     public CompletableFuture<Map<String, Object>> documentSymbols(Map<String, Object> params) {
-        return requests.light(cancel -> {
+        return requests.lightAbout(uriOf(params), cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("documentSymbols needs a uri");
@@ -680,7 +680,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     /** References to the symbol under a position, each with its confidence. */
     @JsonRequest("groovyscope/references")
     public CompletableFuture<Map<String, Object>> references(Map<String, Object> params) {
-        return requests.light(cancel -> {
+        return requests.heavy(cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null) {
                 throw invalid("references needs a uri with line and character");
@@ -739,7 +739,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      */
     @JsonRequest("groovyscope/readSymbol")
     public CompletableFuture<Map<String, Object>> readSymbol(Map<String, Object> params) {
-        return requests.light(cancel -> {
+        return requests.lightAbout(uriOf(params), cancel -> {
             LanguageServices current = requireServices(params);
             if (params.get("uri") == null || params.get("symbol") == null || params.get("symbol").toString().isBlank()) {
                 throw invalid("readSymbol needs a uri and a symbol");
@@ -1008,6 +1008,12 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
      * The {@code uris} parameter with every directory replaced by the workspace sources under it. URIs whose real
      * path lies outside the workspace root are dropped: requests never read files the workspace does not hold.
      */
+    /** The {@code uri} parameter as text, or null. */
+    static String uriOf(Map<String, Object> params) {
+        Object uri = params == null ? null : params.get("uri");
+        return uri == null ? null : uri.toString();
+    }
+
     /** Refuses a whole-workspace request while the heap is under pressure; cheap requests are unaffected. */
     static void requireHeadroom() {
         org.groovyscope.engine.concurrent.MemoryGuard.installed().filter(

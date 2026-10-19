@@ -164,4 +164,56 @@ class LightRequestsSpec extends Specification {
         every.close()
         windowed.close()
     }
+
+    /** A compiler that raises a flag once its compile has returned, so a spec can cancel during indexing. */
+    static class FlaggingCompiler extends GroovyCompiler {
+        final java.util.concurrent.atomic.AtomicBoolean returned = new java.util.concurrent.atomic.AtomicBoolean()
+
+        @Override
+        CompilationResult compile(Map<String, String> sources, List<Path> classpath, boolean trust) {
+            def result = super.compile(sources, classpath, trust)
+            returned.set(true)
+            result
+        }
+    }
+
+    def 'a compile cancelled while indexing releases its loader (review of E-16)'() {
+        given:
+        def compiler = new FlaggingCompiler()
+        def services = new LanguageServices(new WorkspaceModel(Fixtures.project('basic-app'), EngineConfig.DEFAULTS),
+                compiler)
+        services.snapshot()
+        int before = compiler.openLoaderCount()
+        compiler.returned.set(false)
+        services.markDirty()
+
+        when: 'the request is cancelled after the compile returned, at the index checkpoint'
+        org.groovyscope.engine.concurrent.Cancellation.run({ compiler.returned.get() }) { services.refresh() }
+
+        then:
+        thrown(java.util.concurrent.CancellationException)
+        compiler.openLoaderCount() == before
+
+        cleanup:
+        services.close()
+    }
+
+    def 'after a reconfigure no request is answered from the old snapshot'() {
+        given:
+        def compiler = new HeldCompiler()
+        def services = new LanguageServices(new WorkspaceModel(Fixtures.project('basic-app'), EngineConfig.DEFAULTS),
+                compiler)
+        String greeter = Fixtures.uri('basic-app', 'src/main/groovy/app/Greeter.groovy')
+        long before = services.snapshot().version()
+
+        when:
+        services.reconfigure(EngineConfig.DEFAULTS)
+        def answered = Freshness.staleOkFor(greeter) { services.snapshot() }
+
+        then:
+        answered.version() > before
+
+        cleanup:
+        services.close()
+    }
 }

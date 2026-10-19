@@ -155,20 +155,21 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
      * connection still uses the registry (the daemon calls this only when none is open).
      */
     public int evictIdle(java.time.Duration idle) {
-        java.util.concurrent.atomic.AtomicInteger evicted = new java.util.concurrent.atomic.AtomicInteger();
         long threshold = System.nanoTime() - idle.toNanos();
+        List<LanguageServices> released = new java.util.ArrayList<>();
         for (Path root : List.copyOf(services.keySet())) {
-            // Atomic per root against apply(): a workspace handed out meanwhile was touched and stays.
+            // Removed atomically per root against apply(): a workspace handed out meanwhile was touched and stays.
             services.computeIfPresent(root, (k, open) -> {
                 if (open.lastUsedNanos() - threshold > 0) {
                     return open;
                 }
-                open.close();
-                evicted.incrementAndGet();
+                released.add(open);
                 return null;
             });
         }
-        return evicted.get();
+        // Closed outside the map: closing waits for background work, which must not hold the map's lock.
+        released.forEach(LanguageServices::close);
+        return released.size();
     }
 
     public Iterable<Path> roots() {

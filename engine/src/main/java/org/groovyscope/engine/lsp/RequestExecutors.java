@@ -59,15 +59,18 @@ public final class RequestExecutors {
     private final ThreadPoolExecutor light;
     // The requests started through this view and not yet finished, so a closed connection can cancel its own.
     private final Set<CompletableFuture<?>> tracked = ConcurrentHashMap.newKeySet();
+    // Every unfinished request of every view, so a shutdown answers the queued ones instead of dropping them.
+    private final Set<CompletableFuture<?>> everything;
 
     public RequestExecutors(int heavyThreads, int heavyQueue) {
         this(pool("groovyscope-heavy", Math.max(1, heavyThreads), Math.max(1, heavyQueue)),
-                pool("groovyscope-light", LIGHT_THREADS, LIGHT_QUEUE));
+                pool("groovyscope-light", LIGHT_THREADS, LIGHT_QUEUE), ConcurrentHashMap.newKeySet());
     }
 
-    private RequestExecutors(ThreadPoolExecutor heavy, ThreadPoolExecutor light) {
+    private RequestExecutors(ThreadPoolExecutor heavy, ThreadPoolExecutor light, Set<CompletableFuture<?>> everything) {
         this.heavy = heavy;
         this.light = light;
+        this.everything = everything;
     }
 
     /**
@@ -76,7 +79,7 @@ public final class RequestExecutors {
      * {@link #cancelAll}.
      */
     public RequestExecutors forConnection() {
-        return new RequestExecutors(heavy, light);
+        return new RequestExecutors(heavy, light, everything);
     }
 
     /** Cancels every request started through this view that has not finished. */
@@ -114,6 +117,16 @@ public final class RequestExecutors {
         return track(submit(light, "light", work));
     }
 
+    /**
+     * A light request about one document: answered from the published snapshot while a compile is pending, unless
+     * that document changed since (see {@link org.groovyscope.engine.concurrent.Freshness}); {@code uri} null makes it
+     * an ordinary light request.
+     */
+    public <T> CompletableFuture<T> lightAbout(String uri, Function<CancelChecker, T> work) {
+        return light(cancel -> uri == null ? work.apply(cancel)
+                : org.groovyscope.engine.concurrent.Freshness.staleOkFor(uri, () -> work.apply(cancel)));
+    }
+
     /** Runs a request that may compile, lint or type-check on the heavy lane. */
     public <T> CompletableFuture<T> heavy(Function<CancelChecker, T> work) {
         return track(submit(heavy, "heavy", work));
@@ -121,7 +134,11 @@ public final class RequestExecutors {
 
     private <T> CompletableFuture<T> track(CompletableFuture<T> future) {
         tracked.add(future);
-        future.whenComplete((value, error) -> tracked.remove(future));
+        everything.add(future);
+        future.whenComplete((value, error) -> {
+            tracked.remove(future);
+            everything.remove(future);
+        });
         return future;
     }
 
@@ -179,5 +196,9 @@ public final class RequestExecutors {
     public void shutdown() {
         heavy.shutdownNow();
         light.shutdownNow();
+        // Queued requests are dropped by shutdownNow without an answer: tell their clients to reconnect.
+        for (CompletableFuture<?> future : List.copyOf(everything)) {
+            future.completeExceptionally(exiting());
+        }
     }
 }

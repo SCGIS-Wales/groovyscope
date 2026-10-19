@@ -1593,7 +1593,7 @@ def engine_dispatcher(
     state: dict[str, Any] = {"session": opener(socket_file), "applied": None, "sending": None}
     session_lock = threading.Lock()
 
-    def apply_configuration(session: Any) -> None:
+    def apply_configuration(session: Any, deadline: float) -> None:
         current = configuration() if configuration is not None else None
         if current is None:
             return
@@ -1608,7 +1608,9 @@ def engine_dispatcher(
                 return
             state["sending"] = (session, digest)
         try:
-            reply = engine(session, RELOAD_METHOD, {"config": document}, timeout=RELOAD_TIMEOUT_SECONDS)
+            # Bounded by the call that carries it, so a slow reload never holds a slot past the caller's deadline.
+            left = max(0.001, min(RELOAD_TIMEOUT_SECONDS, deadline - time.monotonic()))
+            reply = engine(session, RELOAD_METHOD, {"config": document}, timeout=left)
         except RuntimeError as exc:  # the engine refused the document; the old configuration stays in force
             LOG.warning("engine kept its configuration: %s", exc)
         except BaseException:
@@ -1637,7 +1639,7 @@ def engine_dispatcher(
         with session_lock:
             session = state["session"]
         try:
-            apply_configuration(session)
+            apply_configuration(session, deadline)
             return engine(session, method, params, timeout=max(0.001, deadline - time.monotonic()))
         except TimeoutError:
             # TimeoutError is an OSError in Python 3, but a slow engine is alive: never reconnect for it, and never
@@ -1649,7 +1651,7 @@ def engine_dispatcher(
             if reconnect is None:
                 raise
             session = replace(session, exc)
-            apply_configuration(session)
+            apply_configuration(session, deadline)
             return engine(session, method, params, timeout=max(0.001, deadline - time.monotonic()))
 
     return (dispatch, lambda: closer(state["session"]))

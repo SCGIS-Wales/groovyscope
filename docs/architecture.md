@@ -67,7 +67,11 @@ lane for hover, definition, outline and status, so one long type check never sta
 `rename` and the diagnostics push, which walk the workspace or lint it, run on the heavy lane. A light request
 about one document never owns a compile: when that document is unchanged since the published compile, it is
 answered from that snapshot at once while the compile runs on the workspace's background thread (stale while
-revalidating); only a request about a document that changed waits for the fresh compile. Hover shows the notes
+revalidating); only a request about a document that changed waits for the fresh compile. The trade is bounded:
+an answer about an unchanged document that points into a file being edited (a definition, an incoming call) can
+carry that file's pre-edit range until the compile lands, which is milliseconds to seconds; after a configuration
+reload nothing is answered from the old snapshot; and under heap pressure, when compiles are refused, a light
+request is answered from the last compile even about an edited document. Hover shows the notes
 of findings already computed and never lints. A request that finds the heavy queue full is answered at once with a `RequestFailed` error that names the load,
 which is back pressure the client can act on instead of a timeout. Each request runs with its cancel flag bound
 to the thread (`Cancellation`), and the compiler (between rounds), the type checker (between attempts), the
