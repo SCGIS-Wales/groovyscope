@@ -25,7 +25,7 @@ def test_settings_fill_the_defaults() -> None:
     found = hooks.settings({})
     assert found["afterWrite"] is True and found["stopGate"] is False
     assert found["afterWriteInclude"] == ["compile", "lint", "practices"]
-    assert found["afterWriteMaxFindings"] == 12 and found["timeoutSeconds"] == 45
+    assert found["afterWriteMaxFindings"] == 12 and found["timeoutSeconds"] == 25
     tuned = hooks.settings({"hooks": {"stopGate": True, "timeoutSeconds": 5, "afterWriteInclude": ["compile"]}})
     assert tuned["stopGate"] is True and tuned["timeoutSeconds"] == 5 and tuned["afterWriteInclude"] == ["compile"]
 

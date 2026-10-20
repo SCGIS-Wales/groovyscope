@@ -16,7 +16,9 @@
 package org.groovyscope.engine.daemon;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -100,11 +102,53 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
         if (cacheDir == null) {
             return null;
         }
+        Path file = cacheDir.resolve(workspaceKey(root)).resolve("symbols.db");
         try {
-            return SymbolStore.open(cacheDir.resolve(workspaceKey(root)).resolve("symbols.db"));
+            return SymbolStore.open(file);
         } catch (IOException e) {
+            // The store is only a cache: a damaged file (a crash or a full disk mid-write) is set aside and a fresh
+            // one built, rather than leaving the cache off for this workspace on every start.
+            if (damaged(e) && setAside(file)) {
+                org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache was damaged (" + e.getMessage()
+                        + "); kept as symbols.db.damaged and rebuilt");
+                try {
+                    return SymbolStore.open(file);
+                } catch (IOException again) {
+                    e = again;
+                }
+            }
             org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache disabled: " + e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Whether opening failed because the file is not a database or is corrupt, never because another process holds
+     * the lock: a busy store is healthy and stays where it is.
+     */
+    static boolean damaged(IOException failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof org.sqlite.SQLiteException sqlite) {
+                org.sqlite.SQLiteErrorCode code = sqlite.getResultCode();
+                return code == org.sqlite.SQLiteErrorCode.SQLITE_NOTADB || code == org.sqlite.SQLiteErrorCode.SQLITE_CORRUPT;
+            }
+        }
+        return false;
+    }
+
+    /** Moves a store file and its journal files aside; false when there was nothing to move or it could not be. */
+    static boolean setAside(Path file) {
+        if (!Files.isRegularFile(file)) {
+            return false;
+        }
+        try {
+            Files.move(file, file.resolveSibling(file.getFileName() + ".damaged"), StandardCopyOption.REPLACE_EXISTING);
+            for (String journal : List.of("-wal", "-shm")) {
+                Files.deleteIfExists(file.resolveSibling(file.getFileName() + journal));
+            }
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 

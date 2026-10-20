@@ -15,7 +15,7 @@ from groovyscope import atomic, process
 
 ENTRY = ".groovyscope/"
 FOLDER = ".groovyscope"
-COMMENT = "# groovyscope: classpath export, contract baseline and workspace profiles of this machine"
+COMMENT = "# groovyscope: this machine's classpath export; share a contract baseline with git add -f"
 # Lines that ignore the folder at the repository root, whatever their spelling.
 EQUIVALENT = frozenset(f"{prefix}{FOLDER}{suffix}" for prefix in ("", "/", "**/") for suffix in ("", "/", "/**", "/*"))
 CHECK_TIMEOUT_SECONDS = 5.0
@@ -39,8 +39,9 @@ def repository_root(start: Path) -> Path | None:
 
 def _lines(path: Path) -> list[str]:
     try:
-        return [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
-    except (OSError, UnicodeDecodeError):
+        # The lines that matter are ASCII; a comment in another encoding must not hide them (and duplicate the entry).
+        return [line.strip() for line in path.read_bytes().decode("utf-8", "replace").splitlines()]
+    except OSError:
         return []
 
 
@@ -67,6 +68,19 @@ def ignored_by_git(repository: Path, run: Runner) -> bool:
     return result.returncode == 0
 
 
+def hidden(path: Path, run: Runner = process.run_text) -> bool:
+    """Whether a commit would leave ``path`` out: git ignores it and does not track it yet. ``False`` outside a
+    repository or when git cannot say, so a caller only ever adds a hint."""
+    repository = repository_root(path.parent)
+    if repository is None:
+        return False
+    try:
+        result = run(["git", "check-ignore", "-q", str(path)], cwd=repository, timeout=CHECK_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def ensure(start: Path, *, write: bool, run: Runner = process.run_text) -> Outcome:
     """Make sure the repository holding ``start`` ignores ``.groovyscope/``; with ``write`` false, only say."""
     repository = repository_root(start)
@@ -80,11 +94,16 @@ def ensure(start: Path, *, write: bool, run: Runner = process.run_text) -> Outco
         return {"state": "present", "path": str(path)}
     if not write:
         return {"state": "missing", "path": str(path)}
+    # Bytes in, bytes out: the team's lines stay exactly as written (any encoding, CRLF endings kept), and a
+    # symlinked .gitignore stays a link, its target getting the entry.
     try:
-        current = path.read_text(encoding="utf-8")
+        current = path.read_bytes()
     except FileNotFoundError:
-        current = ""
-    separator = "" if not current or current.endswith("\n") else "\n"
-    gap = "\n" if current.strip() else ""
-    atomic.write_text(path, f"{current}{separator}{gap}{COMMENT}\n{ENTRY}\n")
+        current = b""
+    newline = b"\r\n" if b"\r\n" in current else b"\n"
+    separator = b"" if not current or current.endswith(b"\n") else newline
+    gap = newline if current.strip() else b""
+    atomic.write_bytes(
+        path.resolve(), current + separator + gap + newline.join([COMMENT.encode(), ENTRY.encode(), b""])
+    )
     return {"state": "added", "path": str(path)}

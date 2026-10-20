@@ -65,12 +65,14 @@ when `check` reports the classpath as stale.
 
 ## What runs at agent start
 
-The groovy agent's start hook runs `groovyscope checkup --agent` in the project folder. It writes only files
-groovyscope owns or merges: the Kiro files in `~/.kiro` (backups kept), the project's `.kiro/settings/lsp.json`,
-and the benchmark corpus under `~/.groovyscope/benchmark/`. It never grants trust, never runs a build, never
-starts or stops a daemon, and never reads source code; the two actions that run repository code (`trust`,
-`classpath`) are only proposed, and the agent runs them after you say yes. The command runs no `kiro-cli`
-subprocess in agent mode and finishes within Kiro's hook budget or is cut off without effect.
+The groovy agent's start hook runs `groovyscope checkup --agent` in the project folder. It reports, and writes
+one thing: the `.groovyscope/` entry in the repository's `.gitignore` (added once, atomically, only when git
+does not already ignore the folder; `workspace.gitignore: false` turns it off). The only subprocess it starts is
+`git check-ignore` for that test; it runs no `kiro-cli` and no build tool. Every repair (the Kiro files, the
+project's LSP entry, the benchmark corpus, the cache sweep) is proposed as `groovyscope checkup --fix`, and the
+two actions that run repository code (`trust`, `classpath`) are proposed on their own; the agent runs any of
+them only after you say yes. It never grants trust, never starts or stops a daemon and never reads source code,
+and it finishes within Kiro's hook budget or is cut off without effect.
 
 ## Reports are data
 

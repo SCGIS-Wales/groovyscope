@@ -76,9 +76,9 @@ macOS and Linux on x64 and arm64.
 ## Per project: `init`, `trust`, `classpath`
 
 All three are optional; the engine answers from the project's own sources without them. The groovy agent's
-start hook (`groovyscope checkup --agent`) writes the project's LSP entry itself and offers `trust` and
-`classpath` in the first message, so in a Kiro session you only answer yes. The commands below are the same
-thing from a terminal.
+start hook (`groovyscope checkup --agent`) reports what is missing and offers the fixes (`checkup --fix` for the
+project's LSP entry, then `trust` and `classpath`) in the first message, so in a Kiro session you only answer
+yes. The commands below are the same thing from a terminal.
 
 ```bash
 cd your-groovy-project
@@ -94,9 +94,9 @@ which registers a `groovyscopeClasspath` task printing the resolved compile and 
 project plus the compiled class folders, or `mvn dependency:build-classpath` for Maven. Resolution is lenient:
 a dependency that cannot be fetched is skipped, and paths that do not exist yet (not built) are reported and
 left out. Everything the build needs to configure itself (its Gradle version, a pinned Java toolchain, network
-access to its repositories) is needed here too: the command is the build, not a parser of it. The list lands in `workspace.classpathFile` (`.groovyscope/classpath.txt` by default; add it to
-`.gitignore`, it holds absolute paths) with a fingerprint of every build file (root and nested
-`build.gradle`, `pom.xml`, `gradle.properties`, `libs.versions.toml`), its entries join `workspace.classpath`,
+access to its repositories) is needed here too: the command is the build, not a parser of it. The list lands in `workspace.classpathFile` (`.groovyscope/classpath.txt` by default; it holds
+absolute paths, so the start hook and `checkup --fix` add `.groovyscope/` to `.gitignore`) with a fingerprint of
+every build file (root and nested `build.gradle`, `pom.xml`, `gradle.properties`, `libs.versions.toml`), its entries join `workspace.classpath`,
 and a running daemon reloads it in place. Rerun it after dependency changes: `checkup`, `check` and
 `workspace_status` report the classpath as `stale` once a build file is newer than the export, and the agent
 can run the export itself through `refresh_classpath`. Because the build scripts execute, both are refused in
@@ -153,8 +153,8 @@ its `SHA256SUMS.txt` on an internal server and point `fetch --from` at it; set `
 ## The benchmark corpus
 
 The wheel bundles CodeNarc 4.0.0's `src/main` (Apache 2.0) as the fixed workspace of
-[docs/benchmark.md](benchmark.md) and of the reference prompts. `groovyscope kiro init --global` and the agent
-start hook unpack it into `~/.groovyscope/benchmark/codenarc/` with a ready `.groovyscope.yaml`;
+[docs/benchmark.md](benchmark.md) and of the reference prompts. `groovyscope kiro init --global` and `groovyscope
+checkup --fix` unpack it into `~/.groovyscope/benchmark/codenarc/` with a ready `.groovyscope.yaml`;
 `groovyscope benchmark path` prints the location (and unpacks when needed), `--to DIR` puts it elsewhere,
 `--refresh` restores the bundled files, and `GROOVYSCOPE_BENCHMARK_DIR` moves the parent folder. A machine
 that cannot reach GitHub therefore still has the corpus. No build is included: its library imports show as

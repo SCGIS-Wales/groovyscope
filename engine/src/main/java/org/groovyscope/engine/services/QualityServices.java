@@ -121,6 +121,11 @@ public final class QualityServices {
         return lint.lintLoader();
     }
 
+    /** Releases the lint class loaders; called when the workspace closes. */
+    void close() {
+        lint.close();
+    }
+
     /** How many whole-workspace type checks this instance has run (for specs). */
     int typeChecksRun() {
         return typeCheck.typeChecksRun();

@@ -1,6 +1,7 @@
 """``groovyscope checkup``: everything a user would otherwise do by hand after an install or upgrade, as one report
 with the exact fix per item, and the safe repairs applied on request. The Kiro agent's start hook runs it with
-``--agent``, so a session opens with the setup already repaired and only the decisions left to the user.
+``--agent``, so a session opens with the state of the setup reported and each repair offered as a command; the
+hook's only write is the ``.groovyscope/`` entry in the repository's ``.gitignore``.
 
 Pure report building with injected collaborators; nothing here prints, exits or raises past ``build``: a check that
 fails is reported as an item, never as a crash of the agent start.
@@ -389,7 +390,7 @@ def render(report: Report) -> list[str]:
     return lines
 
 
-# What the agent offers to run for the safe repairs; the start hook itself never writes files.
+# What the agent offers to run for the safe repairs; the start hook writes nothing but the ``.gitignore`` entry.
 SAFE_REPAIR_COMMAND = "groovyscope checkup --fix"
 
 

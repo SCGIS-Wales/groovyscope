@@ -143,4 +143,17 @@ class QualityServicesSpec extends Specification {
         def e = thrown(IllegalStateException)
         e.message.contains('not bundled')
     }
+
+    def 'closing the workspace closes the lint class loader instead of leaving its jars open until a GC'() {
+        given:
+        def services = new LanguageServices(new WorkspaceModel(Fixtures.project('lint-sample'), EngineConfig.DEFAULTS), new GroovyCompiler())
+        def loader = services.quality().lintLoader() as URLClassLoader
+        assert loader.getResource('sample/Messy.groovy') != null
+
+        when:
+        services.close()
+
+        then:
+        loader.getResource('sample/Messy.groovy') == null
+    }
 }

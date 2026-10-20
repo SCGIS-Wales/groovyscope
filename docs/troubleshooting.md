@@ -29,7 +29,7 @@ hard failures.
 | `doctor` prints `info kiro files ... not in a Groovy project here` | Expected outside a project: the global setup is present and this folder has no Groovy sources or build file |
 | The agent does not open with a checkup line | The start hook did not run: the agent file predates 0.10.0 (`groovyscope kiro repair --global` adds `hooks.agentSpawn`), or this Kiro CLI does not support agent hooks; `groovyscope checkup` shows the same report in a terminal |
 | The agent's first message says `groovyscope checkup could not run` | The hook ran but the command failed before reporting; run `groovyscope --debug checkup` in the project and read the cause |
-| `checkup` says `written by groovyscope 0.9.0, package is 0.10.0` | Normal after an upgrade; the start hook repairs it, or run `groovyscope kiro repair --global` |
+| `checkup` says `written by groovyscope 0.9.0, package is 0.10.0` | Normal after an upgrade; the start hook offers `groovyscope checkup --fix`, or run `groovyscope kiro repair --global` |
 | `review --changed` says `unknown base 'main'` | The branch has no `main` locally; pass `--base origin/main` (fetch it first) or the branch the request targets |
 | `review --changed` says `git is not installed` or `not inside a git repository` | Review needs git for the changed lines; pass paths to `groovyscope review` instead |
 | `coverage` says `no JaCoCo report at build/reports/jacoco/test/jacocoTestReport.xml` | Run the build's tests with the JaCoCo report (`./gradlew test jacocoTestReport`), or set `reports.jacoco` to where your build writes it |

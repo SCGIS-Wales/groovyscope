@@ -9,11 +9,12 @@ numbers will differ, but the ratios hold.
 
 ## At the start of a session
 
-Nothing to type. The agent's start hook runs `groovyscope checkup --agent`, which repairs the Kiro files
-after an upgrade, writes the project's LSP entry, unpacks the benchmark corpus, and reports the two things it
-will not do without you: trusting the repository and exporting its classpath. The agent opens with one line
-about that and offers the menu below. Answer "yes" to `groovyscope trust` and `groovyscope classpath` once per
-repository you trust; library classes then resolve and the GS100 warnings go away.
+Nothing to type. The agent's start hook runs `groovyscope checkup --agent`, which keeps `.groovyscope/` out of
+git and reports the rest: Kiro files left behind by an upgrade, a missing project LSP entry or benchmark corpus
+(all fixed by `groovyscope checkup --fix`), and the two things that need your decision, trusting the repository
+and exporting its classpath. The agent opens with one line about that and offers the menu below. Answer "yes"
+to the repairs, and to `groovyscope trust` and `groovyscope classpath` once per repository you trust; library
+classes then resolve and the GS100 warnings go away.
 
 ## The menu
 

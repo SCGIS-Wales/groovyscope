@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,8 @@ from click.testing import CliRunner
 from groovyscope import cli, profiles
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope.cli import common as cli_common
+
+GIT = shutil.which("git") or "git"
 
 REPO = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO / "config" / "profiles" / "example-runtime.yaml"
@@ -205,6 +209,21 @@ def test_baseline_save_and_check(runner: CliRunner, tmp_path: Path, engine: dict
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "baseline", "check"])
     assert result.exit_code == 1
     assert "a.groovy: parameter:X changed from string to list" in result.output
+
+
+def test_baseline_save_says_how_to_commit_a_git_ignored_baseline(
+    runner: CliRunner, tmp_path: Path, engine: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", os.pathsep.join([str(Path(GIT).parent), os.environ.get("PATH", "")]))
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text(".groovyscope/\n", encoding="utf-8")
+    engine["responses"]["groovyscope/contracts"] = {"files": {"a.groovy": {"parameter:X": "string"}}}
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "baseline", "save"])
+    assert result.exit_code == 0, result.output
+    assert "commit the baseline with `git add -f .groovyscope/contract-baseline.json`" in result.output
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", ".groovyscope/contract-baseline.json"], check=True)
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "baseline", "save"])
+    assert result.exit_code == 0 and "git add -f" not in result.output  # tracked now: nothing to say
 
 
 def test_global_guidance_ignores_the_current_repositorys_profiles(tmp_path: Path, isolated_home: Path) -> None:

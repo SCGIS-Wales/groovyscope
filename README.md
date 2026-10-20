@@ -41,8 +41,9 @@ kiro-cli --agent groovy
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
 reports what needs doing (Kiro files older than the package, the project's LSP entry, the benchmark corpus,
 trusting the repository and exporting its classpath). The one thing it writes, in a Groovy project inside a git
-repository, is `.groovyscope/` in the repository's `.gitignore`, once, so this machine's classpath export and
-baseline never reach a commit (`workspace.gitignore: false` turns that off). The agent opens with that status and
+repository, is `.groovyscope/` in the repository's `.gitignore`, once, so this machine's classpath export never
+reaches a commit (`workspace.gitignore: false` turns that off; `baseline save` says how to commit a contract
+baseline anyway). The agent opens with that status and
 a menu of the most useful prompts, and asks before it runs `groovyscope checkup --fix`, `groovyscope trust` or
 `groovyscope classpath` for you. The steering loads only for Groovy, Gradle and Jenkinsfile work
 (`inclusion: fileMatch`), so other sessions do not pay for it. `groovyscope checkup` prints the same report in a
@@ -52,7 +53,8 @@ unresolved-class errors. [docs/prompts.md](docs/prompts.md) lists the prompts an
 
 `kiro init --global` merges into `~/.kiro/settings/mcp.json`, `~/.kiro/agents/groovy.json` and
 `~/.kiro/steering/`: other MCP servers and agent settings stay as they are, every changed file is backed up to
-`<file>.bak`, and the diff is printed. Add `--dry-run` to see the diff without writing. In a project,
+`<file>.bak` (later backups to `<file>.bak.N`; `groovyscope checkup --fix` keeps the first and the newest), and the
+diff is printed. Add `--dry-run` to see the diff without writing. In a project,
 `groovyscope kiro init --full` writes all the files there instead, for a setup the whole team can commit.
 Details in [docs/kiro.md](docs/kiro.md).
 
@@ -111,22 +113,23 @@ them returns a whole file.
 </picture>
 
 Kiro CLI talks to groovyscope over stdio (LSP for its `code` tool, MCP for everything else). groovyscope keeps one
-warm JVM per workspace and talks to it over a Unix socket. The JVM compiles and indexes your code, never runs it,
-and sends back answers the agent can act on. Package by package: [docs/architecture.md](docs/architecture.md).
+warm JVM per workspace and talks to it over a Unix socket. The JVM compiles and indexes your code without running
+it (only in a workspace you trust do its own AST transformations and compiler configuration script, which run at
+compile time, take part) and sends back answers the agent can act on. Package by package: [docs/architecture.md](docs/architecture.md).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `groovyscope hook` | What the groovy agent's `postToolUse` and `stop` hooks run (the hook JSON arrives on stdin): after a write, the Groovy file just written is checked and the findings go back to the agent in the same turn; with `hooks.stopGate: true`, the turn is refused while changed Groovy files have compile errors. Never fails the session |
-| `groovyscope checkup [--fix] [--agent] [--json]` | Everything to do after an install or upgrade, one line per item with the exact fix: Kiro files older than the package, project LSP entry, trust, classpath, hidden MCP servers, agent format, JDK, engine JAR, daemon. `--fix` applies the safe repairs; `--agent` is what the groovy agent's start hook runs |
+| `groovyscope checkup [--fix] [--agent] [--json]` | Everything to do after an install or upgrade, one line per item with the exact fix: Kiro files older than the package, project LSP entry, `.groovyscope/` in the repository's `.gitignore`, trust, classpath, hidden MCP servers, agent format, JDK, engine JAR, daemon, and what piled up in the cache (rotated logs, stale archives, files of deleted workspaces, surplus Kiro backups). `--fix` applies the safe repairs; `--agent` is what the groovy agent's start hook runs: it reports and offers them, and writes only the `.gitignore` entry |
 | `groovyscope doctor [--bundle report.zip]` | Checks Python, configuration and trust, JDK (vendor and version), the engine JAR (SHA-256), Kiro files, the Kiro agent's format and runtime profiles; `--bundle` writes a zip for bug reports |
 | `groovyscope checks prepare [DIR] [--force] \| report` | The owner's Kiro checks ([docs/kiro-checks.md](docs/kiro-checks.md)): `prepare` builds a throwaway workspace (CodeNarc sources, `build.gradle`, `Jenkinsfile`, git history with a `change` branch to review, Kiro LSP entry, trust) without changing your shell's directory; `report` prints versions, the doctor lines, the hook start-up time and the result table to paste back |
 | `groovyscope logs [-n N] [-f] [--kiro]` | The engine daemon's log for this workspace, or groovyscope's lines from Kiro CLI's logs |
 | `groovyscope trust [--revoke] [--list]` | Trust this workspace, so its `.groovyscope.yaml` may set `workspace.trust`, `jdk.home` and rule sets, and `classpath` may run its build tool ([security](docs/security.md)) |
 | `groovyscope init [--dry-run]` | Writes a starting `.groovyscope.yaml` (source roots, Groovy version) from the project's layout and build files; existing settings win |
 | `groovyscope classpath [--tool gradle\|maven] [--timeout N]` | Asks the project's Gradle (init script) or Maven build for its compile and test classpath and writes it to `workspace.classpathFile` with a fingerprint of the build files, so a later dependency change shows as `stale`; a running daemon reloads it in place. Trusted workspaces only, since it runs the build scripts |
-| `groovyscope kiro init \| repair [--global] [--full] [--agent-format auto\|v2\|universal\|v3] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project. The agent keeps its format (V2, universal or V3) and its `tools: ["*"]`, so every MCP server you have stays usable. Also writes the twelve skills (`/groovy-review`, `/groovy-impact`, ...), one per cookbook recipe, loaded only when invoked; the MCP server serves them as prompts too |
+| `groovyscope kiro init \| repair [--global] [--full] [--agent-format auto\|v2\|universal\|v3] [--dry-run]` | Installs or re-merges the Kiro files: MCP server, agent and steering in `~/.kiro` with `--global`; the LSP entry (everything with `--full`) in a project. The agent keeps its format (V2, universal or V3) and its `tools: ["*"]`, so every MCP server you have stays usable. Also writes the skills (`/groovy-review`, `/groovy-impact`, ...), one per cookbook recipe, loaded only when invoked; the MCP server serves them as prompts too |
 | `groovyscope check [PATHS] [--include lint,compile,typecheck,practices] [--format text\|json\|short\|sarif] [--import-sarif FILE]` | All findings, plus the build's SARIF findings (SpotBugs; `reports.sarif` or the default output when present); `short` matches `groovyc --error-format short`, `sarif` feeds code scanning; exits 1 at or above `lint.failOnPriority` |
 | `groovyscope review [PATHS] \| --changed [--base BRANCH] [--staged]` | Findings grouped by the practices checklist; with `--changed`, the branch reviewed as a merge request against the default branch: triage (risks, smells, noise, the fix command), blocking, should fix, nits on the changed lines, impact of changed declarations, the tests the change reaches with their Gradle command, risky constructs added, uncovered methods, verdict ([docs/ci.md](docs/ci.md)) |
 | `groovyscope verify [--base BRANCH] [--staged] [--coverage] [--failed [--results PATH]] [--dry-run] [--json]` | One step after a change: the review of the changed lines, then one Gradle command that compiles the changed source sets and runs the test methods the change reaches (Groovy and Java, any source set), then the failures from the JUnit XML reports the run wrote; tests of tasks outside `verify.runTasks` (integration tests) are listed for CI. `--coverage` adds the JaCoCo report task (`verify.coverageTask`) and lists changed methods no test executed; `--failed` runs only the tests that failed in the last reports, or in a CI archive given with `--results`; exits 1 on a failed build or test or a blocking finding |
@@ -146,7 +149,7 @@ and sends back answers the agent can act on. Package by package: [docs/architect
 | `groovyscope explain-code TARGET` | What a class, member or file does, as facts (members, calls, callers, field writes, exceptions, external calls, branches) |
 | `groovyscope graph [SYMBOLS] [--path FILE] [--kinds ...] [--depth N] [--level class\|method] [--format drawio\|mermaid\|json] [--out FILE]` | The class relationship graph as a draw.io file on A4, A3 or A2, the smallest that keeps the text readable (default `groovyscope-graph.drawio`), a Mermaid class diagram, or JSON |
 | `groovyscope naming [PATHS] [--json]` | Naming findings GS020 to GS027; `--json` adds the facts behind each name |
-| `groovyscope benchmark path [--to DIR] [--refresh]` | Where the bundled benchmark corpus (CodeNarc 4.0.0 `src/main`) is unpacked; `--to` puts it elsewhere. It unpacks itself on `kiro init --global` and at agent start |
+| `groovyscope benchmark path [--to DIR] [--refresh]` | Where the bundled benchmark corpus (CodeNarc 4.0.0 `src/main`) is unpacked; `--to` puts it elsewhere. It unpacks itself on `kiro init --global` and on `checkup --fix` (the agent's start hook offers it) |
 | `groovyscope fetch` / `groovyscope version` | Engine JAR fetch for packages without one; versions |
 
 Most commands take `--json`. Every command takes `--debug`, `-v`/`--verbose` and `--log-file PATH`
@@ -175,8 +178,9 @@ Kiro's built-in `code` tool talks LSP to `groovyscope lsp --stdio`. The server d
 block (no pretty printing, no second structured copy unless `output.structured: true`): paths relative to the
 workspace root, 1-based `line`/`col`, a confidence where one applies, at most `output.maxResults` items within
 `output.maxBytes`, finding messages clipped to `output.maxMessageChars`, and a `next_cursor` to page on. No tool
-returns file bodies. Each tool carries a title and MCP behaviour annotations (read-only or not, idempotent,
-closed-world), and parallel calls are queued safely on the one engine session.
+returns file bodies. Each tool carries a title and MCP behaviour annotations (read only, destructive for the tools
+that can apply edits, idempotent, open world for `refresh_classpath`, which runs the build), a refusal comes back
+as a tool error, and parallel calls are queued safely on the one engine session.
 
 | Tool | Answers |
 |---|---|
@@ -223,15 +227,22 @@ priority 1 and 2 lint findings reach the editor and the agent as diagnostics; 3 
 pushed diagnostics, the default; `workspace` for every file; `none` to pull only) and
 `diagnostics.debounceMillis`, `practices.severity` (per GS or RP code, `GS100: off` included), `naming`
 (`allowedAbbreviations`, `vocabulary`),
-`duplicates.minLines` / `duplicates.minStatements` for `find_duplicates`, and `reports.sarif` /
-`reports.jacoco` for the build's SpotBugs and JaCoCo reports. Runtime profiles live in
-`~/.groovyscope/profiles/` or `<workspace>/.groovyscope/profiles/` and stay out of the repository if you want
-them private; see [docs/profiles.md](docs/profiles.md).
+`duplicates.minLines` / `duplicates.minStatements` for `find_duplicates`, `reports.sarif` /
+`reports.jacoco` for the build's SpotBugs and JaCoCo reports, `lint.gradleRuleset` (the profile for `*.gradle`
+build scripts), `lint.licenceHeader` (a header every file must carry, off by default), `typecheck.configScript`
+(the project's compiler configuration script, run only in a trusted workspace), `secrets.allow` (values or names
+the hardcoded secret check leaves alone) and `workspace.gitignore` (whether `.groovyscope/` goes into the
+repository's `.gitignore`). Runtime profiles live in `~/.groovyscope/profiles/` or
+`<workspace>/.groovyscope/profiles/`; the workspace folder is kept out of git by default, so set
+`workspace.gitignore: false` (and remove the entry) to commit a team profile there. See
+[docs/profiles.md](docs/profiles.md).
 
 ## Security posture
 
 `@Grab` and `@ASTTest` are disabled in the engine JVM and cannot be enabled through configuration. Global AST
-transforms from the workspace classpath load only with `workspace.trust: true`. The classpath comes from
+transforms from the workspace classpath load only with `workspace.trust: true`, and the settings that would run
+code from the repository (CodeNarc rule sets, the compiler configuration script, `jdk.home`, an emulation jar)
+are ignored until you trust the workspace. The classpath comes from
 configuration or from `groovyscope classpath`, which runs the project's build tool and is therefore refused
 until you `groovyscope trust` the workspace; it is never inferred silently. See
 [docs/security.md](docs/security.md).
@@ -239,11 +250,13 @@ until you `groovyscope trust` the workspace; it is never inferred silently. See
 ## Repository layout
 
 ```
-engine/   JVM engine (Java 21 sources, Gradle, Spock tests)       -> groovyscope-engine-<ver>-all.jar
-python/   groovyscope package (CLI, config, Kiro writers, tests)   -> PyPI wheel bundling the JAR
-config/   CodeNarc rulesets, practice catalogue, example runtime profile, formatter and groovyc configuration
-          (mirrored inside the package)
-kiro/     Templates written by `groovyscope kiro init` (mirrored inside the package)
+engine/   JVM engine (Java 21 toolchain, Java 17 bytecode, Gradle, Spock tests) -> groovyscope-engine-<ver>-all.jar
+python/   groovyscope package (CLI, config, Kiro writers, tests)   -> PyPI wheel bundling the JAR (CodeNarc inside)
+          python/src/groovyscope/_templates/ is the only source of the Kiro files, the CodeNarc profiles and the
+          practice catalogue; the build copies the profiles and catalogue into the engine
+config/   Copy of the package's configuration templates (CodeNarc profiles, practice catalogue, defaults,
+          example runtime profile), refreshed by scripts/sync_templates.py
+kiro/     Copy of the templates `groovyscope kiro init` writes, refreshed the same way
 docs/     Install, Kiro, prompts, CI, practices, profiles, rules, architecture, security, troubleshooting,
           benchmark, roadmap
 ```
