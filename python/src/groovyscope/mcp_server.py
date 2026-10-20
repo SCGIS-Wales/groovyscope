@@ -801,7 +801,7 @@ def practice_tools(
     settings = report_settings or {}
 
     def explain(code: str) -> dict[str, Any]:
-        """What a diagnostic code means (GS001-GS016, a Groovy 6 checker, a CodeNarc rule), why it matters, the fix."""
+        """What a diagnostic code means (a GS or RP code, a Groovy 6 checker, a CodeNarc rule) and its fix."""
         answer = call("groovyscope/explain", {"root": str(root), "code": code})
         return {"found": True, **answer} if answer else {"found": False, "code": code}
 

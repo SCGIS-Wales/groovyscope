@@ -708,3 +708,9 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   reached dynamically; the project's compiler configuration script, import aliases and annotation collectors reach
   the type check, and `check` names the classes left dynamic; GS002, GS003, GS011, GS020 and GS024 are quieter
   where they were wrong.
+- 2026-10-20: Phase 5 of `docs/improvement-plan.md`: new quality checks. SQL built from values, unclosed
+  connections and hardcoded secrets; GString lookups, numbers as conditions, `return` in `each`, records that keep
+  mutable components; Jenkins secrets in shell steps, steps in `@NonCPS`, unserialisable state across steps and
+  mutable static state; Spock interaction, data table and exception checks; eager Gradle tasks, dynamic versions
+  and insecure repositories; an optional licence header. A sample of 20 findings on the CodeNarc corpus is 10%
+  false positives, all informational.

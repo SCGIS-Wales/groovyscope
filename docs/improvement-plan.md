@@ -398,7 +398,7 @@ Tick each box in the phase PR.
 - [x] Phase 2: concurrency and resilience (engine E-11 to E-28, Python P-11 to P-27, P9/P10 rest)
 - [x] Phase 3: release, build and supply chain (D-01 to D-23, Q-15, P-31)
 - [x] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27; Q-15 landed in Phase 3, Q-26 is 6.3)
-- [ ] Phase 5: new quality checks (GS017 to GS052, GS035 to GS038)
+- [x] Phase 5: new quality checks (GS017 to GS052, GS035 to GS038)
 - [ ] Phase 6: hygiene and deduplication (6.1 to 6.6)
 - [ ] Phase 7: docs, Kiro assets and polish
 
@@ -509,3 +509,17 @@ their own lock, a reload is bounded by the call's deadline, and the start lock t
 | Q-20, Q-21 | `ImplementationAsType` is back at priority 3. The default profile adds `junit.xml`, with the rules that misread Spock skipping `*Spec` files; the Jenkins profile adds the size rules; `*.gradle` files get a Gradle profile without `NoDef`, `CompileStatic` and the `*TypeRequired` rules (`lint.gradleRuleset` replaces it, trust gated). |
 | Q-22 to Q-25 | GS020 skips properties; `dir`, `doc`, `impl`, `init`, `lib`, `org`, `prev`, `sub` are allowed shorthand; GS002 is information on text and collections, a warning on numbers; GS003 covers explicit and implicit returns and leaves `boolean` alone; GS011 no longer blames Spock 2.4 (Groovy's `.with {}` was never a condition block). |
 | Q-27 | `lint.rules` accepts `on` to enable a rule the profile leaves out; an unknown rule name appears in `check` as `lint-config`. |
+
+### Phase 5 (20 October 2026)
+
+| Item | Result |
+|---|---|
+| 6.3 first | `PracticeContext` holds one document's tree, text, configuration, classification (test, Jenkins, Gradle, from the lint profile `QualityServices` assigns) and one reporting path with severity ceilings and floors. The new checks live in group finders on it (`SqlFinder`, `SecretFinder`, `PitfallFinder`, `JenkinsFinder`, `SpockFinder`, `GradleFinder`); splitting the old `PracticeFinder` visitor stays with Phase 6. |
+| GS035, GS036, GS012 | SQL text built by concatenation, `toString()` on a GString or a GString stored in a `String` variable is an error on a proven `Sql`, information on a receiver only presumed from its name; final constant fields count as constant text. `Sql.newInstance` never closed, returned, stored or passed on is a warning. GS012 now reports a quoted `LIKE` wildcard (`'%${x}%'`) with the pattern to bind, without the quote-removing fix. |
+| GS019 | Credential shapes (AWS access key ID, GitHub token, JSON Web Token, private key) are errors anywhere; a literal given to a secret-sounding name is information and skipped in tests. The new `secrets.allow` list matches values or names. Messages never repeat the secret, and the spec builds its secrets at run time so the repository holds nothing a scanner would flag. |
+| GS017, GS018, GS028, GS029, GS034, GS037 | As planned. GS018 offers a `toString()` fix; GS028 is a warning on boxed numbers, information on primitives; GS029 needs a body of several statements or a block; GS037 warns on a returned value (always discarded) and informs on a bare return; GS034 looks for an assignment to the component in the record. |
+| GS030 to GS033, GS038 | `JenkinsFinder`, Jenkins code only for GS030 to GS033. GS031 and GS032 are warnings, not errors: without a Jenkins classpath, steps are recognised by name. GS038 lives entirely in `JenkinsFinder` (one pass), skips test sources, and is raised to an error in Jenkins code. |
+| GS040 to GS043 | Departed from the plan on GS043: "`thrown()` not last" would flag Spock's own idiom (conditions on `def e = thrown(X)` follow it), so GS043 reports what Spock rejects: an exception condition outside `then:` or a second one in a block. Both interaction problems share GS040. |
+| GS050 to GS052 | Gradle build scripts were only seen when a workspace had no source roots. `WorkspaceModel.buildScripts()` now finds root and subproject scripts; they are never compiled with the sources (their Gradle API imports would not resolve), and practices run on a syntax-only parse. |
+| Licence header, SARIF | `lint.licenceHeader` (off by default) adds CodeNarc's `RequiredRegex` as `LicenceHeader`; `docs/ci.md` shows OWASP Dependency-Check SARIF through `reports.sarif`, and why Gradle verification has none. |
+| Exit | Run on the CodeNarc corpus and `jenkins-lib` (`docs/benchmark.md`): 66 findings from the new codes after refinement. A manual sample of 20 had 30% false positives before refinement and 10% after, both remaining ones informational. |
