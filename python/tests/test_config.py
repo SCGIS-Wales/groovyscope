@@ -45,6 +45,22 @@ def test_the_tool_budget_stays_under_the_clients_own() -> None:
         assert (errors == ()) is valid, budget
 
 
+def test_heap_sizes_must_be_positive_and_the_retired_classpath_key_is_refused() -> None:
+    defaults = load_defaults()
+    for key, value, valid in (
+        ("heap", "512m", True),
+        ("heap", "0g", False),
+        ("heap", "01g", False),
+        ("maxHeap", "auto", True),
+        ("maxHeap", "0m", False),
+        ("untrustedHeapCeiling", "4g", True),
+    ):
+        errors = validate_config({**defaults, "daemon": {**defaults["daemon"], key: value}})
+        assert (errors == ()) is valid, (key, value)
+    retired = {**defaults["workspace"], "classpathFrom": {"gradleTask": "printClasspath"}}
+    assert validate_config({**defaults, "workspace": retired})
+
+
 @given(mappings)
 def test_deep_merge_identity(base: dict[str, object]) -> None:
     assert deep_merge(base, {}) == base
