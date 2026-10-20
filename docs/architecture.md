@@ -349,6 +349,7 @@ deliberately loose so shared runners do not fail the build.
 | `java.py` | JDK discovery with injected `runner`/`which` for testability |
 | `jar.py` | JAR lookup (`GROOVYSCOPE_JAR`, bundled, fetched) and SHA-256 verification |
 | `fetch.py` | `groovyscope fetch`: checksum-verified install of a release JAR into the cache |
+| `gitignore.py` | keeps the workspace's `.groovyscope/` folder out of git: one entry in the repository's `.gitignore`, never duplicated (an equivalent line or a rule git already applies counts) |
 | `provision.py` | opt-in Temurin JDK provisioning through the Adoptium API (`jdk install`, `jdk.autoProvision`) |
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |

@@ -82,6 +82,9 @@
           "type": "integer",
           "minimum": 0
         },
+        "gitignore": {
+          "type": "boolean"
+        },
         "classpathFile": {
           "type": [
             "string",

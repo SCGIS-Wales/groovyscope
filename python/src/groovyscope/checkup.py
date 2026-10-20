@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from groovyscope import __version__, benchmark, daemon, doctor, kiro, kiro_agent, profiles, sweep
+from groovyscope import __version__, benchmark, daemon, doctor, gitignore, kiro, kiro_agent, profiles, sweep
 from groovyscope import classpath as classpath_state
 from groovyscope import config as config_module
 from groovyscope.classpath import DEFAULT_FILE
@@ -148,6 +148,38 @@ def project_item(root: Path, *, fix: bool) -> tuple[Item, list[str]]:
     )
 
 
+def gitignore_item(
+    root: Path, config_path: Path | None, environ: Mapping[str, str], *, write: bool
+) -> tuple[Item, list[str]]:
+    """``.groovyscope/`` (this machine's classpath export, contract baseline and workspace profiles) in the git
+    repository's ``.gitignore``, once; ``workspace.gitignore: false`` leaves it to the team."""
+    if not is_project(root):
+        return ({"level": "info", "name": "gitignore", "message": "not a Groovy project folder; nothing to do"}, [])
+    effective = load_config(root, config_path, dict(environ))
+    if not effective.get("workspace", {}).get("gitignore", config_module.default("workspace", "gitignore")):
+        message = "workspace.gitignore is off, so .groovyscope/ is left to you"
+        return ({"level": "info", "name": "gitignore", "message": message}, [])
+    outcome = gitignore.ensure(root, write=write)
+    path = outcome["path"]
+    if outcome["state"] == "missing":
+        item: Item = {
+            "level": "warn",
+            "name": "gitignore",
+            "message": f".groovyscope/ (classpath export with this machine's paths) is not in {path}",
+            "fix": SAFE_REPAIR_COMMAND,
+            "safe": True,
+        }
+        return (item, [])
+    level, message = {
+        "no-repository": ("info", "not a git repository; nothing to ignore"),
+        "negated": ("info", f"{path} keeps .groovyscope/ in git on purpose (a ! rule); left as it is"),
+        "present": ("ok", ".groovyscope/ is ignored by git"),
+        "added": ("ok", f".groovyscope/ added to {path}"),
+    }[outcome["state"]]
+    done = [f".groovyscope/ added to {path}, so the classpath export and baseline stay out of commits"]
+    return ({"level": level, "name": "gitignore", "message": message}, done if outcome["state"] == "added" else [])
+
+
 def workspace_items(root: Path, config_path: Path | None, environ: Mapping[str, str]) -> list[Item]:
     """Trust and classpath: the two decisions only the user can take."""
     if not is_project(root):
@@ -274,8 +306,11 @@ def build(
     fix: bool,
     run: kiro_agent.KiroRunner | None = None,
     config_hash: str | None = None,
+    agent: bool = False,
 ) -> Report:
-    """The checkup. With ``fix``, the safe repairs (Kiro files, project LSP entry, benchmark corpus) are applied."""
+    """The checkup. With ``fix``, the safe repairs (Kiro files, project LSP entry, benchmark corpus) are applied.
+    ``agent`` (the start hook) writes one thing only, the ``.groovyscope/`` entry in the repository's ``.gitignore``,
+    so a session never commits this machine's classpath export."""
     items: list[Item] = []
     repaired: list[str] = []
 
@@ -285,6 +320,7 @@ def build(
 
     add(*guarded("kiro files", lambda: kiro_files_item(root, config_path, environ, home, fix=fix, run=run)))
     add(*guarded("project", lambda: project_item(root, fix=fix)))
+    add(*guarded("gitignore", lambda: gitignore_item(root, config_path, environ, write=fix or agent)))
     try:
         items.extend(workspace_items(root, config_path, environ))
     except Exception as exc:
