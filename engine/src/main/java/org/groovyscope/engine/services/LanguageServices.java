@@ -15,50 +15,32 @@
  */
 package org.groovyscope.engine.services;
 
-import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
-import org.groovyscope.engine.concurrent.Cancellation;
-import org.groovyscope.engine.concurrent.Freshness;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Pattern;
+import java.util.Set;
+import java.util.concurrent.Future;
+import java.util.function.LongSupplier;
 import org.codehaus.groovy.ast.ASTNode;
-import org.codehaus.groovy.ast.ClassNode;
-import org.codehaus.groovy.ast.ModuleNode;
-import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.groovyscope.engine.callgraph.CallGraph;
-import org.groovyscope.engine.callgraph.ImpactAnalyzer;
 import org.groovyscope.engine.compile.CompilationResult;
 import org.groovyscope.engine.compile.GroovyCompiler;
-import org.groovyscope.engine.compile.LoaderHandle;
+import org.groovyscope.engine.compile.MissingDependencies;
 import org.groovyscope.engine.config.EngineConfig;
-import org.groovyscope.engine.index.AstIndex;
-import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.index.NodeEntry;
 import org.groovyscope.engine.index.SymbolStore;
-import org.groovyscope.engine.index.TextLines;
 import org.groovyscope.engine.model.CallSite;
 import org.groovyscope.engine.model.Completion;
-import org.groovyscope.engine.model.Confidence;
-import org.groovyscope.engine.model.ImpactReport;
 import org.groovyscope.engine.model.Definition;
 import org.groovyscope.engine.model.Diagnostic;
+import org.groovyscope.engine.model.FoldingRange;
+import org.groovyscope.engine.model.Highlight;
 import org.groovyscope.engine.model.Hover;
+import org.groovyscope.engine.model.ImpactReport;
+import org.groovyscope.engine.model.InlayHint;
 import org.groovyscope.engine.model.Location;
 import org.groovyscope.engine.model.Position;
 import org.groovyscope.engine.model.Range;
@@ -67,55 +49,38 @@ import org.groovyscope.engine.model.RenamePreparation;
 import org.groovyscope.engine.model.RenameResult;
 import org.groovyscope.engine.model.SignatureHelp;
 import org.groovyscope.engine.model.Symbol;
-import org.groovyscope.engine.model.TextEdit;
-import org.groovyscope.engine.semantics.HoverRenderer;
-import org.groovyscope.engine.semantics.Resolution;
-import org.groovyscope.engine.semantics.Resolver;
-import org.groovyscope.engine.semantics.Symbols;
+import org.groovyscope.engine.practices.PracticeFinder;
+import org.groovyscope.engine.semantics.DynamicCodeFinder;
 import org.groovyscope.engine.workspace.WorkspaceModel;
 
 /**
  * The engine's API, independent of any protocol. Each query runs against the current {@link Snapshot};
  * when documents changed since the last compile, the snapshot is rebuilt first so answers are never stale.
+ * {@link SnapshotManager} keeps the compiled state and {@link NavigationQueries} answers the queries; this facade
+ * holds the caches derived from the snapshot (the call graph, the quality services, the folded diagnostics).
  */
 public final class LanguageServices {
 
-    static final int WORKSPACE_SYMBOL_LIMIT = 500;
-    /** Index entries visited between two cancellation checks in a whole-workspace walk. */
-    static final int CHECKPOINT_EVERY = 256;
     /** How long {@link #close} waits for background work (a symbol save) before closing the store. */
-    static final long CLOSE_DRAIN_SECONDS = 5;
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
+    static final long CLOSE_DRAIN_SECONDS = SnapshotManager.CLOSE_DRAIN_SECONDS;
+    static final int WORKSPACE_SYMBOL_LIMIT = NavigationQueries.WORKSPACE_SYMBOL_LIMIT;
+    /** Index entries visited between two cancellation checks in a whole-workspace walk. */
+    static final int CHECKPOINT_EVERY = NavigationQueries.CHECKPOINT_EVERY;
+    /** The code of the warning that names what the workspace budget left out of the analysis. */
+    public static final String BUDGET_CODE = "GS101";
 
     private final WorkspaceModel workspace;
-    private final GroovyCompiler compiler;
-    private final SymbolStore store;
     private final Object lock = new Object();
-    private final ExecutorService background = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "groovyscope-background");
-        thread.setDaemon(true);
-        return thread;
-    });
-    private final AtomicBoolean backgroundCompileQueued = new AtomicBoolean();
-    private volatile java.util.concurrent.Future<?> backgroundCompile = CompletableFuture.completedFuture(null);
-    // Held for the whole of a compile; a waiter polls its cancel flag instead of blocking on a monitor (E-13).
-    private final java.util.concurrent.locks.ReentrantLock compileLock = new java.util.concurrent.locks.ReentrantLock();
-    private volatile Snapshot snapshot = Snapshot.empty();
-    /** Bumped on every workspace change; the snapshot is stale while it differs from {@link #compiled}. */
-    private final AtomicLong changes = new AtomicLong(1);
-    /** The {@link #changes} value the current snapshot reflects. */
-    private volatile long compiled;
-    private volatile List<Symbol> cachedSymbols;
-    private long version;
-    /** The compile under way, if any, that requests needing a fresh snapshot join instead of starting their own. */
-    private final Object jobLock = new Object();
-    private CompileJob inFlight;
-    private volatile long lastUsedNanos = System.nanoTime();
-    private volatile boolean closed;
-    /** The change count of the last reconfigure: a snapshot older than that is never served stale. */
-    private volatile long reconfiguredAt;
-    /** The symbol save not yet written; a newer snapshot replaces it, so saves never queue up. */
-    private final AtomicReference<Runnable> pendingSave = new AtomicReference<>();
+    private final SnapshotManager snapshots;
+    private final NavigationQueries queries;
+    private volatile QualityServices quality;
+    private volatile CallGraph graph;
+    private volatile long graphVersion = -1;
+
+    private record FoldedDiagnostics(long version, Map<String, List<Diagnostic>> diagnostics) {
+    }
+
+    private volatile FoldedDiagnostics folded;
 
     public LanguageServices(WorkspaceModel workspace, GroovyCompiler compiler) {
         this(workspace, compiler, null);
@@ -127,22 +92,17 @@ public final class LanguageServices {
      */
     public LanguageServices(WorkspaceModel workspace, GroovyCompiler compiler, SymbolStore store) {
         this.workspace = workspace;
-        this.compiler = compiler;
-        this.store = store;
+        this.snapshots = new SnapshotManager(workspace, compiler, store, lock, () -> {
+            graph = null;
+            graphVersion = -1;
+        });
+        this.queries = new NavigationQueries(workspace, this::snapshot, this::callGraph, snapshots);
     }
 
     /** True once at least one compile has produced a snapshot. */
     public boolean hasCompiled() {
-        return snapshot.version() > 0;
+        return snapshots.hasCompiled();
     }
-
-    private volatile QualityServices quality;
-    private volatile CallGraph graph;
-    private volatile long graphVersion = -1;
-    // The text each file had when it last parsed (shared with the sources map while unchanged), and the loader
-    // of the last successful compile, closed when the next one is published. Both guarded by lock.
-    private final Map<String, String> lastGood = new HashMap<>();
-    private LoaderHandle openLoader;
 
     /** The call graph of the current snapshot, built on first use and kept until the next compile. */
     public CallGraph callGraph() {
@@ -156,17 +116,9 @@ public final class LanguageServices {
         }
     }
 
-    private ImpactAnalyzer impactAnalyzer(Snapshot current) {
-        return new ImpactAnalyzer(current.index(), current.resolver(), callGraph(), current.symbols());
-    }
-
     /** The impact of changing the declaration under the cursor. */
     public Optional<ImpactReport> impact(String uri, Position position, ImpactReport.Change change) {
-        Snapshot current = snapshot();
-        return current.index().nodeAt(uri, position)
-                .flatMap(entry -> current.resolver().resolve(entry))
-                .filter(resolution -> current.index().declarationEntry(resolution.primary()).isPresent())
-                .map(resolution -> impactAnalyzer(current).analyze(resolution.primary(), change));
+        return queries.impact(uri, position, change);
     }
 
     /**
@@ -174,105 +126,42 @@ public final class LanguageServices {
      * {@code Class#member} or a bare {@code Class}; overloads each get a report.
      */
     public List<ImpactReport> impactOf(String qualifiedName, ImpactReport.Change change) {
-        Snapshot current = snapshot();
-        List<ImpactReport> reports = new ArrayList<>();
-        for (ASTNode declaration : findDeclarations(current, qualifiedName)) {
-            reports.add(impactAnalyzer(current).analyze(declaration, change));
-        }
-        return reports;
+        return queries.impactOf(qualifiedName, change);
     }
 
     /** Declarations a dotted or hash-separated name refers to. */
     public List<ASTNode> findDeclarations(Snapshot current, String name) {
-        String trimmed = name == null ? "" : name.trim();
-        if (trimmed.isEmpty()) {
-            return List.of();
-        }
-        int hash = trimmed.indexOf('#');
-        String classPart = hash >= 0 ? trimmed.substring(0, hash) : trimmed;
-        String memberPart = hash >= 0 ? trimmed.substring(hash + 1) : null;
-        List<ClassNode> classes = classesNamed(current, classPart);
-        if (classes.isEmpty() && memberPart == null && classPart.contains(".")) {
-            int dot = classPart.lastIndexOf('.');
-            classes = classesNamed(current, classPart.substring(0, dot));
-            memberPart = classPart.substring(dot + 1);
-        }
-        List<ASTNode> found = new ArrayList<>();
-        for (ClassNode classNode : classes) {
-            if (memberPart == null || memberPart.isBlank()) {
-                found.add(classNode);
-                continue;
-            }
-            for (org.codehaus.groovy.ast.MethodNode method : classNode.getDeclaredMethods(memberPart)) {
-                if (!method.isSynthetic()) {
-                    found.add(method);
-                }
-            }
-            org.codehaus.groovy.ast.PropertyNode property = classNode.getProperty(memberPart);
-            if (property != null) {
-                found.add(property);
-            } else {
-                org.codehaus.groovy.ast.FieldNode field = classNode.getDeclaredField(memberPart);
-                if (field != null) {
-                    found.add(field);
-                }
-            }
-        }
-        return found;
-    }
-
-    private static List<ClassNode> classesNamed(Snapshot current, String name) {
-        Optional<ClassNode> exact = current.index().classNamed(name);
-        if (exact.isPresent()) {
-            return List.of(exact.get());
-        }
-        return current.index().classesWithSimpleName(name);
+        return NavigationQueries.findDeclarations(current, name);
     }
 
     /** The declaration (method, constructor, class) at a position, for call hierarchy, or empty. */
     public Optional<Symbol> callHierarchyItem(String uri, Position position) {
-        Snapshot current = snapshot();
-        return current.index().nodeAt(uri, position)
-                .flatMap(entry -> current.resolver().resolve(entry))
-                .map(Resolution::primary)
-                .filter(node -> node instanceof org.codehaus.groovy.ast.MethodNode || node instanceof ClassNode)
-                .filter(node -> current.index().declarationEntry(node).isPresent())
-                .map(node -> current.symbols().of(node));
+        return queries.callHierarchyItem(uri, position);
     }
 
     /** The declaration node a symbol (from {@link #callHierarchyItem}) stands for, or empty. */
     public Optional<ASTNode> declarationOf(Symbol symbol) {
-        Snapshot current = snapshot();
-        if (symbol == null || symbol.location() == null) {
-            return Optional.empty();
-        }
-        for (NodeEntry entry : current.index().entries(symbol.location().uri())) {
-            if (entry.isDeclaration() && entry.range().equals(symbol.location().range())
-                    && Symbols.nameOf(entry.node()) != null && Symbols.nameOf(entry.node()).equals(symbol.name())) {
-                return Optional.of(entry.node());
-            }
-        }
-        return Optional.empty();
+        return queries.declarationOf(symbol);
     }
 
     /** Calls into the given declaration. */
     public List<CallSite> incomingCalls(Symbol symbol) {
-        return declarationOf(symbol).map(node -> callGraph().incoming(node)).orElse(List.of());
+        return queries.incomingCalls(symbol);
     }
 
     /** Calls made from within the given declaration. */
     public List<CallSite> outgoingCalls(Symbol symbol) {
-        return declarationOf(symbol).map(node -> callGraph().outgoing(node)).orElse(List.of());
+        return queries.outgoingCalls(symbol);
     }
 
     /** Constructs that defeat static analysis, in the given documents (all when empty). */
-    public List<org.groovyscope.engine.semantics.DynamicCodeFinder.Finding> dynamicCode(java.util.Collection<String> uris) {
-        return org.groovyscope.engine.semantics.DynamicCodeFinder.find(snapshot().index(), uris);
+    public List<DynamicCodeFinder.Finding> dynamicCode(Collection<String> uris) {
+        return queries.dynamicCode(uris);
     }
 
     /** Semantic tokens for a document, LSP-encoded. */
     public List<Integer> semanticTokens(String uri) {
-        return SemanticTokensSupport.encode(snapshot(), uri);
+        return queries.semanticTokens(uri);
     }
 
     /** Lint, type-check, format and quick fixes over this workspace, sharing its caches. */
@@ -293,13 +182,9 @@ public final class LanguageServices {
         return workspace;
     }
 
-    private volatile String compiledFingerprint;
-    private volatile long lastDiskCheck = Long.MIN_VALUE;
-    private volatile java.util.function.LongSupplier clock = System::nanoTime;
-
     /** For specs: the clock the disk check window is measured on. */
-    void clock(java.util.function.LongSupplier replacement) {
-        clock = replacement;
+    void clock(LongSupplier replacement) {
+        snapshots.clock(replacement);
     }
 
     /**
@@ -307,21 +192,12 @@ public final class LanguageServices {
      * MCP server call this first: they have no editor sending change notifications.
      */
     public void syncWithDisk() {
-        long window = workspace.config().daemon().diskCheckMillis() * 1_000_000L;
-        long now = clock.getAsLong();
-        if (window > 0 && lastDiskCheck != Long.MIN_VALUE && now - lastDiskCheck < window) {
-            return; // checked within daemon.diskCheckMillis: trusted for the rest of the window
-        }
-        lastDiskCheck = now;
-        String recorded = compiledFingerprint;
-        if (recorded != null && !recorded.equals(workspace.diskFingerprint())) {
-            markDirty();
-        }
+        snapshots.syncWithDisk();
     }
 
     /** Marks the snapshot stale; the next query recompiles. */
     public void markDirty() {
-        changes.incrementAndGet();
+        snapshots.markDirty();
     }
 
     /**
@@ -337,356 +213,62 @@ public final class LanguageServices {
             graphVersion = -1;
             folded = null;
         }
-        markDirty();
+        snapshots.markDirty();
         // Until a compile under the new settings is published, no request is answered from the old one.
-        reconfiguredAt = changes.get();
+        snapshots.reconfigured();
     }
 
     public boolean isDirty() {
-        return compiled != changes.get();
+        return snapshots.isDirty();
     }
 
     /** Recompiles the workspace when it changed since the last compile, and returns the snapshot. */
     public Snapshot refresh() {
-        acquireCompileLock();
-        try {
-            if (!isDirty()) {
-                return snapshot;
-            }
-            // Captured before the sources are read: an edit that arrives while this compile runs leaves the
-            // snapshot stale, so the next query recompiles instead of serving the pre-edit result.
-            long target = changes.get();
-            String fingerprint = null;
-            Map<String, String> sources = Map.of();
-            CompilationResult result = null;
-            boolean published = false;
-            try {
-                // Taken before the sources are read, so an edit racing this compile shows up as a later change.
-                long started = System.nanoTime();
-                WorkspaceModel.CompileInput input = workspace.compileInput();
-                fingerprint = input.fingerprint();
-                sources = input.sources();
-                result = compiler.compile(sources, workspace.classpath(), workspace.config().trust());
-                org.groovyscope.engine.log.EngineLog.debug("compiled %d file(s) of %s in %d ms (%d with diagnostics)",
-                        sources.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000,
-                        result.diagnostics().values().stream().filter(list -> !list.isEmpty()).count());
-                Map<String, ModuleNode> modules = new HashMap<>(result.modules());
-                Map<String, String> lastTexts;
-                synchronized (lock) {
-                    // A file that no longer parses keeps a tree of its last good text, parsed again into this
-                    // generation: a tree carried over from the previous compile would pin that whole generation
-                    // (every file's AST and the loader with its jars) in memory for as long as the error lasts.
-                    for (Map.Entry<String, String> source : sources.entrySet()) {
-                        if (modules.containsKey(source.getKey())) {
-                            lastGood.put(source.getKey(), source.getValue());
-                        }
-                    }
-                    lastGood.keySet().retainAll(sources.keySet());
-                    lastTexts = new HashMap<>(lastGood);
-                }
-                for (String uri : sources.keySet()) {
-                    String text = lastTexts.get(uri);
-                    if (!modules.containsKey(uri) && text != null) {
-                        compiler.parseOnly(uri, text).ifPresent(module -> modules.put(uri, module));
-                    }
-                }
-                AstIndex index = AstIndex.build(modules, sources);
-                Resolver resolver = new Resolver(index);
-                synchronized (lock) {
-                    if (closed) {
-                        // released while this compile ran: nothing is published, and its loader is closed below
-                        throw new CancellationException("the workspace was closed during the compile");
-                    }
-                    version++;
-                    snapshot = new Snapshot(result, index, resolver, new Symbols(index), version);
-                    graph = null;
-                    graphVersion = -1;
-                    // Nothing references the previous generation now: release the jars its loader held open.
-                    if (openLoader != null) {
-                        openLoader.close();
-                    }
-                    openLoader = result.loader();
-                    published = true;
-                }
-                persistSymbols(snapshot, sources);
-            } catch (CancellationException e) {
-                // Every request that wanted this compile is gone: nothing is recorded, the next request compiles.
-                org.groovyscope.engine.log.EngineLog.debug("compile of %s abandoned: %s", workspace.root(), e.getMessage());
-                throw e;
-            } catch (RuntimeException | LinkageError | AssertionError | StackOverflowError e) {
-                org.groovyscope.engine.log.EngineLog.error(e, "compile of %s failed", workspace.root());
-                // Recorded as a snapshot with the failure as a diagnostic, so later requests answer from it until
-                // something changes, instead of repeating the same failure on every request.
-                org.groovyscope.engine.log.EngineLog.warn("%s", "analysis failed: " + e);
-                synchronized (lock) {
-                    version++;
-                    snapshot = failedSnapshot(snapshot, sources, e, version);
-                }
-            } finally {
-                // A result that was not published (cancelled or failed after the compile returned) owns a loader
-                // nobody else will close.
-                if (!published && result != null && result.loader() != null) {
-                    result.loader().close();
-                }
-            }
-            compiled = target;
-            compiledFingerprint = fingerprint;
-            return snapshot;
-        } finally {
-            compileLock.unlock();
-        }
-    }
-
-    /** Waits for the compile lock, leaving (cancelled) when the request is cancelled or interrupted meanwhile. */
-    private void acquireCompileLock() {
-        try {
-            while (!compileLock.tryLock(100, TimeUnit.MILLISECONDS)) {
-                Cancellation.checkpoint();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CancellationException("interrupted while waiting for the compile");
-        }
+        return snapshots.refresh();
     }
 
     /** The snapshot last published, without compiling. */
     public Snapshot currentSnapshot() {
-        return snapshot;
+        return snapshots.currentSnapshot();
     }
 
     /** The compile last queued on the background thread (done when none is queued). */
-    public java.util.concurrent.Future<?> backgroundCompile() {
-        return backgroundCompile;
-    }
-
-    /** Queues one compile on the background thread, unless one is already queued. */
-    private void revalidate() {
-        if (!backgroundCompileQueued.compareAndSet(false, true)) {
-            return;
-        }
-        try {
-            backgroundCompile = background.submit(() -> {
-                try {
-                    // Nobody waits on it, so it is abandoned only when the workspace closes.
-                    Cancellation.run(() -> closed, this::snapshot);
-                } catch (RuntimeException e) {
-                    org.groovyscope.engine.log.EngineLog.debug("background compile of %s failed: %s",
-                            workspace.root(), e);
-                } finally {
-                    backgroundCompileQueued.set(false);
-                }
-            });
-        } catch (java.util.concurrent.RejectedExecutionException e) {
-            backgroundCompileQueued.set(false); // closed: nothing more to compile
-        }
+    public Future<?> backgroundCompile() {
+        return snapshots.backgroundCompile();
     }
 
     /** The previous snapshot's trees and index with the failure reported on the first document. */
     static Snapshot failedSnapshot(Snapshot previous, Map<String, String> sources, Throwable failure, long version) {
-        Map<String, List<Diagnostic>> diagnostics = new HashMap<>();
-        for (String uri : sources.keySet()) {
-            diagnostics.put(uri, new ArrayList<>());
-        }
-        String first = sources.keySet().stream().sorted().findFirst().orElse(null);
-        if (first != null) {
-            diagnostics.put(first, List.of(new Diagnostic(first, Range.of(0, 0, 0, 1), Diagnostic.Severity.ERROR,
-                    GroovyCompiler.SOURCE, "engine-crash", "groovyscope could not analyse the workspace: " + failure)));
-        }
-        Map<String, ModuleNode> modules = new HashMap<>();
-        for (Map.Entry<String, ModuleNode> entry : previous.result().modules().entrySet()) {
-            if (sources.containsKey(entry.getKey())) {
-                modules.put(entry.getKey(), entry.getValue());
-            }
-        }
-        CompilationResult result = new CompilationResult(modules, sources, diagnostics, 0, sources.keySet());
-        return new Snapshot(result, previous.index(), previous.resolver(), previous.symbols(), version);
-    }
-
-    private void persistSymbols(Snapshot fresh, Map<String, String> sources) {
-        if (store == null) {
-            return;
-        }
-        List<Symbol> symbols = fresh.symbols().workspaceSymbols("", Integer.MAX_VALUE);
-        Runnable save = () -> {
-            try {
-                store.save(sources, symbols);
-            } catch (IOException e) {
-                org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache not saved: " + e.getMessage());
-            }
-        };
-        // Only the newest snapshot is worth writing: a save still waiting is replaced, not queued behind.
-        if (pendingSave.getAndSet(save) == null) {
-            try {
-                background.submit(() -> {
-                    Runnable latest = pendingSave.getAndSet(null);
-                    if (latest != null) {
-                        latest.run();
-                    }
-                });
-            } catch (java.util.concurrent.RejectedExecutionException e) {
-                pendingSave.set(null); // closed: nothing more to persist
-            }
-        }
-    }
-
-    /** Symbols from the cache for documents whose text has not changed since they were stored. */
-    private List<Symbol> cachedSymbols() {
-        List<Symbol> cached = cachedSymbols;
-        if (cached == null) {
-            try {
-                cached = store == null ? List.of() : store.load(workspace.compileSources());
-            } catch (IOException e) {
-                org.groovyscope.engine.log.EngineLog.warn("%s", "symbol cache not read: " + e.getMessage());
-                cached = List.of();
-            }
-            cachedSymbols = cached;
-        }
-        return cached;
-    }
-
-    /** Before the first compile, serve symbol searches from the cache and compile in the background. */
-    private boolean answerFromCache() {
-        if (store == null || hasCompiled() || cachedSymbols().isEmpty()) {
-            return false;
-        }
-        revalidate();
-        return true;
-    }
-
-    /**
-     * One compile that several requests wait for. The first requester runs it on its own thread; the others join
-     * its future and poll their own cancel flag while they wait, so a cancelled request leaves without touching
-     * the compile the rest still need. The compile itself is abandoned (at its next checkpoint) only when every
-     * request interested in it has been cancelled.
-     */
-    private static final class CompileJob {
-        final CompletableFuture<Snapshot> result = new CompletableFuture<>();
-        final AtomicInteger interested = new AtomicInteger(1);
-        final BooleanSupplier ownerCancelled;
-
-        CompileJob(BooleanSupplier ownerCancelled) {
-            this.ownerCancelled = ownerCancelled;
-        }
-
-        boolean abandoned() {
-            return interested.get() == 0 || (interested.get() == 1 && ownerCancelled.getAsBoolean());
-        }
+        return SnapshotManager.failedSnapshot(previous, sources, failure, version);
     }
 
     /**
      * The current snapshot, rebuilt first when stale; one compile per change however many requests need it. A light
-     * request about a document unchanged since the published compile (see {@link Freshness}) gets the published
-     * snapshot at once while the compile runs in the background.
+     * request about a document unchanged since the published compile gets the published snapshot at once while the
+     * compile runs in the background.
      */
     public Snapshot snapshot() {
-        if (closed) {
-            throw new IllegalStateException("the workspace " + workspace.root() + " was closed (released while idle); "
-                    + "reconnect to open it again");
-        }
-        lastUsedNanos = System.nanoTime();
-        String staleOk = Freshness.staleOkUri();
-        Snapshot published = snapshot;
-        if (staleOk != null && isDirty() && published.version() > 0 && compiled >= reconfiguredAt
-                && Objects.equals(published.result().sources().get(staleOk), workspace.text(staleOk))) {
-            revalidate();
-            return published;
-        }
-        if (isDirty() && published.version() > 0 && org.groovyscope.engine.concurrent.MemoryGuard.pressure()) {
-            // Under heap pressure a compile is the whole-workspace step refused; a light request keeps the
-            // published snapshot (E-18).
-            if (staleOk != null) {
-                return published;
-            }
-            org.groovyscope.engine.concurrent.MemoryGuard.requireHeadroom();
-        }
-        while (isDirty()) {
-            CompileJob job;
-            boolean owner;
-            synchronized (jobLock) {
-                owner = inFlight == null;
-                if (owner) {
-                    inFlight = new CompileJob(Cancellation.current());
-                }
-                job = inFlight;
-            }
-            if (owner) {
-                return runJob(job);
-            }
-            Snapshot joined = joinJob(job);
-            if (joined != null && !isDirty()) {
-                return joined;
-            }
-            // The compile was abandoned by everyone else or missed an edit: this request starts the next one.
-        }
-        return snapshot;
-    }
-
-    private Snapshot runJob(CompileJob job) {
-        try {
-            Snapshot fresh = Cancellation.run(job::abandoned, this::refresh);
-            job.result.complete(fresh);
-            return fresh;
-        } catch (RuntimeException | Error e) {
-            job.result.completeExceptionally(e);
-            throw e;
-        } finally {
-            synchronized (jobLock) {
-                if (inFlight == job) {
-                    inFlight = null;
-                }
-            }
-        }
-    }
-
-    /** Waits for another request's compile; null when that compile was abandoned. */
-    private Snapshot joinJob(CompileJob job) {
-        job.interested.incrementAndGet();
-        try {
-            while (true) {
-                try {
-                    return job.result.get(100, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException e) {
-                    Cancellation.checkpoint();
-                } catch (ExecutionException e) {
-                    Throwable cause = e.getCause();
-                    if (cause instanceof CancellationException) {
-                        return null;
-                    }
-                    if (cause instanceof RuntimeException runtime) {
-                        throw runtime;
-                    }
-                    if (cause instanceof Error error) {
-                        throw error;
-                    }
-                    throw new IllegalStateException(cause);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new CancellationException("interrupted while waiting for the compile");
-                }
-            }
-        } finally {
-            job.interested.decrementAndGet();
-        }
+        return snapshots.snapshot();
     }
 
     /** Files in the current snapshot, without touching the disk (0 before the first compile). */
     public int fileCount() {
-        return snapshot.result().sources().size();
+        return snapshots.fileCount();
     }
 
     /** When a request last asked for the snapshot, on the {@link System#nanoTime()} clock. */
     public long lastUsedNanos() {
-        return lastUsedNanos;
+        return snapshots.lastUsedNanos();
     }
 
     /** Marks this workspace as just used (a connection was handed it), so an idle eviction leaves it. */
     public void touch() {
-        lastUsedNanos = System.nanoTime();
+        snapshots.touch();
     }
 
     /** True once {@link #close} ran: the workspace answers nothing more. */
     public boolean isClosed() {
-        return closed;
+        return snapshots.isClosed();
     }
 
     /**
@@ -694,42 +276,15 @@ public final class LanguageServices {
      * is drained (bounded) before the symbol store closes so no save runs against a closed database.
      */
     public void close() {
-        closed = true;
-        synchronized (lock) {
-            if (openLoader != null) {
-                openLoader.close();
-                openLoader = null;
-            }
+        snapshots.close(() -> {
             graph = null;
             quality = null;
-        }
-        background.shutdownNow();
-        try {
-            if (!background.awaitTermination(CLOSE_DRAIN_SECONDS, TimeUnit.SECONDS)) {
-                org.groovyscope.engine.log.EngineLog.warn("%s", "background work of " + workspace.root()
-                        + " still running at close; the symbol cache closes anyway");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        if (store != null) {
-            try {
-                store.close();
-            } catch (java.io.IOException e) {
-                // nothing useful to do
-            }
-        }
+        });
     }
-
-    private record FoldedDiagnostics(long version, Map<String, List<Diagnostic>> diagnostics) {
-    }
-
-    private volatile FoldedDiagnostics folded;
 
     /**
      * Compile diagnostics per document. With no classpath configured, unresolved imports are folded into one
-     * {@code GS100} finding per file (see {@link org.groovyscope.engine.compile.MissingDependencies}); with a
-     * classpath they stay real errors.
+     * {@code GS100} finding per file (see {@link MissingDependencies}); with a classpath they stay real errors.
      */
     public Map<String, List<Diagnostic>> diagnostics() {
         Snapshot current = snapshot();
@@ -737,10 +292,9 @@ public final class LanguageServices {
         if (workspace.classpath().isEmpty()) {
             FoldedDiagnostics cached = folded;
             if (cached == null || cached.version() != current.version()) {
-                cached = new FoldedDiagnostics(current.version(), Map.copyOf(
-                        org.groovyscope.engine.compile.MissingDependencies.fold(current.result().diagnostics(),
-                                current.result().sources(), org.groovyscope.engine.practices.PracticeFinder.severity(
-                                        org.groovyscope.engine.compile.MissingDependencies.CODE, workspace.config()))));
+                cached = new FoldedDiagnostics(current.version(), Map.copyOf(MissingDependencies.fold(
+                        current.result().diagnostics(), current.result().sources(),
+                        PracticeFinder.severity(MissingDependencies.CODE, workspace.config()))));
                 folded = cached;
             }
             base = cached.diagnostics();
@@ -756,59 +310,21 @@ public final class LanguageServices {
         if (!workspace.classpath().isEmpty()) {
             return result.diagnostics();
         }
-        return org.groovyscope.engine.compile.MissingDependencies.fold(result.diagnostics(), result.sources(),
-                org.groovyscope.engine.practices.PracticeFinder.severity(
-                        org.groovyscope.engine.compile.MissingDependencies.CODE, workspace.config()));
+        return MissingDependencies.fold(result.diagnostics(), result.sources(),
+                PracticeFinder.severity(MissingDependencies.CODE, workspace.config()));
     }
 
     /**
      * {@code targets} compiled on their own against the classes of the last full compile, when they are exactly the
-     * documents whose text changed since it (no document added or removed, no Java source among them, the
-     * snapshot otherwise current): what a check after a write needs, at the cost of one file instead of the
-     * workspace. Empty when that does not hold; the caller then uses the snapshot. The snapshot is left as it
-     * is (still stale), and the caller closes the result.
+     * documents whose text changed since it; empty when that does not hold (see {@link SnapshotManager#compileOnly}).
+     * The caller closes the result.
      */
-    public Optional<CompilationResult> compileOnly(java.util.Collection<String> targets) {
-        Snapshot last = snapshot;
-        if (!hasCompiled() || !isDirty() || targets.isEmpty()) {
-            return Optional.empty();
-        }
-        Map<String, String> now = workspace.compileSources();
-        Map<String, String> before = last.result().sources();
-        if (!now.keySet().equals(before.keySet())) {
-            return Optional.empty();
-        }
-        Map<String, String> changed = new HashMap<>();
-        for (Map.Entry<String, String> source : now.entrySet()) {
-            if (!source.getValue().equals(before.get(source.getKey()))) {
-                changed.put(source.getKey(), source.getValue());
-            }
-        }
-        // Exactly the targets: an unchanged target's findings could depend on what changed, so it takes the snapshot.
-        if (changed.isEmpty() || !changed.keySet().equals(new java.util.HashSet<>(targets))
-                || changed.keySet().stream().anyMatch(WorkspaceModel::isJavaUri)) {
-            return Optional.empty();
-        }
-        Map<String, ClassNode> known = new HashMap<>();
-        for (Map.Entry<String, ModuleNode> module : last.result().modules().entrySet()) {
-            if (!changed.containsKey(module.getKey()) && !last.result().unresolvedUris().contains(module.getKey())) {
-                for (ClassNode classNode : module.getValue().getClasses()) {
-                    known.put(classNode.getName(), classNode);
-                }
-            }
-        }
-        long started = System.nanoTime();
-        CompilationResult result = compiler.compile(changed, workspace.classpath(), workspace.config().trust(), known);
-        org.groovyscope.engine.log.EngineLog.debug("compiled %d changed file(s) of %s alone in %d ms",
-                changed.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000);
-        return Optional.of(result);
+    public Optional<CompilationResult> compileOnly(Collection<String> targets) {
+        return snapshots.compileOnly(targets);
     }
 
-    /** The code of the warning that names what the workspace budget left out of the analysis. */
-    public static final String BUDGET_CODE = "GS101";
-
     /** Adds one {@code GS101} warning on the first document when the budget left files out; else {@code base}. */
-    Map<String, List<Diagnostic>> withBudgetWarning(Map<String, List<Diagnostic>> base, java.util.Set<String> uris) {
+    Map<String, List<Diagnostic>> withBudgetWarning(Map<String, List<Diagnostic>> base, Set<String> uris) {
         List<java.nio.file.Path> omitted = workspace.omitted();
         if (omitted.isEmpty() || uris.isEmpty()) {
             return base;
@@ -834,174 +350,52 @@ public final class LanguageServices {
         graphVersion = -1;
         quality = null;
         folded = null;
-        cachedSymbols = null;
+        snapshots.shed();
     }
 
     public Optional<Definition> definition(String uri, Position position) {
-        Snapshot current = snapshot();
-        return current.index().nodeAt(uri, position)
-                .flatMap(entry -> current.resolver().resolve(entry))
-                .map(resolution -> new Definition(current.symbols().of(resolution.primary()), resolution.confidence()));
+        return queries.definition(uri, position);
     }
 
     public Optional<Definition> typeDefinition(String uri, Position position) {
-        Snapshot current = snapshot();
-        Optional<NodeEntry> entry = current.index().nodeAt(uri, position);
-        if (entry.isEmpty()) {
-            return Optional.empty();
-        }
-        Optional<Resolution> resolution = current.resolver().resolve(entry.get());
-        if (resolution.isEmpty()) {
-            return Optional.empty();
-        }
-        ASTNode declaration = resolution.get().primary();
-        ClassNode type = declaration instanceof VariableExpression variable
-                ? current.resolver().typeOfVariable(variable)
-                : Resolver.typeOfMember(declaration);
-        if (type == null) {
-            return Optional.empty();
-        }
-        Resolution classResolution = current.resolver().classDeclaration(type);
-        if (classResolution == null) {
-            return Optional.empty();
-        }
-        return Optional.of(new Definition(current.symbols().of(classResolution.primary()), resolution.get().confidence()));
+        return queries.typeDefinition(uri, position);
     }
 
     public List<Reference> references(String uri, Position position, boolean includeDeclaration) {
-        Snapshot current = snapshot();
-        Optional<NodeEntry> entry = current.index().nodeAt(uri, position);
-        if (entry.isEmpty()) {
-            return List.of();
-        }
-        Optional<Resolution> resolution = current.resolver().resolve(entry.get());
-        if (resolution.isEmpty()) {
-            return List.of();
-        }
-        return referencesTo(current, resolution.get().primary(), includeDeclaration);
+        return queries.references(uri, position, includeDeclaration);
     }
 
     List<Reference> referencesTo(Snapshot current, ASTNode declaration, boolean includeDeclaration) {
-        List<Reference> references = new ArrayList<>();
-        int visited = 0;
-        for (NodeEntry candidate : current.index().allEntries()) {
-            if (++visited % CHECKPOINT_EVERY == 0) {
-                Cancellation.checkpoint(); // a whole-workspace walk: a cancelled request leaves part-way
-            }
-            if (candidate.role() == NodeEntry.Role.OTHER) {
-                continue;
-            }
-            if (candidate.isDeclaration()) {
-                if (includeDeclaration && candidate.node() == declaration) {
-                    TextLines lines = current.index().lines(candidate.uri());
-                    Range name = AstRanges.nameRange(declaration, candidate.range(), lines);
-                    references.add(new Reference(new Location(candidate.uri(), name), Confidence.STATIC));
-                }
-                continue;
-            }
-            Optional<Resolution> resolution = current.resolver().resolve(candidate);
-            if (resolution.isPresent() && resolution.get().includes(declaration)) {
-                Range name = nameRangeOfUsage(current, candidate, declaration);
-                references.add(new Reference(new Location(candidate.uri(), name), resolution.get().confidence()));
-            }
-        }
-        return references;
+        return NavigationQueries.referencesTo(current, declaration, includeDeclaration);
     }
 
     static Range nameRangeOfUsage(Snapshot current, NodeEntry usage, ASTNode declaration) {
-        String name = Symbols.nameOf(declaration);
-        if (usage.role() == NodeEntry.Role.TYPE_USAGE || usage.role() == NodeEntry.Role.CONSTRUCTOR_CALL
-                || usage.role() == NodeEntry.Role.STATIC_CALL) {
-            return AstRanges.nameWithin(usage.range(), name, current.index().lines(usage.uri()));
-        }
-        return usage.range();
+        return NavigationQueries.nameRangeOfUsage(current, usage, declaration);
     }
 
     public Optional<Hover> hover(String uri, Position position) {
-        Snapshot current = snapshot();
-        Optional<NodeEntry> entry = current.index().nodeAt(uri, position);
-        if (entry.isEmpty()) {
-            return Optional.empty();
-        }
-        Optional<Resolution> resolution = current.resolver().resolve(entry.get());
-        if (resolution.isEmpty()) {
-            return Optional.empty();
-        }
-        ASTNode declaration = resolution.get().primary();
-        ClassNode inferred = declaration instanceof VariableExpression variable && variable.isDynamicTyped()
-                ? current.resolver().typeOfVariable(variable)
-                : null;
-        return Optional.of(new Hover(HoverRenderer.render(declaration, resolution.get(), inferred), entry.get().range()));
+        return queries.hover(uri, position);
     }
 
     public List<Symbol> documentSymbols(String uri) {
-        if (answerFromCache()) {
-            return nest(cachedSymbols().stream()
-                    .filter(s -> s.location() != null && s.location().uri().equals(uri)).toList());
-        }
-        return snapshot().symbols().documentSymbols(uri);
+        return queries.documentSymbols(uri);
     }
 
-    /**
-     * The cache stores a document's declarations flat; an outline is a tree. Each symbol becomes a child of the
-     * smallest other symbol whose range contains it, so a cached answer has the same shape as a compiled one.
-     */
+    /** The flat symbols of a cached outline nested into a tree (see {@link NavigationQueries#nest}). */
     static List<Symbol> nest(List<Symbol> flat) {
-        Map<Symbol, List<Symbol>> children = new java.util.LinkedHashMap<>();
-        List<Symbol> roots = new ArrayList<>();
-        for (Symbol symbol : flat) {
-            Symbol parent = null;
-            for (Symbol candidate : flat) {
-                if (candidate != symbol && encloses(candidate, symbol)
-                        && (parent == null || encloses(parent, candidate))) {
-                    parent = candidate;
-                }
-            }
-            if (parent == null) {
-                roots.add(symbol);
-            } else {
-                children.computeIfAbsent(parent, k -> new ArrayList<>()).add(symbol);
-            }
-        }
-        List<Symbol> result = new ArrayList<>();
-        for (Symbol root : roots) {
-            result.add(withChildren(root, children));
-        }
-        return result;
-    }
-
-    private static boolean encloses(Symbol outer, Symbol inner) {
-        Range a = outer.location().range();
-        Range b = inner.location().range();
-        return a.contains(b) && !a.equals(b);
-    }
-
-    private static Symbol withChildren(Symbol symbol, Map<Symbol, List<Symbol>> children) {
-        List<Symbol> nested = new ArrayList<>();
-        for (Symbol child : children.getOrDefault(symbol, List.of())) {
-            nested.add(withChildren(child, children));
-        }
-        return new Symbol(symbol.name(), symbol.kind(), symbol.container(), symbol.location(), symbol.selectionRange(),
-                symbol.detail(), nested);
+        return NavigationQueries.nest(flat);
     }
 
     public List<Symbol> workspaceSymbols(String query) {
-        if (answerFromCache()) {
-            String needle = query == null ? "" : query.toLowerCase();
-            return cachedSymbols().stream()
-                    .filter(s -> s.name().toLowerCase().contains(needle))
-                    .limit(WORKSPACE_SYMBOL_LIMIT)
-                    .toList();
-        }
-        return snapshot().symbols().workspaceSymbols(query, WORKSPACE_SYMBOL_LIMIT);
+        return queries.workspaceSymbols(query);
     }
 
     public List<Completion> completion(String uri, Position position) {
-        return CompletionSupport.complete(snapshot(), uri, position);
+        return queries.completion(uri, position);
     }
 
     public Optional<SignatureHelp> signatureHelp(String uri, Position position) {
-        return SignatureSupport.signatureHelp(snapshot(), uri, position);
+        return queries.signatureHelp(uri, position);
     }
 
     /**
@@ -1009,88 +403,29 @@ public final class LanguageServices {
      * implementations for a method, subclasses and implementors for a class or interface.
      */
     public List<Location> implementations(String uri, Position position) {
-        return DocumentSupport.implementations(snapshot(), uri, position);
+        return queries.implementations(uri, position);
     }
 
     /** Occurrences of the symbol under the cursor within the same document, declarations and writes marked. */
-    public List<org.groovyscope.engine.model.Highlight> highlights(String uri, Position position) {
-        return DocumentSupport.highlights(snapshot(), uri, position);
+    public List<Highlight> highlights(String uri, Position position) {
+        return queries.highlights(uri, position);
     }
 
     /** Foldable classes, methods, closures, multi-line comments and import groups of a document. */
-    public List<org.groovyscope.engine.model.FoldingRange> foldingRanges(String uri) {
-        Snapshot current = snapshot();
-        String text = workspace.text(uri);
-        ModuleNode module = current.result().modules().get(uri);
-        if (text != null && !text.equals(current.result().sources().get(uri))) {
-            module = null; // the text moved on since the compile; fold by text only rather than at stale lines
-        }
-        return DocumentSupport.foldingRanges(module, text);
+    public List<FoldingRange> foldingRanges(String uri) {
+        return queries.foldingRanges(uri);
     }
 
     /** Inferred-type hints for {@code def} locals whose declaration lies within {@code range}. */
-    public List<org.groovyscope.engine.model.InlayHint> inlayHints(String uri, Range range) {
-        Snapshot current = snapshot();
-        String text = current.result().sources().get(uri);
-        if (text == null) {
-            return List.of();
-        }
-        return DocumentSupport.inlayHints(current.result().modules().get(uri), new TextLines(text), range);
+    public List<InlayHint> inlayHints(String uri, Range range) {
+        return queries.inlayHints(uri, range);
     }
 
     public RenamePreparation prepareRename(String uri, Position position) {
-        return prepareRename(snapshot(), uri, position);
-    }
-
-    private RenamePreparation prepareRename(Snapshot current, String uri, Position position) {
-        Optional<NodeEntry> entry = current.index().nodeAt(uri, position);
-        if (entry.isEmpty()) {
-            return RenamePreparation.refused("nothing to rename at this position");
-        }
-        Optional<Resolution> resolution = current.resolver().resolve(entry.get());
-        if (resolution.isEmpty()) {
-            return RenamePreparation.refused("the symbol at this position cannot be resolved");
-        }
-        if (resolution.get().confidence() == Confidence.DYNAMIC_UNKNOWN) {
-            return RenamePreparation.refused("the target is matched by name only (dynamic receiver); rename refused");
-        }
-        ASTNode declaration = resolution.get().primary();
-        if (current.index().declarationEntry(declaration).isEmpty()) {
-            return RenamePreparation.refused("the declaration lives outside the workspace");
-        }
-        String name = Symbols.nameOf(declaration);
-        Range range = entry.get().isDeclaration()
-                ? AstRanges.nameRange(declaration, entry.get().range(), current.index().lines(uri))
-                : nameRangeOfUsage(current, entry.get(), declaration);
-        return new RenamePreparation(range, name, null);
+        return queries.prepareRename(uri, position);
     }
 
     public RenameResult rename(String uri, Position position, String newName) {
-        if (newName == null || !IDENTIFIER.matcher(newName).matches()) {
-            return RenameResult.refused("'" + newName + "' is not a valid identifier");
-        }
-        // One snapshot for the check and the edits: an edit in between cannot pull the node out from under it.
-        Snapshot current = snapshot();
-        RenamePreparation preparation = prepareRename(current, uri, position);
-        if (preparation.isRefused()) {
-            return RenameResult.refused(preparation.refusalReason());
-        }
-        NodeEntry entry = current.index().nodeAt(uri, position).orElseThrow();
-        ASTNode declaration = current.resolver().resolve(entry).orElseThrow().primary();
-        List<Reference> references = referencesTo(current, declaration, true);
-        long unknown = references.stream().filter(r -> r.confidence() == Confidence.DYNAMIC_UNKNOWN).count();
-        if (unknown > 0) {
-            return RenameResult.refused(unknown + " reference(s) are matched by name only (dynamic dispatch); "
-                    + "rename refused rather than guessed");
-        }
-        Map<String, List<TextEdit>> edits = new HashMap<>();
-        for (Reference reference : references) {
-            List<TextEdit> list = edits.computeIfAbsent(reference.location().uri(), k -> new ArrayList<>());
-            TextEdit edit = new TextEdit(reference.location().range(), newName);
-            if (!list.contains(edit)) {
-                list.add(edit);
-            }
-        }
-        return RenameResult.of(edits);
+        return queries.rename(uri, position, newName);
     }
 }
