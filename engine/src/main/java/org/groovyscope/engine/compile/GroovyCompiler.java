@@ -296,9 +296,38 @@ public class GroovyCompiler {
 
     /** True when {@code text} parses as Groovy (syntax only; used to vet automatic fixes). */
     public boolean parses(String uri, String text) {
+        return parse(uri, text).ok();
+    }
+
+    /**
+     * One text parsed on its own, as {@link #parses} does: syntax only, against an empty classpath with no
+     * workspace transformation loaded. The tree is whatever Groovy built (none when the text does not parse), and
+     * the errors are the error diagnostics in source order.
+     */
+    public Parsed parse(String uri, String text) {
         Attempt parsed = compileOnce(Map.of(uri, text), List.of(), false, Phases.CONVERSION);
-        release(parsed);
-        return !parsed.failed && parsed.brokenUris.isEmpty();
+        release(parsed); // a CONVERSION tree never decompiles classpath types
+        List<Diagnostic> errors = new ArrayList<>();
+        for (List<Diagnostic> list : parsed.diagnostics.values()) {
+            for (Diagnostic diagnostic : list) {
+                if (diagnostic.severity() == Severity.ERROR) {
+                    errors.add(diagnostic);
+                }
+            }
+        }
+        errors.sort(java.util.Comparator.comparing((Diagnostic d) -> d.range().start()));
+        boolean ok = !parsed.failed && parsed.brokenUris.isEmpty() && errors.isEmpty();
+        return new Parsed(Optional.ofNullable(parsed.modules.get(uri)), ok, List.copyOf(errors));
+    }
+
+    /**
+     * The outcome of {@link #parse}.
+     *
+     * @param module the syntax tree, when Groovy built one (a text that fails to parse usually has none)
+     * @param ok whether the text parsed without errors
+     * @param errors the error diagnostics, in source order
+     */
+    public record Parsed(Optional<ModuleNode> module, boolean ok, List<Diagnostic> errors) {
     }
 
     static boolean isJava(String uri) {
