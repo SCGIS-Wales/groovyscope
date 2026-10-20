@@ -13,8 +13,10 @@ Read `docs/roadmap.md` first: it says which stage is in progress and what "done"
 - `python/` is a uv project. Run `uv sync`, then `uv run ruff check .`, `uv run ruff format --check .`,
   `uv run mypy`, `uv run pytest --cov` (90% gate). `python3 scripts/bundle_jar.py` copies the JAR into the
   package so `groovyscope doctor` and the integration test can find it.
-- `config/` and `kiro/` mirror `python/src/groovyscope/_templates/`; a test fails when they drift. Edit the
-  package copy and copy it to the root (or the reverse), never only one side.
+- `python/src/groovyscope/_templates/` is the only source of the Kiro assets, the CodeNarc profiles and the
+  practices catalogue. Edit it, then run `python3 scripts/sync_templates.py` to refresh the root `kiro/` and
+  `config/` copies (CI runs it with `--check`, and a test fails when they drift). The engine keeps no copy: Gradle's
+  `processResources` takes the profiles and `practices.json` from the templates.
 
 ## Style rules
 

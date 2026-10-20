@@ -8,6 +8,7 @@ import pytest
 
 PACKAGE = Path(__file__).resolve().parents[1] / "src" / "groovyscope"
 REPO = Path(__file__).resolve().parents[2]
+ENGINE_RESOURCES = REPO / "engine" / "src" / "main" / "resources" / "org" / "groovyscope" / "engine"
 
 
 def pairs() -> list[tuple[Path, Path]]:
@@ -20,12 +21,6 @@ def pairs() -> list[tuple[Path, Path]]:
         for file in sorted(p for p in source.rglob("*") if p.is_file()):
             found.append((file, mirror / file.relative_to(source)))
     found.append((PACKAGE / "defaults.yaml", REPO / "config" / "defaults.yaml"))
-    engine = REPO / "engine" / "src" / "main" / "resources" / "org" / "groovyscope" / "engine"
-    for profile in ("groovyscope.groovy", "jenkins.groovy", "gradle.groovy"):
-        found.append((PACKAGE / "_templates" / "config" / "codenarc" / profile, engine / "lint" / profile))
-    found.append(
-        (PACKAGE / "_templates" / "config" / "practices" / "practices.json", engine / "practices" / "practices.json")
-    )
     # The wheel's licence files are the repository's (the sdist and wheel are built from python/).
     for name in ("LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"):
         found.append((PACKAGE.parents[1] / name, REPO / name))
@@ -37,3 +32,10 @@ def pairs() -> list[tuple[Path, Path]]:
 def test_repo_copy_matches_package_copy(packaged: Path, mirrored: Path) -> None:
     assert mirrored.is_file(), f"missing mirror {mirrored}; copy {packaged} there"
     assert mirrored.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not (REPO / "engine").is_dir(), reason="repository checkout required")
+def test_engine_takes_its_profiles_and_catalogue_from_the_templates() -> None:
+    # Gradle copies them from _templates in processResources; a copy kept in the engine's sources would drift.
+    assert not list((ENGINE_RESOURCES / "lint").glob("*.groovy"))
+    assert not (ENGINE_RESOURCES / "practices" / "practices.json").exists()

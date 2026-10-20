@@ -61,8 +61,12 @@ tasks.withType<GroovyCompile>().configureEach {
     options.encoding = "UTF-8"
 }
 
-// The CodeNarc version comes from settings.gradle.kts (latest stable release on Maven Central, or the floor).
+// The CodeNarc version is pinned in the catalogue (the weekly canary builds with -PcodenarcResolve=true instead).
 val codenarcVersion = libs.versions.codenarc.get()
+
+// The bundled CodeNarc profiles and the practices catalogue have one source, the Python package's templates; the
+// engine's copies are made here and never kept in src/main/resources.
+val templates = layout.projectDirectory.dir("../python/src/groovyscope/_templates/config")
 
 tasks.processResources {
     // Locals only: a task action must not capture the script object (configuration cache).
@@ -72,6 +76,14 @@ tasks.processResources {
     inputs.property("codenarc", embeddedCodenarc)
     filesMatching("**/engine-version.properties") {
         expand("version" to projectVersion, "codenarc" to embeddedCodenarc)
+    }
+    from(templates.dir("codenarc")) {
+        include("*.groovy")
+        into("org/groovyscope/engine/lint")
+    }
+    from(templates.dir("practices")) {
+        include("practices.json")
+        into("org/groovyscope/engine/practices")
     }
 }
 
