@@ -51,6 +51,49 @@ class CodeNarcAnalyzerSpec extends Specification {
         analyzer.ruleSet(CodeNarcAnalyzer.BUNDLED_JENKINS).rules.size() > 10
     }
 
+    private List<Diagnostic> lintFixture(String relative, String profile) {
+        analyzer.analyze(Fixtures.uri('lint-profiles', relative), Fixtures.text('lint-profiles', relative),
+            analyzer.ruleSet(profile))
+    }
+
+    def 'a Gradle build script draws no def or type noise from the Gradle profile'() {
+        when:
+        def gradle = lintFixture('build.gradle', CodeNarcAnalyzer.BUNDLED_GRADLE)
+        def strict = lintFixture('build.gradle', CodeNarcAnalyzer.BUNDLED_DEFAULT)
+
+        then: 'the default profile would flag the fixture, so it is a fair test'
+        strict*.code().contains('NoDef')
+
+        and:
+        gradle.findAll { CodeNarcAnalyzer.priorityOf(it) <= 2 }.empty
+        !(gradle*.code() as Set).any { it == 'NoDef' || it == 'CompileStatic' || it.endsWith('TypeRequired') }
+    }
+
+    def 'the default profile runs the JUnit rules but leaves Spock specifications alone'() {
+        when:
+        def junit = lintFixture('SampleTest.groovy', CodeNarcAnalyzer.BUNDLED_DEFAULT)*.code()
+        def spock = lintFixture('SampleSpec.groovy', CodeNarcAnalyzer.BUNDLED_DEFAULT)*.code()
+
+        then:
+        junit.contains('JUnitAssertAlwaysSucceeds')
+        !spock.any { it.startsWith('JUnit') || it.startsWith('Spock') }
+    }
+
+    def 'ImplementationAsType is advice in the default profile'() {
+        when:
+        def found = analyzer.analyze('file:///w/A.groovy', 'class A {\n    ArrayList<String> names() {\n        []\n    }\n}\n',
+            analyzer.ruleSet(CodeNarcAnalyzer.BUNDLED_DEFAULT)).findAll { it.code() == 'ImplementationAsType' }
+
+        then:
+        found.size() == 1
+        CodeNarcAnalyzer.priorityOf(found[0]) == 3
+    }
+
+    def 'the Jenkins profile measures size'() {
+        expect:
+        lintFixture('vars/longStep.groovy', CodeNarcAnalyzer.BUNDLED_JENKINS)*.code().contains('MethodSize')
+    }
+
     def 'a tidy file has no priority 1 or 2 findings'() {
         given:
         String uri = Fixtures.uri('lint-sample', 'src/main/groovy/sample/Tidy.groovy')

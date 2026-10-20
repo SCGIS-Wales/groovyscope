@@ -29,18 +29,23 @@ profiles live in `config/codenarc/`.
 ## Profiles
 
 - `config/codenarc/groovyscope.groovy`: the defensive profile for Groovy 5/6 code (CodeNarc 4.x). Size limits:
-  methods 60 lines, cyclomatic complexity 12, 5 parameters, nesting depth 4, lines 120 columns.
+  methods 60 lines, cyclomatic complexity 12, 5 parameters, nesting depth 4, lines 120 columns. The JUnit rules
+  run too; the ones that misread Spock (a feature asserts in its `then:` and `expect:` blocks) skip `*Spec`
+  files, and `ImplementationAsType` is advice at priority 3.
 - `config/codenarc/jenkins.groovy`: pipeline code runs on Jenkins' CPS Groovy runtime, not Groovy 5/6, so it
-  gets its own profile with `rulesets/jenkins.xml`.
+  gets its own profile with `rulesets/jenkins.xml` and the same size limits.
+- `config/codenarc/gradle.groovy`: Gradle build scripts (`*.gradle`) are a dynamic DSL, so their profile leaves
+  out `NoDef`, `CompileStatic` and the `*TypeRequired` rules. `lint.gradleRuleset` replaces it.
 
-Both profiles load cleanly against the embedded CodeNarc (4.0.0 or newer: the build resolves the latest stable
+The profiles load cleanly against the embedded CodeNarc (4.0.0 or newer: the build resolves the latest stable
 release, see [architecture.md](architecture.md); the engine's specs assert it). The `enhanced` rules are
 included; they need the compile classpath, which comes from `workspace.classpath` or from `groovyscope
 classpath` (the project's own Gradle or Maven build, in a trusted workspace). `lint.rules` in
-`.groovyscope.yaml` switches single rules off or changes their priority on top of either profile
+`.groovyscope.yaml` switches single rules off or changes their priority on top of any profile
 (`{CompileStatic: off, LineLength: {priority: 3}}`), and `lint.publishMaxPriority` keeps priority 3 findings
-out of the editor and the agent's diagnostics while `check` and `review` still report them. `groovyscope check` applies the Jenkins profile to `Jenkinsfile*` and `vars/` scripts
-automatically, or everywhere with `--profile jenkins`.
+out of the editor and the agent's diagnostics while `check` and `review` still report them. `groovyscope check` applies the Jenkins profile to `Jenkinsfile*`, `vars/` scripts and the
+`src/` classes of a shared library, and the Gradle profile to `*.gradle`, automatically; `--profile` picks one for
+every file.
 
 ## Running the same checks in the build
 

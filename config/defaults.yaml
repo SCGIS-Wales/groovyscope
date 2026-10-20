@@ -50,6 +50,7 @@ mcp:
 lint:
   ruleset: null           # path to a CodeNarc ruleset; null = bundled defensive profile
   jenkinsRuleset: null    # path to a Jenkins pipeline ruleset; null = bundled profile
+  gradleRuleset: null     # path to the ruleset for Gradle build scripts (*.gradle); null = bundled profile
   failOnPriority: 2       # check exits non-zero on violations with this priority or higher
   publish: true           # push lint findings to the editor/agent as diagnostics
   publishMaxPriority: 2   # only priority 1-2 findings are pushed; priority 3 stays available through check/review

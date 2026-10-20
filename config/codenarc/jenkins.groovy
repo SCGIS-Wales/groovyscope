@@ -14,6 +14,13 @@ ruleset {
     ruleset('rulesets/imports.xml')
     ruleset('rulesets/jenkins.xml')
     ruleset('rulesets/security.xml')
+    ruleset('rulesets/size.xml') {
+        'MethodSize' { maxLines = 60 }
+        'CyclomaticComplexity' { maxMethodComplexity = 12 }
+        'ParameterCount' { maxParameters = 5 }
+        'NestedBlockDepth' { maxNestedBlockDepth = 4 }
+        exclude 'CrapMetric'     // needs a Cobertura report
+    }
     ruleset('rulesets/unnecessary.xml') {
         exclude 'UnnecessaryReturnKeyword'
     }

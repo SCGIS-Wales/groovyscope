@@ -3,11 +3,11 @@ a repository cannot grant it to itself through its own ``.groovyscope.yaml``.
 
 In an untrusted workspace, settings in the workspace's ``.groovyscope.yaml`` that would run code from the repository
 are ignored: ``workspace.trust`` (AST transformations from the workspace classpath), ``jdk.home`` (the ``java``
-binary groovyscope starts), ``lint.ruleset`` / ``lint.jenkinsRuleset`` (CodeNarc rule sets are Groovy scripts), the
-emulation jars of runtime profiles kept in the workspace, ``logging.file`` (a file groovyscope appends to),
-``jdk.autoProvision`` / ``jdk.vendor`` (what is downloaded and run) and ``daemon.heapDumpOnOutOfMemory`` (a dump the
-size of the heap). Its heap settings are capped at ``daemon.untrustedHeapCeiling``, and the report paths it names
-(``reports.sarif``, ``reports.jacoco``) must stay inside the workspace.
+binary groovyscope starts), ``lint.ruleset`` / ``lint.jenkinsRuleset`` / ``lint.gradleRuleset`` (CodeNarc rule sets
+are Groovy scripts), the emulation jars of runtime profiles kept in the workspace, ``logging.file`` (a file groovyscope
+appends to), ``jdk.autoProvision`` / ``jdk.vendor`` (what is downloaded and run) and ``daemon.heapDumpOnOutOfMemory``
+(a dump the size of the heap). Its heap settings are capped at ``daemon.untrustedHeapCeiling``, and the report paths
+it names (``reports.sarif``, ``reports.jacoco``) must stay inside the workspace.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ GATED_KEYS: tuple[tuple[str, str], ...] = (
     ("jdk", "home"),
     ("lint", "ruleset"),
     ("lint", "jenkinsRuleset"),
+    ("lint", "gradleRuleset"),
     ("logging", "file"),
     ("jdk", "autoProvision"),
     ("jdk", "vendor"),

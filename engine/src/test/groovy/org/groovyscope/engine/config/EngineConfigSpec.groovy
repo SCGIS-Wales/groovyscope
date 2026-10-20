@@ -42,6 +42,17 @@ class EngineConfigSpec extends Specification {
         config.trust()
     }
 
+    def 'each lint profile takes its own rule set path'() {
+        when:
+        def lint = EngineConfig.fromJson('''
+            {"lint": {"ruleset": "a.groovy", "jenkinsRuleset": "j.groovy", "gradleRuleset": "g.groovy"}}
+        ''').lint()
+
+        then:
+        [lint.ruleset(), lint.jenkinsRuleset(), lint.gradleRuleset()] == ['a.groovy', 'j.groovy', 'g.groovy']
+        EngineConfig.DEFAULTS.lint().gradleRuleset() == null
+    }
+
     def 'diagnostics delivery settings are parsed, normalised and defaulted'() {
         expect:
         EngineConfig.DEFAULTS.diagnostics() == new EngineConfig.Diagnostics('open', 300)

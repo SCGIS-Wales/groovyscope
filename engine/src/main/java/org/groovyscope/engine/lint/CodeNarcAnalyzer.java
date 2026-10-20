@@ -50,6 +50,8 @@ public final class CodeNarcAnalyzer {
     public static final String BUNDLED_DEFAULT = "org/groovyscope/engine/lint/groovyscope.groovy";
     /** Resource path of the bundled Jenkins pipeline profile. */
     public static final String BUNDLED_JENKINS = "org/groovyscope/engine/lint/jenkins.groovy";
+    /** Resource path of the bundled profile for Gradle build scripts. */
+    public static final String BUNDLED_GRADLE = "org/groovyscope/engine/lint/gradle.groovy";
 
     private static final java.util.Set<String> REFUSED = ConcurrentHashMap.newKeySet();
     private static final java.util.Set<String> WARNED = ConcurrentHashMap.newKeySet();

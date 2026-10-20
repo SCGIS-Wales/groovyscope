@@ -632,6 +632,11 @@ def engine_view(
         if lint.get("jenkinsRuleset")
         else str(bundled_config("codenarc/jenkins.groovy"))
     )
+    lint["gradleRuleset"] = (
+        str(Path(lint["gradleRuleset"]).expanduser())
+        if lint.get("gradleRuleset")
+        else str(bundled_config("codenarc/gradle.groovy"))
+    )
     workspace = workspace_init.with_source_sets(Path(obj["root"]), dict(effective.get("workspace", {})))
     listed = workspace.get("classpathFile")
     if listed:
@@ -997,7 +1002,10 @@ def lsp(obj: dict[str, Any], stdio: bool) -> None:
 @main.command()
 @click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
 @click.option(
-    "--profile", type=click.Choice(["default", "jenkins"]), default=None, help="Rule set profile (default: by file)."
+    "--profile",
+    type=click.Choice(["default", "jenkins", "gradle"]),
+    default=None,
+    help="Rule set profile (default: by file).",
 )
 @click.option(
     "--include", default="lint,compile,typecheck,practices", show_default=True, help="Comma-separated analyses."

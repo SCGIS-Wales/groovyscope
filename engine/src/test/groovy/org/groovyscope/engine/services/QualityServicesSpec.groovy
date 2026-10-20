@@ -55,6 +55,8 @@ class QualityServicesSpec extends Specification {
         QualityServices.profileByName('file:///p/Jenkinsfile.prod') == 'jenkins'
         QualityServices.profileByName('file:///lib/vars/deploy.groovy') == 'jenkins'
         QualityServices.profileByName('file:///p/src/A.groovy') == 'default'
+        QualityServices.profileByName('file:///p/build.gradle') == 'gradle'
+        QualityServices.profileByName('file:///p/sub/settings.gradle') == 'gradle'
     }
 
     def 'check runs every analysis and sorts findings by position'() {

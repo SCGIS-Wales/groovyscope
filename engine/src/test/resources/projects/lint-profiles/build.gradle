@@ -1,0 +1,28 @@
+plugins {
+    id 'groovy'
+}
+
+def junitVersion = '5.11.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+}
+
+def generated = layout.buildDirectory.dir('generated')
+
+tasks.register('hello') {
+    outputs.dir(generated)
+    doLast {
+        println "Hello from ${project.name}"
+    }
+}
+
+def greeting(name) {
+    "hi ${name}"
+}
+
+ext.greet = { name -> greeting(name) }

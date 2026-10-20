@@ -66,6 +66,7 @@ public final class QualityServices {
     /** Profile names accepted by {@code check}. */
     public static final String PROFILE_DEFAULT = "default";
     public static final String PROFILE_JENKINS = "jenkins";
+    public static final String PROFILE_GRADLE = "gradle";
     /** Includes accepted by {@code check}. */
     public static final String INCLUDE_LINT = "lint";
     public static final String INCLUDE_COMPILE = "compile";
@@ -293,7 +294,10 @@ public final class QualityServices {
         return file != null && WorkspaceModel.inSharedLibrarySource(file, workspace.root()) ? PROFILE_JENKINS : byName;
     }
 
-    /** {@code jenkins} for Jenkinsfiles and shared-library {@code vars} scripts, {@code default} otherwise. */
+    /**
+     * {@code jenkins} for Jenkinsfiles and shared-library {@code vars} scripts, {@code gradle} for Gradle build
+     * scripts ({@code *.gradle}), {@code default} otherwise.
+     */
     public static String profileByName(String uri) {
         String path = uri.replace('\\', '/');
         int slash = path.lastIndexOf('/');
@@ -301,7 +305,7 @@ public final class QualityServices {
         if (name.startsWith("Jenkinsfile") || path.contains("/vars/")) {
             return PROFILE_JENKINS;
         }
-        return PROFILE_DEFAULT;
+        return name.endsWith(".gradle") ? PROFILE_GRADLE : PROFILE_DEFAULT;
     }
 
     /** The rule set for a profile, from configuration or the bundled copies. */
@@ -310,6 +314,10 @@ public final class QualityServices {
         if (PROFILE_JENKINS.equals(profile)) {
             return codeNarc.ruleSet(lint.jenkinsRuleset() == null ? CodeNarcAnalyzer.BUNDLED_JENKINS : lint.jenkinsRuleset(),
                     workspace.root(), CodeNarcAnalyzer.BUNDLED_JENKINS, lint.rules());
+        }
+        if (PROFILE_GRADLE.equals(profile)) {
+            return codeNarc.ruleSet(lint.gradleRuleset() == null ? CodeNarcAnalyzer.BUNDLED_GRADLE : lint.gradleRuleset(),
+                    workspace.root(), CodeNarcAnalyzer.BUNDLED_GRADLE, lint.rules());
         }
         return codeNarc.ruleSet(lint.ruleset() == null ? CodeNarcAnalyzer.BUNDLED_DEFAULT : lint.ruleset(),
                 workspace.root(), CodeNarcAnalyzer.BUNDLED_DEFAULT, lint.rules());

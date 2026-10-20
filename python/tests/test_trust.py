@@ -15,7 +15,7 @@ from groovyscope.config import load_config, load_config_with_notes
 RISKY = """\
 workspace: {trust: true}
 jdk: {home: ./evil-jdk}
-lint: {ruleset: ./rules.groovy, jenkinsRuleset: ./jenkins.groovy}
+lint: {ruleset: ./rules.groovy, jenkinsRuleset: ./jenkins.groovy, gradleRuleset: ./gradle.groovy}
 """
 
 
@@ -26,7 +26,8 @@ def test_untrusted_workspace_files_cannot_enable_code_running_settings(tmp_path:
     assert config["workspace"]["trust"] is False
     assert config["jdk"]["home"] is None
     assert config["lint"]["ruleset"] is None and config["lint"]["jenkinsRuleset"] is None
-    assert len(notes) == 4 and all("groovyscope trust" in note for note in notes)
+    assert config["lint"]["gradleRuleset"] is None
+    assert len(notes) == 5 and all("groovyscope trust" in note for note in notes)
 
     trust.set_trusted(tmp_path, home, trusted=True)
     trusted, notes = load_config_with_notes(tmp_path, None, {}, home)

@@ -196,6 +196,12 @@
             "null"
           ]
         },
+        "gradleRuleset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "failOnPriority": {
           "type": "integer",
           "minimum": 1,

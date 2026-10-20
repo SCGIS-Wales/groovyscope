@@ -221,9 +221,10 @@ analysis (Stage 4) will report those sites for manual review.
 ## Lint, type-check and format (Stage 3)
 
 - **Lint.** CodeNarc 4 runs in process on one document at a time (`StringSourceAnalyzer`), so unsaved
-  editor text is linted too. Rule sets come from `lint.ruleset` / `lint.jenkinsRuleset` or the bundled
-  profiles, with `lint.rules` applied on top (a rule switched off or given another priority); Jenkinsfiles
-  and `vars/` scripts get the Jenkins profile automatically. Findings are cached by document content hash and
+  editor text is linted too. Rule sets come from `lint.ruleset` / `lint.jenkinsRuleset` /
+  `lint.gradleRuleset` or the bundled profiles, with `lint.rules` applied on top (a rule switched off or given
+  another priority); Jenkinsfiles, `vars/` scripts and a shared library's `src/` get the Jenkins profile and
+  `*.gradle` build scripts the Gradle profile automatically. Findings are cached by document content hash and
   profile, published as diagnostics (`lint.publish`, down to `lint.publishMaxPriority`; `check` and `review`
   are never filtered), served through pull diagnostics, and exposed as quick fixes where the fix is purely
   textual (unnecessary semicolon, trailing whitespace, extra blank line). Every diagnostic a fix can repair
