@@ -72,7 +72,10 @@ rather than guesses when a call site can only be matched by name. Findings come 
   (test doubles that cannot take effect: a stub on a private method, a metaClass override `@CompileStatic` code
   bypasses or one on a Mockito double, and tests that assert nothing), GS020 to GS027
   (names that say what things are and do: booleans as questions, verbs on methods, no generic words,
-  abbreviations or type prefixes, names that match their types, one verb per idea), and GS100, one warning
+  abbreviations or type prefixes, names that match their types, one verb per idea), GS040 to GS043 (Spock
+  mistakes Spock would reject or silently ignore: interactions in `then:` without a cardinality, unused or
+  duplicated data table columns, a redundant `@Unroll`, misplaced exception conditions), GS050 to GS052
+  (Gradle build scripts: eager tasks, dynamic versions, `http://` repositories and `mavenLocal()`), and GS100, one warning
   per file whose imports cannot resolve because no classpath is configured;
 - optional [runtime profiles](docs/profiles.md) (RP codes) for plugin code that runs on a different Groovy and
   classpath than the local build: constructs not proven on the runtime, descriptor parameter mistakes, secret
@@ -191,7 +194,7 @@ closed-world), and parallel calls are queued safely on the one engine session.
 | `check_naming(paths?, limit?, cursor?)` | GS020 to GS027 naming findings plus the facts behind every class, field and method (type, what it writes and touches, how often it is called) so the agent can judge whether each name says what the thing is and does; renames go through `rename` |
 | `fix(paths?, codes?, apply?, changed_only?, base?)` | Safe fixes; a dry run unless `apply`; `changed_only` limits them to the lines the branch changed |
 | `rename(path, line, col, new_name, apply?)` | Rename everywhere it is used, refused when a use is matched by name only; a dry run unless `apply`. An applied rename is verified by recompiling the changed files and rolled back when it leaves new compile errors |
-| `explain(code)` | What a code means (GS001 to GS016, GS100, RP codes, a Groovy 6 checker, a CodeNarc rule), why it matters and the fix |
+| `explain(code)` | What a code means (a GS code, GS100, RP codes, a Groovy 6 checker, a CodeNarc rule), why it matters and the fix |
 | `profile_status(path)` | Target Groovy, compiling service, construct status on the runtime, descriptor parameters, test seams and protected code of a governed file |
 | `format(paths?, apply?)` | Files the formatter would change; `apply` writes them |
 | `find_dynamic_code(paths?, limit?, cursor?)` | Untyped classes, `def` on public API, `methodMissing`, `metaClass` writes, `@Grab`, `Eval`, `execute()` |

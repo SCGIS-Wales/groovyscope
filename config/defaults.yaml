@@ -54,6 +54,8 @@ lint:
   failOnPriority: 2       # check exits non-zero on violations with this priority or higher
   publish: true           # push lint findings to the editor/agent as diagnostics
   publishMaxPriority: 2   # only priority 1-2 findings are pushed; priority 3 stays available through check/review
+  licenceHeader: null     # a regular expression each default-profile file must contain (CodeNarc RequiredRegex,
+                          # reported as LicenceHeader), e.g. "\\A/\\*\\n \\* Copyright"; null requires none
   rules: {}               # per-rule overrides on top of the profile, e.g. {CompileStatic: off, LineLength: {priority: 3},
                           # Println: on}; on (or a priority) switches on a rule the profile leaves out
 diagnostics:
@@ -79,6 +81,9 @@ hooks:
 practices:
   enabled: true           # groovyscope's GS diagnostics (docs/practices.md); per-code overrides below
   severity: {}            # e.g. {GS002: info, RP030: off}; values: error | warning | info | off
+secrets:
+  allow: []               # regular expressions; a literal whose value or name matches one is never reported as a
+                          # hardcoded secret (GS019), e.g. ["^test-", "(?i)^dummyToken$"]
 naming:
   enabled: true           # GS020 to GS027: names that say what things are and do (docs/practices.md, section 18)
   allowedAbbreviations: []  # words the team reads fluently, never reported by GS024, e.g. [cfg, svc]

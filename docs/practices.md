@@ -320,6 +320,18 @@ sql.rows("SELECT * FROM users WHERE name = $name")
 sql.rows('SELECT * FROM users WHERE name = ?', [name])
 ```
 
+- **Only a GString reaching `Sql` is bound.** Text built by concatenation, by `toString()` on a GString, or by
+  storing a GString in a `String` variable is plain text by then, so its values are part of the SQL (GS035). A
+  `LIKE` pattern binds as a whole: `"... LIKE ${'%' + part + '%'}"`, never `'%${part}%'` (GS012).
+- **Close what you open.** `Sql.newInstance` holds a connection until `close()`; prefer
+  `Sql.withInstance(url) { sql -> ... }` (GS036).
+
+### Secrets
+- **Never commit a credential.** Read it from the environment or a secret store, and revoke one that was committed:
+  rotation does not reach the copy in the history. GS019 reports a literal shaped like an AWS access key ID, a
+  GitHub token, a JSON Web Token or a private key as an error, and a literal given to a name such as `password` or
+  `token` as information; `secrets.allow` lists deliberate values or names.
+
 ### Command execution
 - **Use the list form.** `"cmd $arg".execute()` splits the string on whitespace, so use `['git', 'log', branch].execute(null, dir)` with validated arguments.
 - **Never `sh -c` with input.** Do not pass user input to `sh -c`.
@@ -371,6 +383,10 @@ sql.rows('SELECT * FROM users WHERE name = ?', [name])
   - Groovy 6 says GPars users "will find much of its functionality" in `groovy.concurrent`, which is incubating.
   - **Recommendation:** do not adopt GPars. Use `java.util.concurrent` with virtual threads, and evaluate `groovy.concurrent` behind an interface.
 - **Groovy 6 `CombinerChecker`** checks that the combiner passed to `injectParallel` is associative.
+- **No mutable static state (GS038).** A static field that is not final, or a static final one holding a list, map,
+  builder or date built in place, is shared by every caller and every thread. Keep state in an instance that is
+  passed in, or make the value immutable (`List.of`, `asImmutable()`). A thread safe collection is reported as
+  information; in Jenkins code every finding is an error (section 19).
 
 ---
 
@@ -398,6 +414,12 @@ sql.rows('SELECT * FROM users WHERE name = ?', [name])
   `@CompileStatic` code (GS014), and one on a Mockito or Spock double mixes two mechanisms (GS015).
 - A dynamic Groovy test can call a private method directly; no reflection is needed.
 - Every test asserts, verifies an interaction or expects an exception (GS016).
+- An interaction in `then:` carries a cardinality (`1 * mock.call()`); without one it is a stub that checks
+  nothing, and a double created in `then:` is never reached (GS040).
+- Every `where:` column is used by the feature or its name, and declared once (GS041).
+- Spock 2 unrolls data driven features by default: keep `@Unroll` only for a name pattern (GS042).
+- `thrown()`, `notThrown()` and `noExceptionThrown()` belong in a `then:` block, one per block (GS043). The
+  analysis compile does not run Spock's transformation, so groovyscope reports these instead of Spock.
 - Groovy 6 adds `groovy-test-junit6`.\[1\]
 - JaCoCo filters members annotated `@Generated`; this was not re-verified for 6.0.
 - CodeNarc 4.1 (unreleased) adds a `spock` rule set: SpockIgnoreRestUsed, SpockMissingAssert, SpockUseVerifyEach, SpockUnnecessaryAssert.\[14\]
@@ -610,18 +632,21 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Integer division | none | none | GS001: suggest `intdiv` (needs review; skipped when the quotient is narrowed to an integer) |
 | Floating money | NoDouble, NoFloat, BigDecimalInstantiation | none | Change to BigDecimal |
 | Elvis on zero | none | none | GS002 |
+| Number as a condition | none | none | GS028: `!= null`, `!= 0` or both (a warning on a boxed number, information on a primitive) |
 | Null dereference | BrokenNullCheck, UnnecessaryNullCheck | NullChecker (6) | Surface checker output; GS003 for safe navigation into a primitive |
-| GString misuse | GStringAsMapKey, UnnecessaryGString, GStringExpressionWithinString | none | `.toString()` or change the quotes |
+| GString misuse | GStringAsMapKey, UnnecessaryGString, GStringExpressionWithinString | none | `.toString()` or change the quotes; GS018: a GString looked up among Strings (`contains`, `get`, `in`, `equals`) |
 | File truthiness | none | Groovy 5 semantics | GS004: `!= null` or `exists()`, chosen by the reader |
 | Null returns | ReturnsNullInsteadOfEmptyCollection, BooleanMethodReturnsNull | none | Return empty |
 | Dead or unused code | DeadCode, Empty*, Unused* rules, UnusedImport | Duplicate labels (6) | Remove |
 | Java boilerplate | unnecessary and groovyism rule sets | none | "Groovify" action |
-| Immutability | PrivateFieldCouldBeFinal, PublicInstanceField, NonFinalPublicField | `@Immutable` | Convert to record |
+| Immutability | PrivateFieldCouldBeFinal, PublicInstanceField, NonFinalPublicField | `@Immutable` | Convert to record; GS034: a record keeping a mutable component as given |
 | Purity | none | ModifiesChecker, PurityChecker (6) | Suggest `@Pure` |
 | Exceptions | exceptions rule set, EmptyCatchBlock | none | Narrow the catch; rethrow with cause |
 | Logging | Println, PrintStackTrace, SystemOutPrint | none | GS005: GString in a SLF4J or Log4j2 call (`{}` fix); a level guard elsewhere |
 | Code evaluation, Grab | IllegalClassReference (configured) | `groovy.grape.enable`, `groovy.asttest.enable` | GS006; GS007 names the build dependency to declare (no automatic fix) |
-| SQL injection | jdbc rule set | SqlInjectionChecker plus runtime rejection (6) | Remove quotes |
+| SQL injection | jdbc rule set | SqlInjectionChecker plus runtime rejection (6) | GS012: remove the quotes (a `LIKE '%${x}%'` binds the whole pattern instead); GS035: text built by concatenation, `toString()` or a String variable |
+| Connections | JdbcConnectionReference | none | GS036: `Sql.newInstance` never closed; use `Sql.withInstance` |
+| Hardcoded secrets | none | none | GS019: a credential's shape is an error, a secret name with a literal information; `secrets.allow` |
 | Command injection | none | none | GS008: use the list form |
 | XXE | none | Secure defaults | GS009: `allowDocTypeDeclaration = true` |
 | ReDoS | IllegalRegex | `@SafeRegex` (6), RegexChecker | Add `@SafeRegex` |
@@ -630,7 +655,12 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Spock | SpockMissingAssert, SpockUseVerifyEach (4.1 spock rule set) | none | Replace `.with {}` with `with(obj) {}` |
 | Test doubles | none | none | GS013: Mockito or Spock stub on a private method; GS014: metaClass override `@CompileStatic` callers bypass; GS015: metaClass on a double |
 | Tests that check nothing | JUnitTestMethodWithoutAssert (junit rule set) | none | GS016: a JUnit test with no assert, verify or expected exception, helpers followed |
+| Spock structure | none | Spock's own transformation (not run by the analysis compile) | GS040: interaction in `then:` without a cardinality, or a double created there; GS041: data table column unused or declared twice; GS042: `@Unroll` without a pattern; GS043: exception condition outside `then:` or twice in one block |
+| Gradle build scripts | Gradle profile (`*.gradle`) | none | GS050: eager task API; GS051: dynamic version; GS052: `http://` repository (error) or `mavenLocal()` (warning) |
 | Version gating | none | none | GS010: Groovy 6 construct under a 5.x target |
+| Closures | ImplicitClosureParameter (excluded) | `@DelegatesTo`, `@ClosureParams` | GS017: a public Closure parameter without either; GS029: a multi-line closure on `it`; GS037: `return` inside `each` acts as continue |
+| Mutable static state | NonFinalPublicField, StaticCalendarField and the other Static* rules | none | GS038: an instance, or an immutable value |
+| Jenkins pipeline code | jenkins rule set | none | GS030 to GS033: secrets in shell GStrings, steps in `@NonCPS`, unserialisable state across a step, `@CompileStatic` or `java.io.File` in CPS code |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
 GS codes are groovyscope's own diagnostics (see the table in the README and `explain`); they are not an external standard.
@@ -675,6 +705,55 @@ Test classes (`*Spec`, `*Test`, files under `src/test`) are checked for contradi
 feature names are free text. Loop indexes, closure parameters, catch parameters and `it` are never reported.
 Renames go through `rename` (a dry run first, static references only, a recompile after the write), never
 through text replacement.
+
+## 19. Jenkins pipeline code
+
+Jenkinsfiles, a shared library's `vars/` scripts and its `src/` classes run on Jenkins' CPS interpreter, not on
+plain Groovy 5 or 6, and are checked with the Jenkins profile (`config/codenarc/jenkins.groovy`) and these codes.
+Without the Jenkins classpath, pipeline steps are recognised by name; a method the class declares itself is never
+taken for a step.
+
+- **No secrets in interpolated shell scripts (GS030).** In `sh "...${TOKEN}..."` Groovy builds the text, so the
+  secret reaches the command line, the process list and possibly the log. Write `sh '... $TOKEN ...'` and let the
+  shell read the variable `withCredentials` exported. A variable `withCredentials` binds is an error; an `env` or
+  `params` name that only looks secret is information.
+- **No pipeline steps in `@NonCPS` methods (GS031).** They run outside the CPS interpreter and cannot pause the
+  build; call the step from CPS code and pass its result in.
+- **Nothing unserialisable across a step (GS032).** The pipeline is saved at every step. A `Matcher` (from `=~`), an
+  `Iterator`, a `Scanner` or JsonSlurper's `LazyMap` still in use after a step fails the build with
+  NotSerializableException. Finish with it first, set it to null, or move the work into an `@NonCPS` method.
+- **No `@CompileStatic` and no `java.io.File` (GS033).** Static code is not transformed for CPS, and `new File`
+  reads the controller's disk rather than the agent's workspace; use `readFile`, `writeFile`, `fileExists`.
+- **No mutable static state (GS038, an error here).** One controller JVM shares it between every build until the
+  library is reloaded.
+
+## 20. Gradle build scripts
+
+Build scripts (`*.gradle`) are linted with their own profile (`config/codenarc/gradle.groovy`, without `NoDef`,
+`CompileStatic` and the `*TypeRequired` rules) and checked from their syntax alone: the Gradle API is not on the
+workspace classpath, so they are never compiled with the sources. `check` finds the root's and every
+subproject's scripts outside the source folders.
+
+- Register tasks lazily: `tasks.register('x')` and `tasks.named('x')`, never `task x {}` or `tasks.create`
+  (GS050).
+- Pin dependency versions; `1.+`, `latest.release` and ranges resolve differently from day to day (GS051). A
+  platform or a version catalogue keeps the pins in one place.
+- Fetch from `https://` repositories only (GS052, an error), and keep `mavenLocal()` out of shared builds (GS052,
+  a warning): it lets whatever was last installed on one machine shadow the published artefacts.
+
+```groovy
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.apache.groovy:groovy:5.0.2'
+}
+
+tasks.register('hello') {
+    doLast { println 'hello' }
+}
+```
 
 ## Caveats
 - **Release notes not fully retrieved:**

@@ -215,6 +215,13 @@
           "minimum": 1,
           "maximum": 3
         },
+        "licenceHeader": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
         "rules": {
           "type": "object",
           "additionalProperties": {
@@ -513,6 +520,19 @@
             "null"
           ],
           "description": "JaCoCo XML report read by coverage_gaps."
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },

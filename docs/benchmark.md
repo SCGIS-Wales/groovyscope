@@ -118,3 +118,31 @@ In all, 10.73 credits were spent, including 1.70 on "with" runs that had to be r
 Per-edit latency (recompile and diagnostics scope), type checking that survives broken files, the
 `execute()` precision on untyped receivers, and steering that tells the agent to follow `impact_of`'s
 transitive callers.
+
+## Phase 5 checks on the corpus (20 October 2026)
+
+Not a credit run: `groovyscope check --include practices` over the bundled corpus (529 files, no classpath, so
+only declared types are known) and over the `jenkins-lib` fixture, to count what the Phase 5 checks of
+`docs/improvement-plan.md` report and how often they are wrong. It costs no credits and takes about 15 seconds.
+
+| Code | First run | After refinement | Severity after |
+|---|---|---|---|
+| GS017 Closure parameter without `@DelegatesTo` or `@ClosureParams` | 7 | 7 | information |
+| GS028 number used as a condition | 8 | 6 | 4 information (primitive), 2 warning (boxed) |
+| GS029 multi-line closure on `it` | 37 | 8 | information |
+| GS037 `return` inside `each` | 3 | 3 | 1 warning (a value returned), 2 information (a bare return) |
+| GS038 mutable static state | 42 | 42 | warning |
+
+The corpus has no tests, build scripts, SQL, secrets or Jenkins code, so GS018, GS019, GS030 to GS036 and GS040
+to GS052 found nothing there; their fixtures under `engine/src/test/resources/projects/` cover them.
+`jenkins-lib` is clean code: no practice findings (its one lint finding is CodeNarc's `ClassNotSerializable`).
+
+**False positives, from a manual sample of 20.** The first run's sample had 6 findings that point at nothing to
+change (30%): three single expressions wrapped over lines (GS029), a condition that already tests zero
+(`limit || limit == 0`, GS028) and two bare `return`s used deliberately as `continue` (GS037). The checks were
+refined: GS029 needs a body of several statements or a block, GS028 skips an operand compared beside it, and
+GS037 keeps the warning for a returned value (always discarded) and reports a bare return as information. A
+fresh sample of 20 after that (8 GS038, 4 GS029, 3 GS017, 3 GS028, 2 GS037) has 2 false positives (10%), both the
+deliberate bare returns, now information. GS038 is accurate in every sampled case but reports any
+`static final` list or map literal, which in this corpus are constants nobody mutates; it stays a warning, as
+the plan asks, and teams can lower it with `practices.severity`.

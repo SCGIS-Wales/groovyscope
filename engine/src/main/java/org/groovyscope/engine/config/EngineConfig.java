@@ -154,9 +154,11 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      *     {@link #RULE_ON} to switch on a left-out rule at CodeNarc's own priority
      * @param publishMaxPriority pushed diagnostics include CodeNarc findings only with this priority or more severe
      *     ({@code lint.publishMaxPriority}, 1 to 3); {@code check} and review requests are never filtered
+     * @param licenceHeader a regular expression every file linted with the default profile must contain (CodeNarc's
+     *     RequiredRegex, reported as {@code LicenceHeader}); {@code null} requires nothing
      */
     public record Lint(String ruleset, String jenkinsRuleset, String gradleRuleset, int failOnPriority,
-            boolean publish, Map<String, Integer> rules, int publishMaxPriority) {
+            boolean publish, Map<String, Integer> rules, int publishMaxPriority, String licenceHeader) {
         /** The value of a {@link #rules} entry that removes the rule. */
         public static final int RULE_OFF = 0;
         /** The value of a {@link #rules} entry that switches on a rule the profile leaves out. */
@@ -168,11 +170,12 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         public Lint {
             rules = Map.copyOf(rules == null ? Map.of() : rules);
             publishMaxPriority = Math.max(1, Math.min(3, publishMaxPriority));
+            licenceHeader = licenceHeader == null || licenceHeader.isBlank() ? null : licenceHeader;
         }
 
         /** The original four settings: the bundled Gradle profile, no rule overrides, the default publish threshold. */
         public Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish) {
-            this(ruleset, jenkinsRuleset, null, failOnPriority, publish, Map.of(), DEFAULT_PUBLISH_MAX_PRIORITY);
+            this(ruleset, jenkinsRuleset, null, failOnPriority, publish, Map.of(), DEFAULT_PUBLISH_MAX_PRIORITY, null);
         }
 
         /**
@@ -290,18 +293,27 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      *
      * @param enabled whether the GS diagnostics run at all
      * @param severities per-code overrides: {@code error}, {@code warning}, {@code info} or {@code off}
+     * @param secretsAllow regular expressions ({@code secrets.allow}); a literal whose value or name matches one is
+     *     never reported as a hardcoded secret (GS019)
      */
-    public record Practices(boolean enabled, Map<String, String> severities, Naming naming) {
+    public record Practices(boolean enabled, Map<String, String> severities, Naming naming,
+            List<String> secretsAllow) {
         public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
             severities = Map.copyOf(severities == null ? Map.of() : severities);
             naming = naming == null ? Naming.DEFAULTS : naming;
+            secretsAllow = List.copyOf(secretsAllow == null ? List.of() : secretsAllow);
         }
 
         /** Practices with the default naming settings. */
         public Practices(boolean enabled, Map<String, String> severities) {
             this(enabled, severities, Naming.DEFAULTS);
+        }
+
+        /** Practices with no secrets allow list. */
+        public Practices(boolean enabled, Map<String, String> severities, Naming naming) {
+            this(enabled, severities, naming, List.of());
         }
 
         /** The configured severity for a code, or {@code null} to keep the catalogue's default. */
@@ -491,6 +503,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject groovy = objectOrEmpty(document.get("groovy"));
         JsonObject practices = objectOrEmpty(document.get("practices"));
         JsonObject naming = objectOrEmpty(document.get("naming"));
+        JsonObject secrets = objectOrEmpty(document.get("secrets"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
         JsonObject daemon = objectOrEmpty(document.get("daemon"));
         return new EngineConfig(
@@ -505,7 +518,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         integer(lint.get("failOnPriority"), Lint.DEFAULTS.failOnPriority()),
                         bool(lint.get("publish"), Lint.DEFAULTS.publish()),
                         Lint.parseRules(lint.get("rules")),
-                        integer(lint.get("publishMaxPriority"), Lint.DEFAULT_PUBLISH_MAX_PRIORITY)),
+                        integer(lint.get("publishMaxPriority"), Lint.DEFAULT_PUBLISH_MAX_PRIORITY),
+                        string(lint.get("licenceHeader"), null)),
                 new TypeCheck(
                         string(typecheck.get("nullChecker"), TypeCheck.DEFAULTS.nullChecker()),
                         bool(typecheck.get("sqlInjection"), TypeCheck.DEFAULTS.sqlInjection()),
@@ -526,7 +540,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         stringMap(practices.get("severity")),
                         new Naming(bool(naming.get("enabled"), Naming.DEFAULTS.enabled()),
                                 strings(naming.get("allowedAbbreviations"), List.of()),
-                                stringMap(naming.get("vocabulary")))),
+                                stringMap(naming.get("vocabulary"))),
+                        strings(secrets.get("allow"), List.of())),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),

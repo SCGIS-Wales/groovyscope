@@ -1,0 +1,36 @@
+plugins {
+    id 'groovy'
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven { url 'http://repo.example.com/maven' }
+}
+
+dependencies {
+    implementation 'org.apache.groovy:groovy:5.0.+'
+    implementation group: 'com.example', name: 'lib', version: 'latest.release'
+    testImplementation 'com.example:range:[1.0,2.0)'
+    implementation 'com.example:fixed:1.2.3'
+}
+
+task hello {
+    doLast {
+        println 'hello'
+    }
+}
+
+tasks.create('eager') {
+    doLast {
+        println 'eager'
+    }
+}
+
+tasks.register('lazy') {
+    doLast {
+        println 'lazy'
+    }
+}
+
+version = '1.0';

@@ -47,6 +47,13 @@ out of the editor and the agent's diagnostics while `check` and `review` still r
 `src/` classes of a shared library, and the Gradle profile to `*.gradle`, automatically; `--profile` picks one for
 every file.
 
+### Licence header
+
+`lint.licenceHeader` (null by default) is a regular expression every file linted with the default profile must
+contain; CodeNarc's `RequiredRegex` rule checks it and reports a missing header as `LicenceHeader`, priority 2.
+Anchor it at the start of the file, for example `"\\A/\\*\\n \\* Copyright"`. A pattern that does not compile is
+reported once as `lint-config` and no header is required.
+
 ## Running the same checks in the build
 
 Gradle 9 still defaults to an older CodeNarc, so pin 4.0.0 explicitly and point it at groovyscope's profile:

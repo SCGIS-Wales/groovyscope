@@ -147,20 +147,38 @@ public final class PracticeFinder {
     static final Set<String> XML_PARSERS = Set.of("groovy.xml.XmlSlurper", "groovy.xml.XmlParser",
             "groovy.util.XmlSlurper", "groovy.util.XmlParser");
     static final Pattern QUOTED_INTERPOLATION = Pattern.compile("'(\\$\\{[^}]*\\}|\\$[A-Za-z_][\\w.]*)'");
+    /** A LIKE pattern built around an interpolation inside quotes: {@code '%${x}%'}. */
+    static final Pattern QUOTED_WILDCARD = Pattern.compile("'(%?)(?:\\$\\{([^}]*)\\}|\\$([A-Za-z_][\\w.]*))(%?)'");
 
     private PracticeFinder() {
     }
 
-    /** Practice findings for one Groovy document. */
+    /** Practice findings for one Groovy document, its profile read from the path. */
     public static List<Practice> find(String uri, ModuleNode module, String text, EngineConfig config) {
+        return find(uri, module, text, config, null);
+    }
+
+    /**
+     * Practice findings for one Groovy document checked with lint profile {@code profile} ({@code null} to read it
+     * from the path).
+     */
+    public static List<Practice> find(String uri, ModuleNode module, String text, EngineConfig config,
+            String profile) {
         List<Practice> out = new ArrayList<>();
         if (module == null || text == null || !config.practices().enabled() || uri.endsWith(".java")) {
             return out;
         }
-        Visitor visitor = new Visitor(uri, module, new TextLines(text), config, out);
+        PracticeContext context = PracticeContext.of(uri, module, text, config, profile, out);
+        Visitor visitor = new Visitor(uri, module, context.lines(), config, out);
         visitor.visitModule();
         out.addAll(NamingFinder.find(uri, module, config));
         out.addAll(TestDoubleFinder.find(uri, module, config));
+        SqlFinder.find(context);
+        SecretFinder.find(context);
+        PitfallFinder.find(context);
+        JenkinsFinder.find(context);
+        SpockFinder.find(context);
+        GradleFinder.find(context);
         return out;
     }
 
@@ -860,6 +878,17 @@ public final class PracticeFinder {
             String text = source(gstring);
             if (!sql || text == null) {
                 return;
+            }
+            Matcher wildcard = QUOTED_WILDCARD.matcher(text);
+            while (wildcard.find()) {
+                if (!wildcard.group(1).isEmpty() || !wildcard.group(4).isEmpty()) {
+                    String value = (wildcard.group(2) != null ? wildcard.group(2) : wildcard.group(3)).strip();
+                    String bound = "${" + (wildcard.group(1).isEmpty() ? "" : "'%' + ") + value
+                            + (wildcard.group(4).isEmpty() ? "" : " + '%'") + "}";
+                    report("GS012", gstring, "'" + wildcard.group(0).substring(1, wildcard.group(0).length() - 1)
+                            + "' is concatenated, not bound; bind the whole pattern: " + bound, null, List.of());
+                    return;
+                }
             }
             Matcher matcher = QUOTED_INTERPOLATION.matcher(text);
             if (matcher.find()) {

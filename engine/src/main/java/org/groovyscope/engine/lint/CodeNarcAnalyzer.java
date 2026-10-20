@@ -156,6 +156,42 @@ public final class CodeNarcAnalyzer {
         }
     }
 
+    /** The rule {@code lint.licenceHeader} switches on, under the name its findings carry. */
+    public static final String LICENCE_HEADER = "LicenceHeader";
+    private final Map<String, String> settingProblems = new ConcurrentHashMap<>();
+    private final Map<List<Object>, RuleSet> headed = new ConcurrentHashMap<>();
+
+    /**
+     * {@code base} plus CodeNarc's RequiredRegex rule, named {@value #LICENCE_HEADER}, requiring {@code regex}
+     * ({@code lint.licenceHeader}) in each file. A regex that does not compile is reported once as a configuration
+     * problem and {@code base} is used as it is.
+     */
+    public RuleSet withLicenceHeader(RuleSet base, String regex) {
+        try {
+            java.util.regex.Pattern.compile(regex);
+        } catch (java.util.regex.PatternSyntaxException e) {
+            settingProblems.put("lint.licenceHeader", "lint.licenceHeader is not a regular expression ("
+                    + e.getDescription() + "); no licence header is required");
+            return base;
+        }
+        settingProblems.remove("lint.licenceHeader");
+        return headed.computeIfAbsent(List.of(base, regex), key -> {
+            List<Rule> rules = new ArrayList<>();
+            for (Object item : base.getRules()) {
+                if (item instanceof Rule rule) {
+                    rules.add(rule);
+                }
+            }
+            org.codenarc.rule.generic.RequiredRegexRule header = new org.codenarc.rule.generic.RequiredRegexRule();
+            header.setName(LICENCE_HEADER);
+            header.setRegex(regex);
+            header.setPriority(2);
+            header.setViolationMessage("the file does not carry the licence header that lint.licenceHeader requires");
+            rules.add(header);
+            return new org.codenarc.ruleset.ListRuleSet(rules);
+        });
+    }
+
     /** The key under which unknown names in {@code lint.rules} are recorded. */
     static final String LINT_RULES = "lint.rules";
 
@@ -167,7 +203,7 @@ public final class CodeNarcAnalyzer {
      * rest of the set still runs. Empty when every rule was known.
      */
     public List<String> configProblems() {
-        List<String> problems = new ArrayList<>();
+        List<String> problems = new ArrayList<>(new java.util.TreeMap<>(settingProblems).values());
         new java.util.TreeMap<>(unknownRules).forEach((name, rules) -> problems.add(
                 (LINT_RULES.equals(name) ? LINT_RULES : "the CodeNarc rule set " + name)
                         + " names rule(s) this CodeNarc does not know, skipped: " + String.join(", ", rules)));

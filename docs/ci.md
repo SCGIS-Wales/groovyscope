@@ -134,3 +134,26 @@ complete the release chain.
   `RELEASE_APP_ID` and a private key as the secret `RELEASE_APP_PRIVATE_KEY`. `release-please.yml` then opens and
   merges release PRs with short-lived installation tokens and the `RELEASE_PLEASE_TOKEN` secret can be deleted.
 - **Allow auto-merge** (Settings, General): lets the release PR merge itself once its checks pass.
+
+## Dependency findings in the same report
+
+`check` and `review` merge any SARIF log listed under `reports.sarif` (or passed with `--import-sarif`) into their
+findings, so a dependency scan can travel with the code findings:
+
+- **OWASP Dependency-Check.** The `org.owasp.dependencycheck` Gradle plugin writes SARIF when asked for it
+  (`dependencyCheck { formats = ['SARIF', 'HTML'] }`, then `./gradlew dependencyCheckAnalyze`), by default to
+  `build/reports/dependency-check-report.sarif`. List that path:
+
+  ```yaml
+  reports:
+    sarif: [build/reports/dependency-check-report.sarif, build/reports/spotbugs/spotbugs.sarif.json]
+  ```
+
+  Its results point at library files rather than workspace sources, so they are reported against the path the
+  scanner gives; the level of each result (error, warning, note) becomes the finding's severity.
+- **Gradle dependency verification.** `gradle/verification-metadata.xml` makes the build itself fail on a checksum
+  or signature mismatch; it writes an HTML report, not SARIF, so there is nothing to merge. Keep the build step
+  that fails, and let the SARIF of the scanners above carry the rest.
+
+A listed SARIF path must stay inside the workspace; one that is missing or not SARIF 2.1 is noted on stderr and the
+other findings are still reported.
