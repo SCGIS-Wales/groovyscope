@@ -267,7 +267,7 @@ apart, a closure whose owner and delegate both declare the method). Rename refus
 ## Practices and runtime profiles (Stage 8)
 
 `practices/` holds the catalogue (`practices.json`, which Gradle's `processResources` copies from
-`python/src/groovyscope/_templates/practices/`) and `PracticeFinder`, the entry point. It builds one
+`python/src/groovyscope/_templates/config/practices/`) and `PracticeFinder`, the entry point. It builds one
 `PracticeContext` per document (tree, text, configuration, and whether the document is a test source, Jenkins
 code, a Gradle script or a Spock specification) and runs every group on it: `CoreScan` (GS001 to GS012, one walk
 in source order that hands each node to `NumberChecks`, `TruthChecks`, `LoggingChecks`, `SecurityChecks`,

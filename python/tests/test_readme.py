@@ -1,5 +1,6 @@
 """The README stays true to the code: every command and option it shows exists, every MCP tool is listed with
-the parameters it really takes, and every configuration key, relative link and repository path it names exists."""
+the parameters it really takes, and every configuration key, relative link and repository path it names exists.
+The other documents are held to the last two."""
 
 from __future__ import annotations
 
@@ -112,5 +113,31 @@ def test_configuration_keys_links_and_paths_exist() -> None:
     assert sorted(k for k in keys if not known(k.split("."))) == []
     links = [link for link in re.findall(r"\]\(([^)#\s]+)", body) if not link.startswith("http")]
     assert [link for link in links if not (REPO / link).exists()] == []
+    assert missing_paths(body) == []
+
+
+# Plans and dated research describe the repository as it was; examples name files a user would create.
+HISTORICAL = frozenset({"roadmap.md", "improvement-plan.md"})
+EXAMPLES = frozenset({"docs/classes.drawio"})
+
+
+def missing_paths(body: str) -> list[str]:
+    """Repository paths quoted in ``body`` that do not exist."""
     paths = set(re.findall(r"`((?:docs|config|kiro|scripts|python|engine|\.github)/[^`\s*<]+)`", body))
-    assert sorted(p for p in paths if not (REPO / p).exists()) == []
+    return sorted(p for p in paths - EXAMPLES if not (REPO / p).exists())
+
+
+def documents() -> list[Path]:
+    return [
+        *(doc for doc in sorted((REPO / "docs").glob("*.md")) if doc.name not in HISTORICAL),
+        REPO / "CONTRIBUTING.md",
+        REPO / "AGENTS.md",
+    ]
+
+
+@pytest.mark.parametrize("document", documents(), ids=lambda doc: doc.name)
+def test_every_document_names_paths_and_links_that_exist(document: Path) -> None:
+    body = document.read_text(encoding="utf-8")
+    assert missing_paths(body) == []
+    links = [link for link in re.findall(r"\]\(([^)#\s]+)", body) if not re.match(r"[a-z]+:", link)]
+    assert [link for link in links if not (document.parent / link).exists()] == []
