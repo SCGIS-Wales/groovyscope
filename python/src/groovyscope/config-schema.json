@@ -288,6 +288,10 @@
         },
         "combiner": {
           "type": "boolean"
+        },
+        "configScript": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

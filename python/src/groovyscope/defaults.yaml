@@ -68,6 +68,8 @@ typecheck:
   regex: true             # Groovy 6 RegexChecker (invalid regex literals)
   formatString: true      # Groovy 6 FormatStringChecker (String.format arguments)
   combiner: true          # Groovy 6 CombinerChecker (associative injectParallel combiners)
+  configScript: "config/groovyc/compile-static.groovy"  # the compiler configuration script (groovyc
+                          # --configscript), relative to the root; applied when present in a trusted workspace
 hooks:
   afterWrite: true          # Kiro PostToolUse on a write: check the Groovy file just written and show the findings
   afterWriteInclude: ["compile", "lint", "practices"]  # analyses after a write (typecheck adds a whole-workspace compile)

@@ -15,7 +15,9 @@
  */
 package org.groovyscope.engine.typecheck;
 
+import groovy.lang.Binding;
 import groovy.lang.GroovyClassLoader;
+import groovy.lang.GroovyShell;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.nio.file.Path;
@@ -26,16 +28,26 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.MethodNode;
+import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
 import org.codehaus.groovy.control.ErrorCollector;
 import org.codehaus.groovy.control.Phases;
 import org.codehaus.groovy.control.SourceUnit;
+import org.codehaus.groovy.control.customizers.ImportCustomizer;
+import org.codehaus.groovy.control.customizers.builder.CompilerCustomizationBuilder;
 import org.codehaus.groovy.control.messages.Message;
 import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
 import org.groovyscope.engine.compile.RetryBudget;
 import org.codehaus.groovy.syntax.SyntaxException;
+import org.codehaus.groovy.transform.sc.StaticCompilationMetadataKeys;
+import org.codehaus.groovy.transform.stc.StaticTypeCheckingVisitor;
 import org.groovyscope.engine.compile.GroovyCompiler;
 import org.groovyscope.engine.compile.WorkspaceParentClassLoader;
 import org.groovyscope.engine.config.EngineConfig;
@@ -70,6 +82,81 @@ public final class TypeCheckAnalyzer {
      */
     public static boolean mayNeedTypeCheck(String source) {
         return source != null && (source.contains("CompileStatic") || source.contains("TypeChecked"));
+    }
+
+    /** {@link #mayNeedTypeCheck(String)}, or the source uses one of the workspace's static annotation collectors. */
+    public static boolean mayNeedTypeCheck(String source, Set<String> collectors) {
+        if (mayNeedTypeCheck(source)) {
+            return true;
+        }
+        for (String collector : collectors) {
+            if (source != null && source.contains("@" + collector)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static final Pattern ANNOTATION_TYPE = Pattern.compile("@interface\\s+(\\w+)");
+
+    /**
+     * The annotation types the workspace declares with {@code @AnnotationCollector} in a file that mentions static
+     * typing: {@code @Safe} on a class can mean {@code @CompileStatic} without the word appearing there.
+     */
+    public static Set<String> staticCollectors(Map<String, String> sources) {
+        Set<String> names = new TreeSet<>();
+        for (String source : sources.values()) {
+            if (source != null && source.contains("AnnotationCollector") && mayNeedTypeCheck(source)) {
+                Matcher matcher = ANNOTATION_TYPE.matcher(source);
+                while (matcher.find()) {
+                    names.add(matcher.group(1));
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Whether the type checker left a class alone: neither the class nor any of its methods or constructors was
+     * statically checked. Interfaces, annotation types and generated helpers are not counted.
+     */
+    public static boolean isDynamic(ClassNode node) {
+        if (node.isInterface() || node.isAnnotationDefinition() || node.isSynthetic()
+                || node.getName().endsWith("$CollectorHelper") || checked(node)) {
+            return false;
+        }
+        for (MethodNode method : node.getMethods()) {
+            if (checked(method)) {
+                return false;
+            }
+        }
+        for (MethodNode constructor : node.getDeclaredConstructors()) {
+            if (checked(constructor)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean checked(org.codehaus.groovy.ast.ASTNode node) {
+        return node.getNodeMetaData(StaticTypeCheckingVisitor.class) != null
+                || node.getNodeMetaData(StaticCompilationMetadataKeys.STATIC_COMPILE_NODE) != null;
+    }
+
+    /** The names of the dynamic classes ({@link #isDynamic}) in {@code modules}, sorted. */
+    public static List<String> dynamicClasses(Iterable<ModuleNode> modules) {
+        Set<String> names = new TreeSet<>();
+        for (ModuleNode module : modules) {
+            if (module == null) {
+                continue;
+            }
+            for (ClassNode node : module.getClasses()) {
+                if (isDynamic(node)) {
+                    names.add(node.getName());
+                }
+            }
+        }
+        return List.copyOf(names);
     }
 
     /** The extension class names the settings ask for, in a stable order. */
@@ -113,8 +200,15 @@ public final class TypeCheckAnalyzer {
     /** What became of one document in a type check. */
     public enum Status { CHECKED, SKIPPED, TIMED_OUT, CRASHED }
 
-    /** Type-check errors per URI and whether each document was checked at all. */
-    public record Result(Map<String, List<Diagnostic>> diagnostics, Map<String, Status> status) {
+    /**
+     * Type-check errors per URI, whether each document was checked at all, and the classes a completed check left
+     * dynamic (empty when it did not complete).
+     */
+    public record Result(Map<String, List<Diagnostic>> diagnostics, Map<String, Status> status,
+            List<String> dynamicClasses) {
+        public Result {
+            dynamicClasses = List.copyOf(dynamicClasses);
+        }
     }
 
     /** Only Groovy's own static type checker, none of the Groovy 6 extensions: what a typing verdict needs. */
@@ -138,12 +232,21 @@ public final class TypeCheckAnalyzer {
      */
     public Result check(Map<String, String> sources, List<Path> classpath, boolean trust,
             EngineConfig.TypeCheck settings, EngineConfig.Groovy groovy, Set<String> skip) {
-        return check(sources, classpath, trust, extensionsFor(settings, groovy), skip);
+        return check(sources, classpath, trust, extensionsFor(settings, groovy), skip, null);
+    }
+
+    /**
+     * {@link #check} with the project's compiler configuration script ({@code null} for none), which runs only when
+     * the workspace is trusted: it is a Groovy script from the repository.
+     */
+    public Result check(Map<String, String> sources, List<Path> classpath, boolean trust,
+            EngineConfig.TypeCheck settings, EngineConfig.Groovy groovy, Set<String> skip, Path configScript) {
+        return check(sources, classpath, trust, extensionsFor(settings, groovy), skip, trust ? configScript : null);
     }
 
     /** {@link #check} with the checker extensions named directly. */
     Result check(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions,
-            Set<String> skip) {
+            Set<String> skip, Path configScript) {
         Map<String, List<Diagnostic>> diagnostics = new HashMap<>();
         Map<String, Status> status = new HashMap<>();
         for (String uri : sources.keySet()) {
@@ -161,15 +264,15 @@ public final class TypeCheckAnalyzer {
                 org.groovyscope.engine.log.EngineLog.warn("type check stopped after %d round(s): %d file(s) unchecked",
                         attempt, remaining.size());
                 remaining.keySet().forEach(uri -> status.put(uri, Status.TIMED_OUT));
-                return new Result(diagnostics, status);
+                return new Result(diagnostics, status, List.of());
             }
             org.groovyscope.engine.concurrent.Cancellation.checkpoint();
-            Pass pass = compileOnce(remaining, classpath, trust, extensions);
+            Pass pass = compileOnce(remaining, classpath, trust, extensions, configScript);
             if (attempt == 0) {
                 deadline = started + RetryBudget.of(System.nanoTime() - started);
             }
             if (pass.crash != null && pass.isolable && remaining.size() > 1) {
-                String culprit = isolate(remaining, classpath, trust, extensions);
+                String culprit = isolate(remaining, classpath, trust, extensions, configScript);
                 if (culprit != null) {
                     // That file goes without a type check, reported on itself; the rest are checked without it.
                     diagnostics.get(culprit).add(new Diagnostic(culprit, org.groovyscope.engine.model.Range.of(0, 0,
@@ -185,7 +288,7 @@ public final class TypeCheckAnalyzer {
                 diagnostics.get(first).add(new Diagnostic(first, org.groovyscope.engine.model.Range.of(0, 0, 0, 1),
                         Severity.WARNING, SOURCE, "typecheck-failed", "the type checker failed: " + pass.crash.getMessage()));
                 remaining.keySet().forEach(uri -> status.put(uri, Status.CRASHED));
-                return new Result(diagnostics, status);
+                return new Result(diagnostics, status, List.of());
             }
             if (pass.checked || pass.broken.isEmpty()) {
                 for (Map.Entry<String, List<Diagnostic>> entry : pass.diagnostics.entrySet()) {
@@ -199,32 +302,37 @@ public final class TypeCheckAnalyzer {
                 }
                 Status outcome = pass.incomplete == null ? Status.CHECKED : Status.CRASHED;
                 remaining.keySet().forEach(uri -> status.put(uri, outcome));
-                return new Result(diagnostics, status);
+                return new Result(diagnostics, status, pass.dynamic);
             }
             remaining.keySet().removeAll(pass.broken); // resolution errors: the compile pass reports those
         }
-        return new Result(diagnostics, status);
+        return new Result(diagnostics, status, List.of());
     }
 
     /** @param isolable the crash was thrown while checking (one file's doing, perhaps), not a global failure */
     private record Pass(boolean checked, Set<String> broken, Map<String, List<Diagnostic>> diagnostics, Exception crash,
-            String incomplete, boolean isolable) {
+            String incomplete, boolean isolable, List<String> dynamic) {
+        Pass(boolean checked, Set<String> broken, Map<String, List<Diagnostic>> diagnostics, Exception crash,
+                String incomplete, boolean isolable) {
+            this(checked, broken, diagnostics, crash, incomplete, isolable, List.of());
+        }
     }
 
     /**
      * The one file that crashes the checker on its own, found by halving the suspects (log2 n compiles); null when
      * the crash needs several files together.
      */
-    private String isolate(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions) {
+    private String isolate(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions,
+            Path configScript) {
         List<String> suspects = new ArrayList<>(sources.keySet());
         while (suspects.size() > 1) {
             org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             List<String> half = suspects.subList(0, suspects.size() / 2);
-            Pass probe = compileOnce(subset(sources, half), classpath, trust, extensions);
+            Pass probe = compileOnce(subset(sources, half), classpath, trust, extensions, configScript);
             suspects = new ArrayList<>(probe.crash != null ? half : suspects.subList(half.size(), suspects.size()));
         }
         String suspect = suspects.get(0);
-        Pass alone = compileOnce(subset(sources, suspects), classpath, trust, extensions);
+        Pass alone = compileOnce(subset(sources, suspects), classpath, trust, extensions, configScript);
         return alone.crash != null ? suspect : null;
     }
 
@@ -236,7 +344,8 @@ public final class TypeCheckAnalyzer {
         return chosen;
     }
 
-    private Pass compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions) {
+    private Pass compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions,
+            Path configScript) {
         CompilerConfiguration configuration = new CompilerConfiguration();
         configuration.setSourceEncoding("UTF-8");
         configuration.setTolerance(Integer.MAX_VALUE);
@@ -249,6 +358,16 @@ public final class TypeCheckAnalyzer {
                 loader.addURL(entry.toUri().toURL());
             } catch (MalformedURLException e) {
                 throw new IllegalArgumentException("bad classpath entry " + entry, e);
+            }
+        }
+        if (configScript != null) {
+            try {
+                applyConfigScript(configuration, configScript, loader);
+            } catch (IOException | RuntimeException | LinkageError e) {
+                closeQuietly(loader);
+                // the same for every file: nothing to isolate
+                return new Pass(false, Set.of(), Map.of(), new IllegalStateException("typecheck.configScript "
+                        + configScript + " failed: " + e, e), null, false);
             }
         }
         GroovyClassLoader transformLoader = trust ? loader : new GroovyClassLoader(parent, configuration);
@@ -305,7 +424,35 @@ public final class TypeCheckAnalyzer {
             return new Pass(false, Set.of(), Map.of(), new IllegalStateException(other != null ? other
                     : "the compile stopped before static checking"), null, true);
         }
-        return new Pass(checked, broken, found, null, incomplete, false);
+        List<String> dynamic = checked ? dynamicClasses(modulesOf(units, sources.keySet())) : List.of();
+        return new Pass(checked, broken, found, null, incomplete, false, dynamic);
+    }
+
+    private static List<ModuleNode> modulesOf(Map<String, SourceUnit> units, Set<String> uris) {
+        List<ModuleNode> modules = new ArrayList<>();
+        for (String uri : uris) {
+            SourceUnit source = units.get(uri);
+            if (source != null && source.getAST() != null) {
+                modules.add(source.getAST());
+            }
+        }
+        return modules;
+    }
+
+    /**
+     * Runs the project's compiler configuration script the way {@code groovyc --configscript} does: with the
+     * configuration bound as {@code configuration} and the customization builder ({@code withConfig}, {@code ast},
+     * {@code imports}) imported, on the workspace's class loader so its transformations resolve.
+     */
+    static void applyConfigScript(CompilerConfiguration configuration, Path script, ClassLoader loader)
+            throws IOException {
+        Binding binding = new Binding();
+        binding.setVariable("configuration", configuration);
+        CompilerConfiguration scriptConfiguration = new CompilerConfiguration();
+        ImportCustomizer imports = new ImportCustomizer();
+        imports.addStaticStars(CompilerCustomizationBuilder.class.getName());
+        scriptConfiguration.addCompilationCustomizers(imports);
+        new GroovyShell(loader, binding, scriptConfiguration).evaluate(script.toFile());
     }
 
     /** The checker that produced a static type checking message, or {@code typecheck} for the core checker. */

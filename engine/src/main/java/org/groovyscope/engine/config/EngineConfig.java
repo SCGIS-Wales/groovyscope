@@ -214,12 +214,17 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param nullChecker {@code off}, {@code lenient} or {@code strict}
      * @param sqlInjection whether to add the SQL injection checker
      * @param purity whether to add the purity and modifies checkers
+     * @param configScript the project's compiler configuration script ({@code groovyc --configscript}), relative to
+     *     the workspace root; applied when it exists and the workspace is trusted, since it is code
      */
     public record TypeCheck(String nullChecker, boolean sqlInjection, boolean purity, boolean regex,
-            boolean formatString, boolean combiner) {
+            boolean formatString, boolean combiner, String configScript) {
+        /** Where a project keeps its compiler configuration script by convention. */
+        public static final String DEFAULT_CONFIG_SCRIPT = "config/groovyc/compile-static.groovy";
         public static final TypeCheck DEFAULTS = new TypeCheck("strict", true, false, true, true, true);
 
         public TypeCheck {
+            configScript = configScript == null || configScript.isBlank() ? DEFAULT_CONFIG_SCRIPT : configScript;
             if (!java.util.Set.of("off", "lenient", "strict").contains(nullChecker)) {
                 throw new IllegalArgumentException("typecheck.nullChecker must be off, lenient or strict, not '"
                         + nullChecker + "'");
@@ -229,6 +234,12 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         /** The original three settings; the regex, format-string and combiner checkers stay on. */
         public TypeCheck(String nullChecker, boolean sqlInjection, boolean purity) {
             this(nullChecker, sqlInjection, purity, true, true, true);
+        }
+
+        /** The checker settings with the conventional configuration script. */
+        public TypeCheck(String nullChecker, boolean sqlInjection, boolean purity, boolean regex,
+                boolean formatString, boolean combiner) {
+            this(nullChecker, sqlInjection, purity, regex, formatString, combiner, DEFAULT_CONFIG_SCRIPT);
         }
     }
 
@@ -501,7 +512,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         bool(typecheck.get("purity"), TypeCheck.DEFAULTS.purity()),
                         bool(typecheck.get("regex"), TypeCheck.DEFAULTS.regex()),
                         bool(typecheck.get("formatString"), TypeCheck.DEFAULTS.formatString()),
-                        bool(typecheck.get("combiner"), TypeCheck.DEFAULTS.combiner())),
+                        bool(typecheck.get("combiner"), TypeCheck.DEFAULTS.combiner()),
+                        string(typecheck.get("configScript"), TypeCheck.DEFAULT_CONFIG_SCRIPT)),
                 new Format(
                         string(format.get("engine"), Format.DEFAULTS.engine()),
                         integer(format.get("indentSize"), Format.DEFAULTS.indentSize()),

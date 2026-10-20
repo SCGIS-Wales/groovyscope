@@ -53,6 +53,13 @@ class EngineConfigSpec extends Specification {
         EngineConfig.DEFAULTS.lint().gradleRuleset() == null
     }
 
+    def 'typecheck.configScript defaults to the conventional path'() {
+        expect:
+        EngineConfig.DEFAULTS.typecheck().configScript() == 'config/groovyc/compile-static.groovy'
+        EngineConfig.fromJson('{"typecheck": {"configScript": "build/cs.groovy"}}').typecheck().configScript() ==
+                'build/cs.groovy'
+    }
+
     def 'diagnostics delivery settings are parsed, normalised and defaulted'() {
         expect:
         EngineConfig.DEFAULTS.diagnostics() == new EngineConfig.Diagnostics('open', 300)

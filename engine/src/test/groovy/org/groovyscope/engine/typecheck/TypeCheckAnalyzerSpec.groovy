@@ -23,9 +23,14 @@ import org.codehaus.groovy.ast.expr.ListExpression
 import org.groovyscope.engine.config.EngineConfig
 import org.groovyscope.engine.support.Fixtures
 import org.groovyscope.engine.workspace.WorkspaceModel
+import java.nio.file.Path
 import spock.lang.Specification
+import spock.lang.TempDir
 
 class TypeCheckAnalyzerSpec extends Specification {
+
+    @TempDir
+    Path temp
 
     def 'statically typed classes get checked, dynamic ones are left alone'() {
         given:
@@ -49,6 +54,8 @@ class TypeCheckAnalyzerSpec extends Specification {
         TypeCheckAnalyzer.mayNeedTypeCheck('@CompileStatic\nclass A {}')
         TypeCheckAnalyzer.mayNeedTypeCheck('import groovy.transform.TypeChecked\n@TypeChecked class B {}')
         !TypeCheckAnalyzer.mayNeedTypeCheck('class C { def run() { 1 } }')
+        TypeCheckAnalyzer.mayNeedTypeCheck('@Safe class D { }', ['Safe'] as Set)
+        TypeCheckAnalyzer.staticCollectors(['file:///S.groovy': '@groovy.transform.CompileStatic\n@groovy.transform.AnnotationCollector\n@interface Safe {}']) == ['Safe'] as Set
         !TypeCheckAnalyzer.mayNeedTypeCheck(null)
     }
 
@@ -115,6 +122,61 @@ class TypeCheckAnalyzerSpec extends Specification {
 
         and: 'a Groovy 5 target gets the core type checker only'
         groovy5.values().flatten().every { it.code() == 'typecheck' }
+    }
+
+    static final String NULL_DEREF = 'int len(String t) { String u = t ? null : "x"; u.length() }'
+
+    def 'an import alias and an annotation collector reach the checkers, and dynamic classes are counted'() {
+        given:
+        def sources = [
+            'file:///w/Alias.groovy'    : "import groovy.transform.CompileStatic as Static\n@Static\nclass Alias {\n  $NULL_DEREF\n}".toString(),
+            'file:///w/Safe.groovy'     : 'import groovy.transform.AnnotationCollector\nimport groovy.transform.TypeChecked\n@TypeChecked\n@AnnotationCollector\n@interface Safe {}',
+            'file:///w/Collected.groovy': "@Safe\nclass Collected {\n  $NULL_DEREF\n}".toString(),
+            'file:///w/Loose.groovy'    : 'class Loose { def any() { 1 } }\ninterface Shape { }',
+        ]
+
+        when:
+        def result = new TypeCheckAnalyzer().check(sources, [], false, EngineConfig.TypeCheck.DEFAULTS,
+                EngineConfig.Groovy.DEFAULTS, [] as Set)
+
+        then:
+        result.diagnostics()['file:///w/Alias.groovy']*.code() == ['NullChecker']
+        result.diagnostics()['file:///w/Collected.groovy']*.code() == ['NullChecker']
+        result.dynamicClasses() == ['Loose']
+    }
+
+    def 'a compiler configuration script type checks every class, but only in a trusted workspace'() {
+        given:
+        Path script = temp.resolve('compile-static.groovy')
+        script.text = 'withConfig(configuration) { ast(groovy.transform.CompileStatic) }'
+        def sources = ['file:///w/Plain.groovy': 'class Plain {\n  int size() { "abc".lenght() }\n}',
+                       'file:///w/Other.groovy': 'class Other { int n() { 1 } }']
+
+        when:
+        def trusted = new TypeCheckAnalyzer().check(sources, [], true, EngineConfig.TypeCheck.DEFAULTS,
+                EngineConfig.Groovy.DEFAULTS, [] as Set, script)
+        def untrusted = new TypeCheckAnalyzer().check(sources, [], false, EngineConfig.TypeCheck.DEFAULTS,
+                EngineConfig.Groovy.DEFAULTS, [] as Set, script)
+
+        then:
+        trusted.diagnostics()['file:///w/Plain.groovy'].any { it.code() == 'typecheck' && it.message().contains('lenght') }
+        trusted.dynamicClasses().empty
+        untrusted.diagnostics().values().flatten().empty
+        untrusted.dynamicClasses() == ['Other', 'Plain']
+    }
+
+    def 'a configuration script that does not load is reported, not ignored'() {
+        given:
+        Path script = temp.resolve('broken.groovy')
+        script.text = 'withConfig(configuration) { ast(no.such.Transform) }'
+
+        when:
+        def result = new TypeCheckAnalyzer().check(['file:///w/A.groovy': 'class A { }'], [], true,
+                EngineConfig.TypeCheck.DEFAULTS, EngineConfig.Groovy.DEFAULTS, [] as Set, script)
+
+        then:
+        result.diagnostics()['file:///w/A.groovy']*.code() == ['typecheck-failed']
+        result.diagnostics()['file:///w/A.groovy'][0].message().contains('broken.groovy')
     }
 
     def 'the customizer extends existing annotations without duplicates'() {

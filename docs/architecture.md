@@ -233,7 +233,13 @@ analysis (Stage 4) will report those sites for manual review.
 - **Type-check.** `check --include typecheck` compiles the workspace to `INSTRUCTION_SELECTION` (still no
   bytecode) in a separate unit with a customizer that appends the configured Groovy 6 checkers
   (`NullChecker`, `SqlInjectionChecker`, `PurityChecker` + `ModifiesChecker`) to the `extensions` of every
-  existing `@CompileStatic` or `@TypeChecked` annotation. Dynamic code is never forced into static typing.
+  existing `@CompileStatic` or `@TypeChecked` annotation. The customizer runs at canonicalization, so an import
+  alias (`import groovy.transform.CompileStatic as Static`) and an `@AnnotationCollector` that bundles either
+  annotation count too. Dynamic code is never forced into static typing, except by the project's own compiler
+  configuration script (`typecheck.configScript`, by default `config/groovyc/compile-static.groovy`), which runs
+  as `groovyc --configscript` would, and only in a trusted workspace. A whole-workspace `check` ends with one
+  information note, `typecheck-coverage`, naming how many classes stayed dynamic and whether a configuration
+  script was left unapplied.
 - **Format.** `format.engine: basic` is bundled: leading tabs to spaces, trailing whitespace removed, blank
   runs capped, exactly one final newline, and semicolons removed only on lines CodeNarc flagged. It never
   re-flows code. `greclipse` is accepted by the schema but refused by the engine: the Groovy Eclipse

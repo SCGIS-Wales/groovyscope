@@ -81,8 +81,8 @@ class TypingVerdictSpec extends Specification {
         String text = '@groovy.transform.CompileStatic\nclass Typed {\n    int n() {\n        "x".noSuchMethod()\n    }\n}\n'
 
         when:
-        def broken = new TypeCheckAnalyzer().check([(doc): text], [], false, ['no.such.Checker'], [] as Set)
-        def plain = new TypeCheckAnalyzer().check([(doc): text], [], false, [], [] as Set)
+        def broken = new TypeCheckAnalyzer().check([(doc): text], [], false, ['no.such.Checker'], [] as Set, null)
+        def plain = new TypeCheckAnalyzer().check([(doc): text], [], false, [], [] as Set, null)
 
         then:
         broken.status()[doc] == TypeCheckAnalyzer.Status.CRASHED

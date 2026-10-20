@@ -151,7 +151,7 @@ public final class QualityServices {
     private record PracticeEntry(long version, List<PracticeFinder.Practice> practices) {
     }
 
-    private record TypeCheckEntry(long version, Map<String, List<Diagnostic>> typed) {
+    private record TypeCheckEntry(long version, Map<String, List<Diagnostic>> typed, List<String> dynamic) {
     }
 
     private volatile TypeCheckEntry typeCache;
@@ -172,12 +172,12 @@ public final class QualityServices {
      * arrive while it runs join it; it checks the snapshot's own sources, so its result matches the version it is
      * cached under.
      */
-    private Map<String, List<Diagnostic>> typeCheckAll() {
+    private TypeCheckEntry typeCheckAll() {
         while (true) {
             org.groovyscope.engine.services.Snapshot current = navigation.snapshot();
             TypeCheckEntry cached = typeCache;
             if (cached != null && cached.version() == current.version()) {
-                return cached.typed();
+                return cached;
             }
             org.groovyscope.engine.concurrent.MemoryGuard.requireHeadroom();
             CompletableFuture<TypeCheckEntry> job;
@@ -191,11 +191,11 @@ public final class QualityServices {
                 job = typeJob;
             }
             if (owner) {
-                return runTypeCheck(current, job).typed();
+                return runTypeCheck(current, job);
             }
             TypeCheckEntry joined = joinTypeCheck(job);
             if (joined != null) {
-                return joined.typed();
+                return joined;
             }
             // the owner was cancelled: this request runs the check itself on the next pass
         }
@@ -206,10 +206,11 @@ public final class QualityServices {
         try {
             long started = System.nanoTime();
             typeChecksRun.incrementAndGet();
-            Map<String, List<Diagnostic>> typed = typeChecker.analyze(current.result().sources(),
-                    workspace.classpath(), workspace.config().trust(), workspace.config().typecheck(),
-                    workspace.config().groovy(), current.result().unresolvedUris());
-            TypeCheckEntry entry = new TypeCheckEntry(current.version(), typed);
+            TypeCheckAnalyzer.Result checked = typeChecker.check(current.result().sources(), workspace.classpath(),
+                    workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
+                    current.result().unresolvedUris(), configScript());
+            Map<String, List<Diagnostic>> typed = checked.diagnostics();
+            TypeCheckEntry entry = new TypeCheckEntry(current.version(), typed, checked.dynamicClasses());
             synchronized (typeLock) {
                 // A check of an older snapshot finishing late never replaces a newer one.
                 if (typeCache == null || typeCache.version() < entry.version()) {
@@ -230,6 +231,15 @@ public final class QualityServices {
                 }
             }
         }
+    }
+
+    /**
+     * The project's compiler configuration script ({@code typecheck.configScript}, relative to the workspace root),
+     * or {@code null} when there is no such file.
+     */
+    java.nio.file.Path configScript() {
+        java.nio.file.Path script = workspace.root().resolve(workspace.config().typecheck().configScript()).normalize();
+        return java.nio.file.Files.isRegularFile(script) ? script : null;
     }
 
     /** Waits for another request's type check, polling this request's cancel flag; null when that one was cancelled. */
@@ -738,14 +748,28 @@ public final class QualityServices {
                 }
             }
         }
-        if (wanted.contains(INCLUDE_TYPECHECK) && anyMayNeedTypeCheck(targets, sources)) {
-            Map<String, List<Diagnostic>> typed = typeCheckAll();
+        java.nio.file.Path script = wanted.contains(INCLUDE_TYPECHECK) ? configScript() : null;
+        boolean scripted = script != null && workspace.config().trust();
+        List<String> dynamic = List.of();
+        if (wanted.contains(INCLUDE_TYPECHECK) && (scripted || anyMayNeedTypeCheck(targets, sources))) {
+            TypeCheckEntry entry = typeCheckAll();
+            Map<String, List<Diagnostic>> typed = entry.typed();
+            dynamic = entry.dynamic();
             for (String uri : targets) {
                 for (Diagnostic diagnostic : profileCheckerPolicy(uri, typed.getOrDefault(uri, List.of()))) {
                     if (!result.get(uri).contains(diagnostic)) {
                         result.get(uri).add(diagnostic);
                     }
                 }
+            }
+        }
+        if (wanted.contains(INCLUDE_TYPECHECK) && (uris == null || uris.isEmpty()) && !result.isEmpty()) {
+            if (dynamic.isEmpty() && !anyMayNeedTypeCheck(targets, sources) && !scripted) {
+                dynamic = TypeCheckAnalyzer.dynamicClasses(navigation.snapshot().result().modules().values());
+            }
+            Diagnostic coverage = coverage(result.keySet().iterator().next(), dynamic, scripted ? null : script);
+            if (coverage != null) {
+                result.get(coverage.uri()).add(coverage);
             }
         }
         for (Map.Entry<String, List<Diagnostic>> entry : joined(linted).entrySet()) {
@@ -811,12 +835,37 @@ public final class QualityServices {
      * type-check compile (the costliest step of a single-file {@code check} after an edit).
      */
     static boolean anyMayNeedTypeCheck(Collection<String> targets, Map<String, String> sources) {
+        Set<String> collectors = TypeCheckAnalyzer.staticCollectors(sources);
         for (String uri : targets) {
-            if (TypeCheckAnalyzer.mayNeedTypeCheck(sources.get(uri))) {
+            if (TypeCheckAnalyzer.mayNeedTypeCheck(sources.get(uri), collectors)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Most dynamic classes a coverage note names. */
+    static final int COVERAGE_NAMES = 5;
+
+    /**
+     * The whole-workspace note on what the type check could not see: the classes it left dynamic, and a
+     * configuration script left unapplied because the workspace is not trusted. {@code null} when there is neither.
+     */
+    static Diagnostic coverage(String uri, List<String> dynamic, java.nio.file.Path unappliedScript) {
+        List<String> notes = new ArrayList<>();
+        if (!dynamic.isEmpty()) {
+            List<String> named = dynamic.subList(0, Math.min(COVERAGE_NAMES, dynamic.size()));
+            notes.add(dynamic.size() + (dynamic.size() == 1 ? " class is" : " classes are") + " dynamic, not type checked ("
+                    + String.join(", ", named) + (dynamic.size() > named.size() ? ", ..." : "") + "): annotate them "
+                    + "@CompileStatic or @TypeChecked, or apply @CompileStatic to all through a compiler configuration "
+                    + "script (typecheck.configScript)");
+        }
+        if (unappliedScript != null) {
+            notes.add(unappliedScript.getFileName() + " is not applied until the workspace is trusted (groovyscope "
+                    + "trust): it is code from the repository");
+        }
+        return notes.isEmpty() ? null : new Diagnostic(uri, Range.of(0, 0, 0, 1), Diagnostic.Severity.INFORMATION,
+                TypeCheckAnalyzer.SOURCE, "typecheck-coverage", String.join("; ", notes));
     }
 
     /** The formatting edits for one document (empty when it is already formatted). */
