@@ -278,7 +278,11 @@ public final class LanguageServices {
     public void close() {
         snapshots.close(() -> {
             graph = null;
+            QualityServices released = quality;
             quality = null;
+            if (released != null) {
+                released.close();
+            }
         });
     }
 
