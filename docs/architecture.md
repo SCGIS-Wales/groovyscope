@@ -24,17 +24,21 @@ Packages under `org.groovyscope.engine`:
 
 | Package | Stage | Responsibility |
 |---|---|---|
-| `lsp` | 0, 1, 10 | LSP4J server: lifecycle, incremental document sync, definition, type definition, implementation, references, document highlight, hover, document and workspace symbols, folding ranges, inlay hints, completion, signature help, prepare/rename, formatting and range formatting, code actions (quick fixes, fix all, organize imports), published and pulled diagnostics, call hierarchy, semantic tokens, plus the `groovyscope/*` requests the CLI and MCP server use. The only package allowed to import LSP4J types. |
+| `lsp` | 0, 1, 10 | LSP4J server: lifecycle, incremental document sync, definition, type definition, implementation, references, document highlight, hover, document and workspace symbols, folding ranges, inlay hints, completion, signature help, prepare/rename, formatting and range formatting, code actions (quick fixes, fix all, organize imports), published and pulled diagnostics, call hierarchy, semantic tokens, plus the `groovyscope/*` requests the CLI and MCP server use, grouped in `StatusRequests`, `QualityRequests`, `ExplainGraphRequests` and `SearchRequests` with `RequestParams` reading their parameters; `RequestExecutors` runs them on the light and heavy lanes. The only package allowed to import LSP4J types. |
+| `org.groovyscope.engine` | 0 | `Main`: the command line entry point of the engine JAR (stdio language server or daemon), which reads the configuration the Python front end hands over. |
 | `version` | 0 | Engine version and the embedded CodeNarc version from a Gradle-expanded resource. |
+| `model` | 1 | The protocol-free value records every package speaks: positions, ranges, locations, symbols, diagnostics, edits, confidence, call sites, impact reports and check results. |
+| `log` | 9 | `EngineLog`: levelled logging to stderr and the optional log file, never to stdout, which is the LSP channel. |
 | `config` | 1 | The slice of `.groovyscope.yaml` the engine needs, handed over as JSON by the Python front end. |
 | `workspace` | 1 | Source discovery under the configured roots (whole-tree fallback), open-document overlay, classpath from configuration (never inferred). |
 | `compile` | 1 | `CompilationUnit` to `CANONICALIZATION`, never class generation; Grape and `@ASTTest` off; a filtered parent class loader; global AST transforms gated by `workspace.trust`. See "Compile strategy". |
 | `util` | 6 | `Uris` (a `file:` URI as a path), `Hashes` (the one SHA-256 helper) and `Closeables`, shared by every package. |
 | `index`, `semantics` | 1 | Positioned node index per document, declaration lookup, and a resolver that assigns a confidence to every answer. |
-| `services` | 1 | `LanguageServices`: the protocol-free engine API over an immutable `Snapshot` (compile + index + resolver). |
+| `services` | 1, 6 | `LanguageServices`: the protocol-free engine API over an immutable `Snapshot` (compile + index + resolver), a facade over `SnapshotManager` (refresh, single flight compile, class loader ownership, symbol persistence) and `NavigationQueries` (definitions, references, hover, symbols, rename, impact, call hierarchy). |
 | `daemon` | 2 | Unix domain socket server, one front end per connection, shared `WorkspaceRegistry`, idle watchdog, `groovyscope/status` and `groovyscope/shutdownDaemon`. |
 | `lint`, `typecheck`, `format` | 3 | CodeNarc 4 in process (rule sets cached per path, findings cached per document hash); Groovy's static type checker over the workspace with the Groovy 6 checkers added to every `@CompileStatic`/`@TypeChecked` annotation; the bundled `basic` formatter returning one whole-document edit. |
-| `services.QualityServices` | 3 | `check`, `format`, quick fixes and the merged compile + lint diagnostics the LSP publishes. |
+| `services.QualityServices` | 3, 6 | `check` and the merged compile, lint and practice diagnostics the LSP publishes; a facade over `LintService` (rule sets, the lint class loader and cache, profile per file), `TypeCheckService` (the single flight type check, the configuration script, the coverage note), `FixService` (fixes, verdicts, code actions, organise imports, format) and `ProfileService` (runtime profiles, contracts, emulation). |
+| `concurrent` | 18 | `Cancellation` (cooperative cancel checkpoints), `Containment` (which failures a request survives), `Freshness` (stale while revalidating for light requests), `MemoryGuard` and `MemoryPressureException` (refuse whole-workspace work under memory pressure). |
 | `callgraph` | 4 | `CallGraph` (every call as an edge from its containing method, script or class initialiser to each resolved target, built once per snapshot) and `ImpactAnalyzer` (direct and transitive callers, overrides in both directions, tests, name-only sites, risk score, suggested checks). |
 | `practices`, `profiles` | 8 | GS practice checks with AST fixes and explanations; runtime profiles (RP codes, descriptors, contracts, emulation compile). See below. |
 | `search` | 10 | `CodeSearch` (structural search over the compiled trees: catch clauses, throws, calls, constructor calls, `return null`, string literals, annotations, `def` declarations, empty blocks, fields and methods, each with filters), `CloneFinder` (duplicated code by normalised statement hashes), `SymbolReader` (the source of one declaration with the comments and annotations above it) and `WorkspaceOverview` (sizes per package, largest files and classes, untested classes). Java documents are never searched. |
@@ -330,7 +334,14 @@ deliberately loose so shared runners do not fail the build.
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | click commands; nothing but wiring and exit codes |
+| `cli/` | the click commands, one module per area registered on one `main` group (`python -m groovyscope.cli` runs it); nothing but wiring and exit codes |
+| `cli/common.py` | what every command shares: logging, the configuration handed to the engine, starting and reaching the daemon, engine calls, printed rows and the test seams |
+| `cli/workspace.py` | `version`, `doctor`, `checkup`, `config`, `trust`, `init`, the JDK, the classpath export and runtime profiles |
+| `cli/kiro.py` | `kiro init`, `attach` and `repair`, and the bundled benchmark corpus |
+| `cli/daemon.py` | `lsp`, `mcp`, the daemon's lifecycle and its logs |
+| `cli/quality.py` | `check`, `hook`, `review`, `verify`, test results, coverage, `format`, `fix`, `explain`, naming and the contract baseline |
+| `cli/graph.py` | the relationship graph, `explain-code`, impact and the call graph |
+| `cli/checks.py` | `checks prepare` and `checks report`, the Kiro checks kit |
 | `config.py` | defaults ← `.groovyscope.yaml` ← `GROOVYSCOPE_*`; JSON-schema validation |
 | `workspace_init.py` | `groovyscope init`: a starting `.groovyscope.yaml` from the layout and build files, read as text |
 | `classpath.py` | `groovyscope classpath`: the Gradle init script or Maven command, parsing, `workspace.classpathFile`, the build fingerprint and the classpath state |
@@ -341,9 +352,24 @@ deliberately loose so shared runners do not fail the build.
 | `provision.py` | opt-in Temurin JDK provisioning through the Adoptium API (`jdk install`, `jdk.autoProvision`) |
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
-| `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing); one-shot requests and persistent sessions |
-| `mcp_server.py` | the MCP server: twenty-seven tool functions over one engine session, compact output through `render.py`; reloads the engine configuration in place when it changes |
-| `mcp_search.py`, `mcp_server_support.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview`; the shared helpers (paging, paths, clipping, and the guard that refuses `path` and `paths` the workspace does not have before any tool runs) |
+| `rpc.py` | a small JSON-RPC client over the socket (Content-Length framing) and the demultiplexed channel the MCP server keeps open |
+| `mcp_server.py` | the MCP server: one module-level function per tool, bound to the session with `functools.partial`, over one engine session; compact output through `render.py`; reloads the engine configuration in place when it changes; the CLI reuses the same functions |
+| `mcp_search.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview` |
+| `paths.py` | workspace paths and file URIs, the guard that refuses a `path` or `paths` outside the workspace before any tool runs, and the helpers the tool modules share (clipping, the call and paging signatures) |
+| `tools_catalog.py` | the MCP tool catalogue: which tools exist, what each is for and which change the workspace; Kiro's approval rules and the reviewer agent are generated from it |
+| `interaction.py` | MCP elicitation (a confirmation before a write) and progress notes from inside a running tool |
+| `skills.py` | the Kiro skills shipped as templates, and the same recipes served as MCP prompts |
+| `edits.py` | LSP text edits applied to documents and written back inside the workspace only, atomically, keeping line endings; `write_if_unchanged` |
+| `atomic.py` | whole-file writes through a unique temporary file and a rename, with an optional mode and fsync |
+| `process.py` | child processes read as UTF-8 text, with bytes that are not UTF-8 kept as surrogate escapes |
+| `hooks.py` | `groovyscope hook`: the after-write check and the opt-in stop gate Kiro runs |
+| `verify.py` | the tests a change reaches and the one Gradle command that compiles and runs them |
+| `test_results.py` | JUnit XML results from any folder or CI archive |
+| `practices.py` | the practice catalogue on the Python side: grouping for `review`, SARIF and short output |
+| `diagnostics.py` | debug logging, `groovyscope logs` and the `doctor --bundle` archive for bug reports |
+| `selfheal.py` | the restart budget with backoff and the heap that grows once after an out-of-memory exit, up to `daemon.maxHeap` |
+| `sweep.py` | what grows under the cache folder and what `doctor` reports and `checkup --fix` removes |
+| `checks.py` | the Kiro checks kit behind `checks prepare` and `checks report` |
 | `relay.py` | asyncio byte relay between this process's stdio and the socket |
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
 | `kiro_agent.py` | agent format detection (V2, universal, out of sync, V3) and format-preserving merges; the servers an agent's `tools` hides |
@@ -459,14 +485,13 @@ them before trusting navigation or impact answers around them.
 MCP tools return compact JSON: paths relative to the root, `line:col`, a symbol kind, at most
 `output.maxResults` items within `output.maxBytes`, plus a continuation cursor. They never return file bodies.
 
-## CodeNarc version: resolved at build time, embedded, reported
+## CodeNarc version: pinned, canaried, embedded, reported
 
-The engine does not pin CodeNarc. `engine/settings.gradle.kts` asks Maven Central for
-`org/codenarc/CodeNarc/maven-metadata.xml`, keeps the plain numeric releases (`4.0.0`, never `3.7.0-groovy-4.0`,
-`-rc` or `-SNAPSHOT`), takes the highest and overrides the `codenarc` entry of the version catalogue with it. The
-value in `gradle/libs.versions.toml` is the floor (the oldest release the engine was verified against, which
-Dependabot still raises) and the offline fallback: a lower or missing answer never wins over it. The lookup is a
-Gradle `ValueSource`, so a cached configuration is invalidated as soon as a new release appears. The build prints
+The engine builds against the CodeNarc release pinned in `gradle/libs.versions.toml`, the only place that names
+it; Dependabot proposes each new release as a pull request, so every build of one commit embeds the same rules.
+The weekly `codenarc-canary.yml` builds and tests with the latest stable release instead
+(`-PcodenarcResolve=true`, read from Maven Central's `maven-metadata.xml`, plain numeric releases only, never
+`-groovy-4.0`, `-rc` or `-SNAPSHOT` builds), so a new release is tried before its bump is merged. The build prints
 one line, `CodeNarc <version>: <why>`, and expands the version into `engine-version.properties` and the JAR
 manifest (`CodeNarc-Version`); `EngineVersion.codenarc()` reads it, `groovyscope/status` returns it, and the
 bundle manifest written by `scripts/bundle_jar.py` carries it, so `groovyscope version` and `doctor` name the
@@ -474,9 +499,9 @@ CodeNarc the installed engine runs. The CycloneDX SBOM attached to each release 
 
 | Need | How |
 |---|---|
-| Pin a release for one build | `./gradlew build -PcodenarcVersion=4.0.0` or `GROOVYSCOPE_CODENARC_VERSION=4.0.0` |
-| No network | `--offline` or `-PcodenarcResolve=false`: the floor is used and the line says so |
-| Corporate mirror | `-PcodenarcMetadataUrl=https://mirror/.../org/codenarc/CodeNarc/maven-metadata.xml` |
+| Another release for one build | `./gradlew build -PcodenarcVersion=<version>` or `GROOVYSCOPE_CODENARC_VERSION=<version>` |
+| The latest stable release | `-PcodenarcResolve=true` (what the canary does) |
+| Corporate mirror for that lookup | `-PcodenarcMetadataUrl=https://mirror/.../org/codenarc/CodeNarc/maven-metadata.xml` |
 
 The benchmark corpus is a different thing: it is CodeNarc 4.0.0's `src/main` as a fixed subject, and it stays
 fixed on purpose so credit benchmark runs remain comparable.

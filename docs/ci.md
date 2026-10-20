@@ -11,7 +11,7 @@ groovyscope-check:
   stage: test
   image: python:3.13
   variables:
-    GROOVYSCOPE_WORKSPACE__TRUST: "true"      # the runner's environment, not the repository, grants trust
+    GROOVYSCOPE_WORKSPACE__TRUST: "true"      # grants trust; better as a protected CI/CD variable (see below)
   before_script:
     - pip install --quiet groovyscope
     - groovyscope classpath --timeout 900      # resolves dependencies through the project's Gradle wrapper
@@ -51,6 +51,16 @@ groovyscope-review:
     paths: [review.txt]
     when: always
 ```
+
+**Where trust comes from.** Trust lets `groovyscope classpath` run the project's build and lets global AST
+transformations from the classpath run in the engine, so it must not be something a merge request can grant
+itself. A `.groovyscope.yaml` in the repository cannot (see [security.md](security.md)), but the `variables:`
+above live in `.gitlab-ci.yml`, which is in the repository too: a merge request could add them. Declare
+`GROOVYSCOPE_WORKSPACE__TRUST` instead as a CI/CD variable in the project settings, marked protected, so only
+pipelines on protected branches see it, and keep the line above only where every branch is trusted. A merge
+request pipeline then runs untrusted: `groovyscope classpath` refuses, so write that step as
+`groovyscope classpath --timeout 900 || true` and the review works from the sources alone (unresolved library
+classes are folded into one GS100 warning per file).
 
 `groovyscope review --changed` exits 1 when a blocking finding sits on a changed line, so the job fails the
 merge request the way a reviewer would request changes. With the JaCoCo and SpotBugs artifacts present, the
