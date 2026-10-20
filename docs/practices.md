@@ -398,6 +398,12 @@ sql.rows('SELECT * FROM users WHERE name = ?', [name])
   `@CompileStatic` code (GS014), and one on a Mockito or Spock double mixes two mechanisms (GS015).
 - A dynamic Groovy test can call a private method directly; no reflection is needed.
 - Every test asserts, verifies an interaction or expects an exception (GS016).
+- An interaction in `then:` carries a cardinality (`1 * mock.call()`); without one it is a stub that checks
+  nothing, and a double created in `then:` is never reached (GS040).
+- Every `where:` column is used by the feature or its name, and declared once (GS041).
+- Spock 2 unrolls data driven features by default: keep `@Unroll` only for a name pattern (GS042).
+- `thrown()`, `notThrown()` and `noExceptionThrown()` belong in a `then:` block, one per block (GS043). The
+  analysis compile does not run Spock's transformation, so groovyscope reports these instead of Spock.
 - Groovy 6 adds `groovy-test-junit6`.\[1\]
 - JaCoCo filters members annotated `@Generated`; this was not re-verified for 6.0.
 - CodeNarc 4.1 (unreleased) adds a `spock` rule set: SpockIgnoreRestUsed, SpockMissingAssert, SpockUseVerifyEach, SpockUnnecessaryAssert.\[14\]
@@ -630,6 +636,8 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Spock | SpockMissingAssert, SpockUseVerifyEach (4.1 spock rule set) | none | Replace `.with {}` with `with(obj) {}` |
 | Test doubles | none | none | GS013: Mockito or Spock stub on a private method; GS014: metaClass override `@CompileStatic` callers bypass; GS015: metaClass on a double |
 | Tests that check nothing | JUnitTestMethodWithoutAssert (junit rule set) | none | GS016: a JUnit test with no assert, verify or expected exception, helpers followed |
+| Spock structure | none | Spock's own transformation (not run by the analysis compile) | GS040: interaction in `then:` without a cardinality, or a double created there; GS041: data table column unused or declared twice; GS042: `@Unroll` without a pattern; GS043: exception condition outside `then:` or twice in one block |
+| Gradle build scripts | Gradle profile (`*.gradle`) | none | GS050: eager task API; GS051: dynamic version; GS052: `http://` repository (error) or `mavenLocal()` (warning) |
 | Version gating | none | none | GS010: Groovy 6 construct under a 5.x target |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
@@ -675,6 +683,34 @@ Test classes (`*Spec`, `*Test`, files under `src/test`) are checked for contradi
 feature names are free text. Loop indexes, closure parameters, catch parameters and `it` are never reported.
 Renames go through `rename` (a dry run first, static references only, a recompile after the write), never
 through text replacement.
+
+## 19. Gradle build scripts
+
+Build scripts (`*.gradle`) are linted with their own profile (`config/codenarc/gradle.groovy`, without `NoDef`,
+`CompileStatic` and the `*TypeRequired` rules) and checked from their syntax alone: the Gradle API is not on the
+workspace classpath, so they are never compiled with the sources. `check` finds the root's and every
+subproject's scripts outside the source folders.
+
+- Register tasks lazily: `tasks.register('x')` and `tasks.named('x')`, never `task x {}` or `tasks.create`
+  (GS050).
+- Pin dependency versions; `1.+`, `latest.release` and ranges resolve differently from day to day (GS051). A
+  platform or a version catalogue keeps the pins in one place.
+- Fetch from `https://` repositories only (GS052, an error), and keep `mavenLocal()` out of shared builds (GS052,
+  a warning): it lets whatever was last installed on one machine shadow the published artefacts.
+
+```groovy
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.apache.groovy:groovy:5.0.2'
+}
+
+tasks.register('hello') {
+    doLast { println 'hello' }
+}
+```
 
 ## Caveats
 - **Release notes not fully retrieved:**

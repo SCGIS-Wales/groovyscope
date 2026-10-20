@@ -51,6 +51,7 @@ import org.groovyscope.engine.profiles.ProfileFinder;
 import org.groovyscope.engine.profiles.ProfileNavigation;
 import org.groovyscope.engine.profiles.Profiles;
 import org.groovyscope.engine.profiles.RemoteCompiler;
+import org.groovyscope.engine.practices.GradleFinder;
 import org.groovyscope.engine.practices.PracticeCatalog;
 import org.groovyscope.engine.practices.PracticeFinder;
 import org.groovyscope.engine.practices.PracticeFixes;
@@ -606,10 +607,31 @@ public final class QualityServices {
         if (cached != null && cached.version() == snapshot.version()) {
             return cached.practices();
         }
-        List<PracticeFinder.Practice> found = practicesOf(uri, snapshot.result().modules().get(uri),
-                snapshot.result().sources().get(uri));
+        org.codehaus.groovy.ast.ModuleNode module = snapshot.result().modules().get(uri);
+        if (module == null && isBuildScript(uri)) {
+            return buildScriptPractices(uri);
+        }
+        List<PracticeFinder.Practice> found = practicesOf(uri, module, snapshot.result().sources().get(uri));
         practiceCache.put(uri, new PracticeEntry(snapshot.version(), List.copyOf(found)));
         return found;
+    }
+
+    /** Whether a document is a Gradle build script. */
+    static boolean isBuildScript(String uri) {
+        return uri.endsWith(".gradle");
+    }
+
+    /**
+     * The Gradle checks of a build script the compile does not read ({@link WorkspaceModel#buildScripts}), on its
+     * syntax tree alone. Not cached by snapshot: a build script's edits do not start a compile.
+     */
+    private List<PracticeFinder.Practice> buildScriptPractices(String uri) {
+        String text = workspace.text(uri);
+        if (text == null) {
+            return List.of();
+        }
+        return compiler.parseOnly(uri, text).map(module -> GradleFinder.find(uri, module, text, workspace.config()))
+                .orElse(List.of());
     }
 
     /** The practice findings of one document's tree and text (the snapshot's, or a fresh single-file compile's). */
@@ -704,12 +726,28 @@ public final class QualityServices {
         Set<String> wanted = include == null || include.isEmpty() ? ALL_INCLUDES : include;
         Map<String, String> sources = workspace.sources();
         List<String> targets = uris == null || uris.isEmpty() ? new ArrayList<>(sources.keySet()) : new ArrayList<>(uris);
+        // Gradle build scripts the compile does not read are linted and checked on their own (GS050 to GS052).
+        Map<String, String> scripts = new HashMap<>();
+        if (wanted.contains(INCLUDE_LINT) || wanted.contains(INCLUDE_PRACTICES)) {
+            if (uris == null || uris.isEmpty()) {
+                scripts.putAll(workspace.buildScripts());
+                targets.addAll(scripts.keySet());
+            } else {
+                for (String uri : targets) {
+                    String text = isBuildScript(uri) && !sources.containsKey(uri) ? workspace.text(uri) : null;
+                    if (text != null) {
+                        scripts.put(uri, text);
+                    }
+                }
+            }
+        }
         Map<String, List<Diagnostic>> result = new TreeMap<>();
         for (String uri : targets) {
             result.put(uri, new ArrayList<>());
         }
+        Map<String, String> lintSources = scripts.isEmpty() ? sources : withScripts(sources, scripts);
         CompletableFuture<Map<String, List<Diagnostic>>> linted = wanted.contains(INCLUDE_LINT)
-                ? CompletableFuture.supplyAsync(() -> lintAll(targets, sources, profile), LINT)
+                ? CompletableFuture.supplyAsync(() -> lintAll(targets, lintSources, profile), LINT)
                 : CompletableFuture.completedFuture(Map.of());
         // After a write only the written files changed: compile them alone against the last full compile's classes
         // (see LanguageServices.compileOnly) instead of the whole workspace.
@@ -767,7 +805,9 @@ public final class QualityServices {
             if (dynamic.isEmpty() && !anyMayNeedTypeCheck(targets, sources) && !scripted) {
                 dynamic = TypeCheckAnalyzer.dynamicClasses(navigation.snapshot().result().modules().values());
             }
-            Diagnostic coverage = coverage(result.keySet().iterator().next(), dynamic, scripted ? null : script);
+            String noted = result.keySet().stream().filter(uri -> !scripts.containsKey(uri)).findFirst()
+                    .orElse(result.keySet().iterator().next());
+            Diagnostic coverage = coverage(noted, dynamic, scripted ? null : script);
             if (coverage != null) {
                 result.get(coverage.uri()).add(coverage);
             }
@@ -779,6 +819,12 @@ public final class QualityServices {
             list.sort((a, b) -> a.range().start().compareTo(b.range().start()));
         }
         return new CheckResult(result);
+    }
+
+    private static Map<String, String> withScripts(Map<String, String> sources, Map<String, String> scripts) {
+        Map<String, String> merged = new HashMap<>(sources);
+        merged.putAll(scripts);
+        return merged;
     }
 
     /** The single-file compile of {@link LanguageServices#compileOnly}, or empty (also when it fails). */

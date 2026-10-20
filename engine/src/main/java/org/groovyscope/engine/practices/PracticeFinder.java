@@ -171,6 +171,8 @@ public final class PracticeFinder {
         visitor.visitModule();
         out.addAll(NamingFinder.find(uri, module, config));
         out.addAll(TestDoubleFinder.find(uri, module, config));
+        SpockFinder.find(context);
+        GradleFinder.find(context);
         return out;
     }
 

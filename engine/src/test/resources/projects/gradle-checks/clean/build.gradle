@@ -1,0 +1,28 @@
+import org.gradle.api.tasks.Copy
+
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.example.com/maven' }
+}
+
+dependencies {
+    api 'com.example:fixed:1.2.3'
+    implementation platform('com.example:bom:2.0.0')
+    implementation 'com.example:managed'
+}
+
+tasks.register('copyDocs', Copy) {
+    from 'docs'
+    into layout.buildDirectory.dir('docs')
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+def taskNames = ['a', 'b']
+println "plus is fine outside dependencies: ${1 + 2}"

@@ -72,7 +72,10 @@ rather than guesses when a call site can only be matched by name. Findings come 
   (test doubles that cannot take effect: a stub on a private method, a metaClass override `@CompileStatic` code
   bypasses or one on a Mockito double, and tests that assert nothing), GS020 to GS027
   (names that say what things are and do: booleans as questions, verbs on methods, no generic words,
-  abbreviations or type prefixes, names that match their types, one verb per idea), and GS100, one warning
+  abbreviations or type prefixes, names that match their types, one verb per idea), GS040 to GS043 (Spock
+  mistakes Spock would reject or silently ignore: interactions in `then:` without a cardinality, unused or
+  duplicated data table columns, a redundant `@Unroll`, misplaced exception conditions), GS050 to GS052
+  (Gradle build scripts: eager tasks, dynamic versions, `http://` repositories and `mavenLocal()`), and GS100, one warning
   per file whose imports cannot resolve because no classpath is configured;
 - optional [runtime profiles](docs/profiles.md) (RP codes) for plugin code that runs on a different Groovy and
   classpath than the local build: constructs not proven on the runtime, descriptor parameter mistakes, secret
