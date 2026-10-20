@@ -93,9 +93,12 @@ classpath up on its next request. No restart of Kiro or of the daemon.
 Review my changes against main and apply the safe fixes, then show me what is left.
 ```
 
-Calls `review_changes`, then `fix(paths, apply=true)` on the changed files, then `review` again. Safe fixes
-are mechanical and never change behaviour: `intdiv`, typed parameter reads, `@CompileStatic` where the class
-then type-checks, unnecessary semicolons, Spock `with`. Anything else is listed for you.
+Calls `review_changes`, then `fix(paths, apply=false)` on the changed files as a dry run and shows you what it
+would change; after your yes it calls `fix(paths, apply=true)`, then `review` again. Without codes named, `fix`
+applies only fixes that keep behaviour (the `preserving` entries of the practices catalogue, and the
+semicolon and whitespace fixes); a fix that changes behaviour, such as `intdiv` (GS001) or Spock `with(obj)`
+(GS011), is offered one by one and applied only once you agree to that code. The `groovy-fix` skill lists both
+sets, generated from the catalogue. Anything else is listed for you.
 
 ## 3. Full quality check
 
