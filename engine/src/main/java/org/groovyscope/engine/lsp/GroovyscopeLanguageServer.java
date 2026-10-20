@@ -534,17 +534,6 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     }
 
     static Path toPath(String uri) {
-        if (uri == null || uri.isBlank()) {
-            return null;
-        }
-        try {
-            URI parsed = URI.create(uri);
-            if (!"file".equalsIgnoreCase(parsed.getScheme())) {
-                return null;
-            }
-            return Paths.get(parsed).toAbsolutePath().normalize();
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+        return org.groovyscope.engine.util.Uris.toPath(uri);
     }
 }

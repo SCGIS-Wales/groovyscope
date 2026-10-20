@@ -89,22 +89,14 @@ final class LintService {
         }
         LintLoader fresh = new LintLoader(version, loader);
         if (!lintLoader.compareAndSet(current, fresh)) {
-            closeQuietly(loader);
+            org.groovyscope.engine.util.Closeables.closeQuietly(loader);
             return lintLoader.get().loader();
         }
         LintLoader retired = previousLintLoader.getAndSet(current);
         if (retired != null) {
-            closeQuietly(retired.loader());
+            org.groovyscope.engine.util.Closeables.closeQuietly(retired.loader());
         }
         return loader;
-    }
-
-    private static void closeQuietly(groovy.lang.GroovyClassLoader loader) {
-        try {
-            loader.close();
-        } catch (java.io.IOException e) {
-            // the jars are released on GC at the latest
-        }
     }
 
     /**
