@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ import pytest
 from click.testing import CliRunner
 
 from groovyscope import cli, profiles
+from groovyscope import daemon as daemon_lifecycle
+from groovyscope.cli import common as cli_common
 
 REPO = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO / "config" / "profiles" / "example-runtime.yaml"
@@ -127,13 +130,13 @@ def engine(
     monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
     state: dict[str, Any] = {"requests": [], "responses": {}}
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
 
     def fake_rpc(socket_file: Path, method: str, params: dict[str, Any], timeout: float) -> Any:
         state["requests"].append((method, params))
         return state["responses"].get(method, {})
 
-    monkeypatch.setattr(cli, "_RPC", fake_rpc)
+    monkeypatch.setattr(cli_common, "_RPC", fake_rpc)
     return state
 
 
@@ -145,8 +148,8 @@ def test_engine_receives_discovered_profiles(
     engine["responses"]["groovyscope/check"] = {"diagnostics": {}, "summary": {}}
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "check"])
     assert "profile skipped" in result.output and "bad.yaml" in result.output
-    handed = json.loads(cli.engine_config_file(tmp_path, dict(cli.os.environ)).read_text(encoding="utf-8"))
-    assert cli.os.environ.get(cli.CONFIG_ENV, "") == ""  # the process environment is never written
+    handed = json.loads(cli.engine_config_file(tmp_path, dict(os.environ)).read_text(encoding="utf-8"))
+    assert os.environ.get(cli.CONFIG_ENV, "") == ""  # the process environment is never written
     assert handed["profiles"] == [{"name": "p", "target": {"groovy": "5.1"}}]
 
 

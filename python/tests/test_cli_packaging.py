@@ -8,7 +8,9 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import cli, fetch, provision
+from groovyscope import __version__, cli, fetch, provision
+from groovyscope import fetch as fetch_engine
+from groovyscope.cli import common as cli_common
 from tests.conftest import make_fake_jdk
 
 
@@ -21,10 +23,10 @@ def test_fetch_defaults_to_the_matching_release(
         calls.append({"source": source, **kwargs})
         return {"path": "/cache/engine/x.jar", "version": kwargs["version"], "sha256": "ab" * 32, "source": source}
 
-    monkeypatch.setattr(cli.fetch_engine, "fetch_jar", fake_fetch)
+    monkeypatch.setattr(fetch_engine, "fetch_jar", fake_fetch)
     result = runner.invoke(cli.main, ["fetch"])
     assert result.exit_code == 0, result.output
-    assert calls[0]["source"] == fetch.default_source(cli.__version__)
+    assert calls[0]["source"] == fetch.default_source(__version__)
     assert calls[0]["destination"] == Path(clean_env["GROOVYSCOPE_CACHE_DIR"]) / "engine"
     assert calls[0]["sha256"] is None
     assert "fetched /cache/engine/x.jar" in result.output
@@ -39,7 +41,7 @@ def test_fetch_reports_failures(runner: CliRunner, clean_env: dict[str, str], mo
         msg = f"SHA-256 mismatch for {source}"
         raise ValueError(msg)
 
-    monkeypatch.setattr(cli.fetch_engine, "fetch_jar", failing)
+    monkeypatch.setattr(fetch_engine, "fetch_jar", failing)
     result = runner.invoke(cli.main, ["fetch", "--from", "https://example.test/x.jar"])
     assert result.exit_code == 1
     assert "fetch failed: SHA-256 mismatch" in result.output
@@ -50,7 +52,7 @@ def test_jdk_install(runner: CliRunner, clean_env: dict[str, str], monkeypatch: 
         assert install_dir == Path(clean_env["GROOVYSCOPE_CACHE_DIR"]) / "jdk"
         return {"home": f"/cache/jdk/jdk-{feature}", "version": feature, "release": f"jdk-{feature}"}
 
-    monkeypatch.setattr(cli.provision, "provision_jdk", fake_provision)
+    monkeypatch.setattr(provision, "provision_jdk", fake_provision)
     result = runner.invoke(cli.main, ["jdk", "install", "--feature", "25"])
     assert result.exit_code == 0, result.output
     assert "installed jdk-25 at /cache/jdk/jdk-25" in result.output
@@ -58,7 +60,7 @@ def test_jdk_install(runner: CliRunner, clean_env: dict[str, str], monkeypatch: 
     def failing(install_dir: Path, **_kwargs: Any) -> provision.ProvisionedJdk:
         raise OSError("network down")
 
-    monkeypatch.setattr(cli.provision, "provision_jdk", failing)
+    monkeypatch.setattr(provision, "provision_jdk", failing)
     result = runner.invoke(cli.main, ["jdk", "install"])
     assert result.exit_code == 1 and "network down" in result.output
 
@@ -73,7 +75,7 @@ def test_resolve_jdk_provisions_only_when_asked(
         jdk = {"home": str(provisioned[0]), "version": 21, "source": "provisioned"} if provisioned else None
         return {"jdk": jdk, "notes": []}
 
-    monkeypatch.setattr(cli, "discover", discover)
+    monkeypatch.setattr(cli_common, "discover", discover)
     effective: dict[str, Any] = {"jdk": {"home": None, "minimum": 17, "autoProvision": False}}
     assert cli.resolve_jdk(effective, dict(clean_env)) is None
 
@@ -84,7 +86,7 @@ def test_resolve_jdk_provisions_only_when_asked(
         downloads.append(feature)
         return {"home": str(provisioned), "version": feature, "release": "jdk-21.0.9+10"}
 
-    monkeypatch.setattr(cli.provision, "provision_jdk", fake_provision)
+    monkeypatch.setattr(provision, "provision_jdk", fake_provision)
     effective["jdk"]["autoProvision"] = True
     found = cli.resolve_jdk(effective, dict(clean_env))
     assert found == {"home": str(provisioned), "version": 21, "source": "provisioned"}
@@ -99,6 +101,6 @@ def test_resolve_jdk_provisions_only_when_asked(
     def failing(install_dir: Path, **_kwargs: Any) -> provision.ProvisionedJdk:
         raise ValueError("no Temurin build for win32/x86_64")
 
-    monkeypatch.setattr(cli.provision, "provision_jdk", failing)
-    monkeypatch.setattr(cli.provision, "provisioned_homes", lambda _d: [])
+    monkeypatch.setattr(provision, "provision_jdk", failing)
+    monkeypatch.setattr(provision, "provisioned_homes", lambda _d: [])
     assert cli.resolve_jdk(effective, dict(clean_env)) is None

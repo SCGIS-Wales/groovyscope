@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from groovyscope import cli, profiles, trust
+from groovyscope.cli import workspace as cli_workspace
 from groovyscope.config import load_config, load_config_with_notes
 
 RISKY = """\
@@ -73,7 +74,7 @@ def test_trust_command(runner: CliRunner, tmp_path: Path, isolated_home: Path, m
     refused = runner.invoke(cli.main, ["--root", str(tmp_path), "trust"])
     assert refused.exit_code == 2 and "refused without a terminal" in refused.output
     assert trust.trusted_roots(isolated_home) == []
-    monkeypatch.setattr(cli, "_IS_TTY", lambda: True)
+    monkeypatch.setattr(cli_workspace, "_IS_TTY", lambda: True)
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     agent = runner.invoke(cli.main, ["--root", str(tmp_path), "trust"])
     assert agent.exit_code == 2 and "KIRO_SESSION_ID is set" in agent.output
