@@ -214,16 +214,19 @@ Every reference and definition carries one of three confidences. `STATIC`: the c
 pins the target. `INFERRED`: a single candidate matched on an inferred receiver type (a `def` initialised
 with a constructor, a call to a method whose overloads of that arity declare one return type, a call to a
 closure property whose every return constructs one type, a chained call, a type matched by simple name when
-the compiler could not resolve it).
-`DYNAMIC_UNKNOWN`: matched by name only. Rename refuses when any reference is `DYNAMIC_UNKNOWN`; impact
-analysis (Stage 4) will report those sites for manual review.
+the compiler could not resolve it, an implicit `this` call inside a closure answered by its owner or its
+`@DelegatesTo` type, a workspace extension or `@Category` method, an overload picked by argument types).
+`DYNAMIC_UNKNOWN`: matched by name only, or several targets remain (overloads the argument types cannot tell
+apart, a closure whose owner and delegate both declare the method). Rename refuses when any reference is
+`DYNAMIC_UNKNOWN`; impact analysis reports those sites for manual review.
 
 ## Lint, type-check and format (Stage 3)
 
 - **Lint.** CodeNarc 4 runs in process on one document at a time (`StringSourceAnalyzer`), so unsaved
-  editor text is linted too. Rule sets come from `lint.ruleset` / `lint.jenkinsRuleset` or the bundled
-  profiles, with `lint.rules` applied on top (a rule switched off or given another priority); Jenkinsfiles
-  and `vars/` scripts get the Jenkins profile automatically. Findings are cached by document content hash and
+  editor text is linted too. Rule sets come from `lint.ruleset` / `lint.jenkinsRuleset` /
+  `lint.gradleRuleset` or the bundled profiles, with `lint.rules` applied on top (a rule switched off or given
+  another priority); Jenkinsfiles, `vars/` scripts and a shared library's `src/` get the Jenkins profile and
+  `*.gradle` build scripts the Gradle profile automatically. Findings are cached by document content hash and
   profile, published as diagnostics (`lint.publish`, down to `lint.publishMaxPriority`; `check` and `review`
   are never filtered), served through pull diagnostics, and exposed as quick fixes where the fix is purely
   textual (unnecessary semicolon, trailing whitespace, extra blank line). Every diagnostic a fix can repair
@@ -232,7 +235,13 @@ analysis (Stage 4) will report those sites for manual review.
 - **Type-check.** `check --include typecheck` compiles the workspace to `INSTRUCTION_SELECTION` (still no
   bytecode) in a separate unit with a customizer that appends the configured Groovy 6 checkers
   (`NullChecker`, `SqlInjectionChecker`, `PurityChecker` + `ModifiesChecker`) to the `extensions` of every
-  existing `@CompileStatic` or `@TypeChecked` annotation. Dynamic code is never forced into static typing.
+  existing `@CompileStatic` or `@TypeChecked` annotation. The customizer runs at canonicalization, so an import
+  alias (`import groovy.transform.CompileStatic as Static`) and an `@AnnotationCollector` that bundles either
+  annotation count too. Dynamic code is never forced into static typing, except by the project's own compiler
+  configuration script (`typecheck.configScript`, by default `config/groovyc/compile-static.groovy`), which runs
+  as `groovyc --configscript` would, and only in a trusted workspace. A whole-workspace `check` ends with one
+  information note, `typecheck-coverage`, naming how many classes stayed dynamic and whether a configuration
+  script was left unapplied.
 - **Format.** `format.engine: basic` is bundled: leading tabs to spaces, trailing whitespace removed, blank
   runs capped, exactly one final newline, and semicolons removed only on lines CodeNarc flagged. It never
   re-flows code. `greclipse` is accepted by the schema but refused by the engine: the Groovy Eclipse
@@ -274,10 +283,12 @@ modification time) with the one taken at the last compile and recompiles when it
 The call graph is derived from the index: every method-name, static-call and constructor-call entry is
 resolved and becomes an edge from its container to each candidate target with the resolver's confidence.
 Impact analysis walks that graph. Direct callers are the static and inferred edges into the declaration;
-transitive callers follow static and inferred edges only, up to five levels; `DYNAMIC_UNKNOWN` edges are
-listed separately as sites to review and never counted as resolved. Overrides are same-name, same-arity
-methods in subclasses and superclasses. Tests are callers living under `src/test` or in classes named
-`*Spec` / `*Test`. The risk score is a transparent heuristic (8 per direct caller, 2 per transitive, 10 per
+transitive callers follow static and inferred edges only, up to five levels, and list the `DYNAMIC_UNKNOWN`
+edges they meet without following them; direct `DYNAMIC_UNKNOWN` edges are listed separately as sites to
+review and never counted as resolved. Overrides are same-name methods with the same erased parameter types in
+subclasses and superclasses (a generic parameter matches any type). Tests are callers living under `src/test`
+or in classes named `*Spec` / `*Test`; a test reaching the symbol only through a `DYNAMIC_UNKNOWN` edge is a
+possible test, listed with that confidence, and it suppresses the "no test" advice. The risk score is a transparent heuristic (8 per direct caller, 2 per transitive, 10 per
 override, 15 per dynamic site, 10 for public, 10 for rename or delete) capped at 100 and mapped to low,
 medium or high. For classes, fields and properties, "callers" are the references that resolve to them.
 

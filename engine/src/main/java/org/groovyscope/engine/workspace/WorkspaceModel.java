@@ -156,8 +156,56 @@ public final class WorkspaceModel {
         return discover(config.javaSources());
     }
 
+    /** The source root folders that exist inside the workspace (a shared library's {@code src/} included). */
+    public List<Path> sourceRootPaths() {
+        List<Path> roots = new ArrayList<>();
+        for (String relative : config.sourceRoots()) {
+            Path candidate = root.resolve(relative).normalize();
+            if (contains(candidate) && Files.isDirectory(candidate) && !roots.contains(candidate)) {
+                roots.add(candidate);
+            }
+        }
+        Path librarySources = root.resolve("src");
+        if (isSharedLibrary(root) && Files.isDirectory(librarySources) && !roots.contains(librarySources)) {
+            roots.add(librarySources);
+        }
+        return roots;
+    }
+
+    /**
+     * A Jenkins shared library: {@code vars/} beside {@code src/} or {@code resources/}, where {@code src/} holds
+     * packages directly (Jenkins puts it on the classpath). A {@code src/main} or {@code src/test} folder means a
+     * Gradle or Maven project that merely has a {@code vars/} folder.
+     */
+    public static boolean isSharedLibrary(Path folder) {
+        Path sources = folder.resolve("src");
+        boolean buildLayout = Files.isDirectory(sources.resolve("main")) || Files.isDirectory(sources.resolve("test"));
+        return Files.isDirectory(folder.resolve("vars")) && !buildLayout
+                && (Files.isDirectory(sources) || Files.isDirectory(folder.resolve("resources")));
+    }
+
+    /** True when {@code file} lies in the {@code src/} of a shared library at or below {@code root}. */
+    public static boolean inSharedLibrarySource(Path file, Path root) {
+        Path stop = root.toAbsolutePath().normalize();
+        for (Path folder = file.toAbsolutePath().normalize().getParent(); folder != null; folder = folder.getParent()) {
+            Path parent = folder.getParent();
+            if (folder.getFileName() != null && folder.getFileName().toString().equals("src") && parent != null
+                    && isSharedLibrary(parent)) {
+                return true;
+            }
+            if (folder.equals(stop)) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     private List<Path> discover(boolean withJava) {
         List<Path> roots = new ArrayList<>();
+        Path librarySources = root.resolve("src");
+        if (isSharedLibrary(root) && Files.isDirectory(librarySources)) {
+            roots.add(librarySources); // a shared library's classes, whatever workspace.sourceRoots says
+        }
         for (String relative : config.sourceRoots()) {
             Path candidate = root.resolve(relative).normalize();
             if (!contains(candidate)) {
@@ -190,6 +238,17 @@ public final class WorkspaceModel {
                 }
                 return true;
             }));
+        }
+        if (Files.isDirectory(root.resolve("vars"))) {
+            // A shared library's own pipeline (Jenkinsfile, Jenkinsfile.prod) sits at the root, outside every root.
+            try (java.util.stream.Stream<Path> top = Files.list(root)) {
+                top.filter(path -> path.getFileName().toString().startsWith("Jenkinsfile"))
+                        .filter(path -> Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .filter(path -> !isExcluded(path))
+                        .forEach(files::add);
+            } catch (java.io.IOException e) {
+                FileWalker.reportOnce("list:" + root, "cannot list " + root + ": " + e.getMessage());
+            }
         }
         List<Path> sorted = new ArrayList<>(files);
         Collections.sort(sorted);

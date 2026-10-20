@@ -20,7 +20,7 @@ ruleset {
     ruleset('rulesets/design.xml') {
         exclude 'Instanceof'
         exclude 'NestedForLoop'
-        exclude 'ImplementationAsType'
+        'ImplementationAsType' { priority = 3 }   // advice: declare List, not ArrayList
     }
     ruleset('rulesets/dry.xml') {
         exclude 'DuplicateNumberLiteral'
@@ -36,6 +36,13 @@ ruleset {
     ruleset('rulesets/groovyism.xml')
     ruleset('rulesets/imports.xml')
     ruleset('rulesets/jdbc.xml')
+    ruleset('rulesets/junit.xml') {
+        // Spock specifications assert in their then: and expect: blocks and name features with strings
+        'JUnitTestMethodWithoutAssert' { doNotApplyToFilesMatching = '.*Spec\\.groovy' }
+        'JUnitPublicNonTestMethod' { doNotApplyToFilesMatching = '.*Spec\\.groovy' }
+        'JUnitPublicProperty' { doNotApplyToFilesMatching = '.*Spec\\.groovy' }
+        'JUnitPublicField' { doNotApplyToFilesMatching = '.*Spec\\.groovy' }
+    }
     ruleset('rulesets/logging.xml')
     ruleset('rulesets/naming.xml') {
         exclude 'FactoryMethodName'

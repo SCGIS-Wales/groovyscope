@@ -42,6 +42,24 @@ class EngineConfigSpec extends Specification {
         config.trust()
     }
 
+    def 'each lint profile takes its own rule set path'() {
+        when:
+        def lint = EngineConfig.fromJson('''
+            {"lint": {"ruleset": "a.groovy", "jenkinsRuleset": "j.groovy", "gradleRuleset": "g.groovy"}}
+        ''').lint()
+
+        then:
+        [lint.ruleset(), lint.jenkinsRuleset(), lint.gradleRuleset()] == ['a.groovy', 'j.groovy', 'g.groovy']
+        EngineConfig.DEFAULTS.lint().gradleRuleset() == null
+    }
+
+    def 'typecheck.configScript defaults to the conventional path'() {
+        expect:
+        EngineConfig.DEFAULTS.typecheck().configScript() == 'config/groovyc/compile-static.groovy'
+        EngineConfig.fromJson('{"typecheck": {"configScript": "build/cs.groovy"}}').typecheck().configScript() ==
+                'build/cs.groovy'
+    }
+
     def 'diagnostics delivery settings are parsed, normalised and defaulted'() {
         expect:
         EngineConfig.DEFAULTS.diagnostics() == new EngineConfig.Diagnostics('open', 300)
@@ -90,5 +108,17 @@ class EngineConfigSpec extends Specification {
         'Foo.java'            | false
         'README.md'           | false
         'groovy'              | false
+    }
+
+    def 'the NullChecker mode is off, lenient or strict, nothing else (Q-17)'() {
+        when:
+        EngineConfig.fromJson('{"typecheck":{"nullChecker":"Strict "}}')
+
+        then:
+        def refused = thrown(IllegalArgumentException)
+        refused.message.contains('typecheck.nullChecker')
+
+        expect:
+        ['off', 'lenient', 'strict'].every { EngineConfig.fromJson("{\"typecheck\":{\"nullChecker\":\"${it}\"}}").typecheck().nullChecker() == it }
     }
 }

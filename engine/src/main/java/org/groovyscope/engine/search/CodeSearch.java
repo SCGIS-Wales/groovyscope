@@ -70,8 +70,10 @@ import org.codehaus.groovy.ast.stmt.TryCatchStatement;
 import org.codehaus.groovy.ast.stmt.WhileStatement;
 import org.codehaus.groovy.control.SourceUnit;
 import org.groovyscope.engine.index.AstRanges;
+import org.groovyscope.engine.index.NodeEntry;
 import org.groovyscope.engine.index.TextLines;
 import org.groovyscope.engine.model.Range;
+import org.groovyscope.engine.semantics.Resolver;
 import org.groovyscope.engine.semantics.TypeNames;
 import org.groovyscope.engine.workspace.WorkspaceModel;
 
@@ -172,12 +174,14 @@ public final class CodeSearch {
 
     /**
      * Matches in the given documents (all compiled Groovy documents when {@code uris} is empty), sorted by document
-     * and position.
+     * and position. Call receivers are typed by {@code resolver}, the same inference navigation uses; with a type
+     * filter, a call whose receiver type is unknown still matches when its name is given, with the fact
+     * {@code receiverKnown: false}.
      *
      * @throws IllegalArgumentException for an unknown kind or modifier, or a pattern that does not compile
      */
     public static List<Match> find(Map<String, ModuleNode> modules, Function<String, TextLines> lines,
-            Collection<String> uris, Query query) {
+            Collection<String> uris, Query query, Resolver resolver) {
         if (query == null || query.kind() == null || !KINDS.contains(query.kind())) {
             throw new IllegalArgumentException("unknown kind " + (query == null ? null : query.kind())
                     + "; expected one of " + String.join(", ", KINDS));
@@ -194,7 +198,7 @@ public final class CodeSearch {
         Pattern pattern = query.pattern() == null || query.pattern().isEmpty() ? null : Pattern.compile(query.pattern());
         List<Match> matches = new ArrayList<>();
         for (String uri : targets(modules, uris)) {
-            Finder finder = new Finder(uri, lines.apply(uri), query, pattern, wanted, matches);
+            Finder finder = new Finder(uri, lines.apply(uri), query, pattern, wanted, matches, resolver);
             for (ClassNode classNode : modules.get(uri).getClasses()) {
                 if (!isGenerated(classNode)) {
                     finder.visitClass(classNode);
@@ -336,34 +340,22 @@ public final class CodeSearch {
         return found[0];
     }
 
-    /** The static type of a call receiver when the source declares it, else {@code null}. */
-    static ClassNode receiverType(Expression receiver, ClassNode currentClass) {
-        if (receiver instanceof ClassExpression classExpression) {
-            return classExpression.getType();
-        }
-        if (receiver instanceof VariableExpression variable) {
-            if (variable.isThisExpression()) {
-                return currentClass;
-            }
-            if (variable.isSuperExpression()) {
-                return currentClass == null ? null : currentClass.getUnresolvedSuperClass(false);
-            }
+    /**
+     * The type the source names for a receiver the resolver cannot use (a class missing from the classpath and the
+     * workspace): its declared, cast or constructed type, matched by name only; {@code null} when it names none.
+     */
+    static ClassNode declaredType(Expression receiver) {
+        ClassNode type = null;
+        if (receiver instanceof VariableExpression variable && !variable.isThisExpression()
+                && !variable.isSuperExpression()) {
             Variable accessed = variable.getAccessedVariable();
-            return accessed == null || accessed.isDynamicTyped() ? null : accessed.getOriginType();
+            type = accessed == null || accessed.isDynamicTyped() ? null : accessed.getOriginType();
+        } else if (receiver instanceof ConstructorCallExpression constructor) {
+            type = constructor.getType();
+        } else if (receiver instanceof CastExpression cast) {
+            type = cast.getType();
         }
-        if (receiver instanceof ConstructorCallExpression constructor) {
-            return constructor.getType();
-        }
-        if (receiver instanceof CastExpression cast) {
-            return cast.getType();
-        }
-        if (receiver instanceof ConstantExpression constant && constant.getValue() instanceof String) {
-            return ClassHelper.STRING_TYPE;
-        }
-        if (receiver instanceof GStringExpression) {
-            return ClassHelper.GSTRING_TYPE;
-        }
-        return null;
+        return type == null || ClassHelper.isObjectType(type) || ClassHelper.isDynamicTyped(type) ? null : type;
     }
 
     static String shorten(String text, int limit) {
@@ -419,11 +411,14 @@ public final class CodeSearch {
         private final Pattern pattern;
         private final int wantedModifiers;
         private final List<Match> out;
+        private final Resolver resolver;
         private final Set<ASTNode> reported = Collections.newSetFromMap(new IdentityHashMap<>());
         private ClassNode currentClass;
         private MethodNode currentMethod;
 
-        Finder(String uri, TextLines lines, Query query, Pattern pattern, int wantedModifiers, List<Match> out) {
+        Finder(String uri, TextLines lines, Query query, Pattern pattern, int wantedModifiers, List<Match> out,
+                Resolver resolver) {
+            this.resolver = resolver;
             this.uri = uri;
             this.lines = lines;
             this.query = query;
@@ -734,11 +729,16 @@ public final class CodeSearch {
         public void visitMethodCallExpression(MethodCallExpression call) {
             if (is("call")) {
                 String name = call.getMethodAsString();
-                if (name != null && (query.name() == null || query.name().equals(name))
-                        && (query.type() == null || query.type().isBlank()
-                                || typeMatches(receiverType(call.getObjectExpression(), currentClass), query.type()))) {
+                if (name != null && (query.name() == null || query.name().equals(name))) {
                     String receiver = call.isImplicitThis() ? "" : shorten(call.getObjectExpression().getText(), 40) + ".";
-                    report(call, null, "call " + receiver + name);
+                    if (query.type() == null || query.type().isBlank()) {
+                        report(call, null, "call " + receiver + name);
+                    } else {
+                        ClassNode type = receiverOf(call);
+                        if (type != null ? typeMatches(type, query.type()) : query.name() != null) {
+                            report(call, null, "call " + receiver + name, Map.of("receiverKnown", type != null));
+                        }
+                    }
                 }
             }
             call.getObjectExpression().visit(this);
@@ -746,6 +746,13 @@ public final class CodeSearch {
                 call.getMethod().visit(this);
             }
             call.getArguments().visit(this);
+        }
+
+        /** The receiver's type as the resolver infers it, else the type the source names; null when unknown. */
+        private ClassNode receiverOf(MethodCallExpression call) {
+            NodeEntry entry = new NodeEntry(uri, call, NodeEntry.Role.OTHER, null, null, currentClass, currentMethod);
+            ClassNode type = resolver.receiverOf(call.getObjectExpression(), call.isImplicitThis(), entry).type();
+            return type != null ? type : declaredType(call.getObjectExpression());
         }
 
         @Override
@@ -795,6 +802,15 @@ public final class CodeSearch {
 
         @Override
         public void visitGStringExpression(GStringExpression expression) {
+            if (is("string-literal") && expression.getLineNumber() > 0) {
+                boolean found = pattern == null;
+                for (ConstantExpression part : expression.getStrings()) {
+                    found |= part.getValue() instanceof String value && pattern != null && pattern.matcher(value).find();
+                }
+                if (found) {
+                    report(expression, null, "\"" + shorten(expression.getText(), 60) + "\"", Map.of("interpolated", true));
+                }
+            }
             for (Expression value : expression.getValues()) {
                 value.visit(this);
             }

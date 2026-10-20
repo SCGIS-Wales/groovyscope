@@ -702,3 +702,9 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   verified tag whose commit passed CI; integration tests run on JDK 17 to 25; dependency review, zizmor and
   CodeQL for workflows; licence metadata and notices cover the bundled libraries; the Homebrew formula installs
   by hash. Lockfiles, verification metadata and Scorecard wait for the owner (section 13 of the plan).
+- 2026-10-20: Phase 4 of `docs/improvement-plan.md`: analysis fidelity. A Jenkins shared library is linted as
+  Jenkins code throughout and CodeNarc's enhanced rules see workspace classes; Gradle build scripts get their own
+  profile; closure calls, extension methods and overloads resolve with honest confidence, and impact counts tests
+  reached dynamically; the project's compiler configuration script, import aliases and annotation collectors reach
+  the type check, and `check` names the classes left dynamic; GS002, GS003, GS011, GS020 and GS024 are quieter
+  where they were wrong.

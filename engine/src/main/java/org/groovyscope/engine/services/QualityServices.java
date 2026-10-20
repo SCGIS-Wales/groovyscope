@@ -66,6 +66,7 @@ public final class QualityServices {
     /** Profile names accepted by {@code check}. */
     public static final String PROFILE_DEFAULT = "default";
     public static final String PROFILE_JENKINS = "jenkins";
+    public static final String PROFILE_GRADLE = "gradle";
     /** Includes accepted by {@code check}. */
     public static final String INCLUDE_LINT = "lint";
     public static final String INCLUDE_COMPILE = "compile";
@@ -77,6 +78,60 @@ public final class QualityServices {
     private final WorkspaceModel workspace;
     private final LanguageServices navigation;
     private final CodeNarcAnalyzer codeNarc = new CodeNarcAnalyzer();
+    /**
+     * The class loader CodeNarc's enhanced rules resolve types through (Q-05): the workspace's source roots, so a
+     * rule sees a superclass the workspace declares, and in a trusted workspace its classpath too (jars can bring
+     * AST transformations, which only trust lets run). One per published snapshot; the one before the previous is
+     * closed, so a lint still running on the previous keeps working.
+     */
+    private record LintLoader(long version, groovy.lang.GroovyClassLoader loader) {
+    }
+
+    private final java.util.concurrent.atomic.AtomicReference<LintLoader> lintLoader =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<LintLoader> previousLintLoader =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    ClassLoader lintLoader() {
+        long version = navigation.currentSnapshot().version();
+        LintLoader current = lintLoader.get();
+        if (current != null && current.version() == version) {
+            return current.loader();
+        }
+        groovy.lang.GroovyClassLoader loader = new groovy.lang.GroovyClassLoader(
+                new org.groovyscope.engine.compile.WorkspaceParentClassLoader(
+                        org.groovyscope.engine.compile.GroovyCompiler.class.getClassLoader()));
+        for (java.nio.file.Path root : workspace.sourceRootPaths()) {
+            loader.addClasspath(root.toString());
+        }
+        if (workspace.config().trust()) {
+            for (java.nio.file.Path entry : workspace.classpath()) {
+                try {
+                    loader.addURL(entry.toUri().toURL());
+                } catch (java.net.MalformedURLException e) {
+                    org.groovyscope.engine.log.EngineLog.debug("lint classpath entry %s skipped: %s", entry, e);
+                }
+            }
+        }
+        LintLoader fresh = new LintLoader(version, loader);
+        if (!lintLoader.compareAndSet(current, fresh)) {
+            closeQuietly(loader);
+            return lintLoader.get().loader();
+        }
+        LintLoader retired = previousLintLoader.getAndSet(current);
+        if (retired != null) {
+            closeQuietly(retired.loader());
+        }
+        return loader;
+    }
+
+    private static void closeQuietly(groovy.lang.GroovyClassLoader loader) {
+        try {
+            loader.close();
+        } catch (java.io.IOException e) {
+            // the jars are released on GC at the latest
+        }
+    }
     private final TypeCheckAnalyzer typeChecker = new TypeCheckAnalyzer();
     private final org.groovyscope.engine.compile.GroovyCompiler compiler = new org.groovyscope.engine.compile.GroovyCompiler();
     private final Map<String, LintEntry> lintCache = new ConcurrentHashMap<>();
@@ -96,7 +151,7 @@ public final class QualityServices {
     private record PracticeEntry(long version, List<PracticeFinder.Practice> practices) {
     }
 
-    private record TypeCheckEntry(long version, Map<String, List<Diagnostic>> typed) {
+    private record TypeCheckEntry(long version, Map<String, List<Diagnostic>> typed, List<String> dynamic) {
     }
 
     private volatile TypeCheckEntry typeCache;
@@ -117,12 +172,12 @@ public final class QualityServices {
      * arrive while it runs join it; it checks the snapshot's own sources, so its result matches the version it is
      * cached under.
      */
-    private Map<String, List<Diagnostic>> typeCheckAll() {
+    private TypeCheckEntry typeCheckAll() {
         while (true) {
             org.groovyscope.engine.services.Snapshot current = navigation.snapshot();
             TypeCheckEntry cached = typeCache;
             if (cached != null && cached.version() == current.version()) {
-                return cached.typed();
+                return cached;
             }
             org.groovyscope.engine.concurrent.MemoryGuard.requireHeadroom();
             CompletableFuture<TypeCheckEntry> job;
@@ -136,11 +191,11 @@ public final class QualityServices {
                 job = typeJob;
             }
             if (owner) {
-                return runTypeCheck(current, job).typed();
+                return runTypeCheck(current, job);
             }
             TypeCheckEntry joined = joinTypeCheck(job);
             if (joined != null) {
-                return joined.typed();
+                return joined;
             }
             // the owner was cancelled: this request runs the check itself on the next pass
         }
@@ -151,10 +206,11 @@ public final class QualityServices {
         try {
             long started = System.nanoTime();
             typeChecksRun.incrementAndGet();
-            Map<String, List<Diagnostic>> typed = typeChecker.analyze(current.result().sources(),
-                    workspace.classpath(), workspace.config().trust(), workspace.config().typecheck(),
-                    workspace.config().groovy(), current.result().unresolvedUris());
-            TypeCheckEntry entry = new TypeCheckEntry(current.version(), typed);
+            TypeCheckAnalyzer.Result checked = typeChecker.check(current.result().sources(), workspace.classpath(),
+                    workspace.config().trust(), workspace.config().typecheck(), workspace.config().groovy(),
+                    current.result().unresolvedUris(), configScript());
+            Map<String, List<Diagnostic>> typed = checked.diagnostics();
+            TypeCheckEntry entry = new TypeCheckEntry(current.version(), typed, checked.dynamicClasses());
             synchronized (typeLock) {
                 // A check of an older snapshot finishing late never replaces a newer one.
                 if (typeCache == null || typeCache.version() < entry.version()) {
@@ -175,6 +231,15 @@ public final class QualityServices {
                 }
             }
         }
+    }
+
+    /**
+     * The project's compiler configuration script ({@code typecheck.configScript}, relative to the workspace root),
+     * or {@code null} when there is no such file.
+     */
+    java.nio.file.Path configScript() {
+        java.nio.file.Path script = workspace.root().resolve(workspace.config().typecheck().configScript()).normalize();
+        return java.nio.file.Files.isRegularFile(script) ? script : null;
     }
 
     /** Waits for another request's type check, polling this request's cancel flag; null when that one was cancelled. */
@@ -225,15 +290,32 @@ public final class QualityServices {
         this.navigation = navigation;
     }
 
-    /** {@code jenkins} for Jenkinsfiles and shared-library {@code vars} scripts, {@code default} otherwise. */
-    public static String profileFor(String uri) {
+    /**
+     * The profile of a file in this workspace: {@link #profileByName}, and {@code jenkins} as well for the {@code src}
+     * classes of a Jenkins shared library (a folder holding {@code vars/} beside {@code src/} or {@code resources/}),
+     * which run on the same CPS runtime as its {@code vars} scripts.
+     */
+    public String profileFor(String uri) {
+        String byName = profileByName(uri);
+        if (!PROFILE_DEFAULT.equals(byName)) {
+            return byName;
+        }
+        java.nio.file.Path file = WorkspaceModel.toPath(uri);
+        return file != null && WorkspaceModel.inSharedLibrarySource(file, workspace.root()) ? PROFILE_JENKINS : byName;
+    }
+
+    /**
+     * {@code jenkins} for Jenkinsfiles and shared-library {@code vars} scripts, {@code gradle} for Gradle build
+     * scripts ({@code *.gradle}), {@code default} otherwise.
+     */
+    public static String profileByName(String uri) {
         String path = uri.replace('\\', '/');
         int slash = path.lastIndexOf('/');
         String name = slash >= 0 ? path.substring(slash + 1) : path;
         if (name.startsWith("Jenkinsfile") || path.contains("/vars/")) {
             return PROFILE_JENKINS;
         }
-        return PROFILE_DEFAULT;
+        return name.endsWith(".gradle") ? PROFILE_GRADLE : PROFILE_DEFAULT;
     }
 
     /** The rule set for a profile, from configuration or the bundled copies. */
@@ -242,6 +324,10 @@ public final class QualityServices {
         if (PROFILE_JENKINS.equals(profile)) {
             return codeNarc.ruleSet(lint.jenkinsRuleset() == null ? CodeNarcAnalyzer.BUNDLED_JENKINS : lint.jenkinsRuleset(),
                     workspace.root(), CodeNarcAnalyzer.BUNDLED_JENKINS, lint.rules());
+        }
+        if (PROFILE_GRADLE.equals(profile)) {
+            return codeNarc.ruleSet(lint.gradleRuleset() == null ? CodeNarcAnalyzer.BUNDLED_GRADLE : lint.gradleRuleset(),
+                    workspace.root(), CodeNarcAnalyzer.BUNDLED_GRADLE, lint.rules());
         }
         return codeNarc.ruleSet(lint.ruleset() == null ? CodeNarcAnalyzer.BUNDLED_DEFAULT : lint.ruleset(),
                 workspace.root(), CodeNarcAnalyzer.BUNDLED_DEFAULT, lint.rules());
@@ -259,8 +345,8 @@ public final class QualityServices {
         if (cached != null && cached.key.equals(key)) {
             diagnostics = cached.diagnostics;
         } else {
-            diagnostics = codeNarc.analyze(uri, text, ruleSet(chosen));
-            lintCache.put(uri, new LintEntry(key, List.copyOf(diagnostics)));
+            diagnostics = List.copyOf(codeNarc.analyze(uri, text, ruleSet(chosen), lintLoader()));
+            lintCache.put(uri, new LintEntry(key, diagnostics));
         }
         Optional<Profile> governing = governing(uri);
         if (governing.isEmpty() || governing.get().codenarcDisable().isEmpty()) {
@@ -662,14 +748,28 @@ public final class QualityServices {
                 }
             }
         }
-        if (wanted.contains(INCLUDE_TYPECHECK) && anyMayNeedTypeCheck(targets, sources)) {
-            Map<String, List<Diagnostic>> typed = typeCheckAll();
+        java.nio.file.Path script = wanted.contains(INCLUDE_TYPECHECK) ? configScript() : null;
+        boolean scripted = script != null && workspace.config().trust();
+        List<String> dynamic = List.of();
+        if (wanted.contains(INCLUDE_TYPECHECK) && (scripted || anyMayNeedTypeCheck(targets, sources))) {
+            TypeCheckEntry entry = typeCheckAll();
+            Map<String, List<Diagnostic>> typed = entry.typed();
+            dynamic = entry.dynamic();
             for (String uri : targets) {
                 for (Diagnostic diagnostic : profileCheckerPolicy(uri, typed.getOrDefault(uri, List.of()))) {
                     if (!result.get(uri).contains(diagnostic)) {
                         result.get(uri).add(diagnostic);
                     }
                 }
+            }
+        }
+        if (wanted.contains(INCLUDE_TYPECHECK) && (uris == null || uris.isEmpty()) && !result.isEmpty()) {
+            if (dynamic.isEmpty() && !anyMayNeedTypeCheck(targets, sources) && !scripted) {
+                dynamic = TypeCheckAnalyzer.dynamicClasses(navigation.snapshot().result().modules().values());
+            }
+            Diagnostic coverage = coverage(result.keySet().iterator().next(), dynamic, scripted ? null : script);
+            if (coverage != null) {
+                result.get(coverage.uri()).add(coverage);
             }
         }
         for (Map.Entry<String, List<Diagnostic>> entry : joined(linted).entrySet()) {
@@ -735,12 +835,37 @@ public final class QualityServices {
      * type-check compile (the costliest step of a single-file {@code check} after an edit).
      */
     static boolean anyMayNeedTypeCheck(Collection<String> targets, Map<String, String> sources) {
+        Set<String> collectors = TypeCheckAnalyzer.staticCollectors(sources);
         for (String uri : targets) {
-            if (TypeCheckAnalyzer.mayNeedTypeCheck(sources.get(uri))) {
+            if (TypeCheckAnalyzer.mayNeedTypeCheck(sources.get(uri), collectors)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Most dynamic classes a coverage note names. */
+    static final int COVERAGE_NAMES = 5;
+
+    /**
+     * The whole-workspace note on what the type check could not see: the classes it left dynamic, and a
+     * configuration script left unapplied because the workspace is not trusted. {@code null} when there is neither.
+     */
+    static Diagnostic coverage(String uri, List<String> dynamic, java.nio.file.Path unappliedScript) {
+        List<String> notes = new ArrayList<>();
+        if (!dynamic.isEmpty()) {
+            List<String> named = dynamic.subList(0, Math.min(COVERAGE_NAMES, dynamic.size()));
+            notes.add(dynamic.size() + (dynamic.size() == 1 ? " class is" : " classes are") + " dynamic, not type checked ("
+                    + String.join(", ", named) + (dynamic.size() > named.size() ? ", ..." : "") + "): annotate them "
+                    + "@CompileStatic or @TypeChecked, or apply @CompileStatic to all through a compiler configuration "
+                    + "script (typecheck.configScript)");
+        }
+        if (unappliedScript != null) {
+            notes.add(unappliedScript.getFileName() + " is not applied until the workspace is trusted (groovyscope "
+                    + "trust): it is code from the repository");
+        }
+        return notes.isEmpty() ? null : new Diagnostic(uri, Range.of(0, 0, 0, 1), Diagnostic.Severity.INFORMATION,
+                TypeCheckAnalyzer.SOURCE, "typecheck-coverage", String.join("; ", notes));
     }
 
     /** The formatting edits for one document (empty when it is already formatted). */

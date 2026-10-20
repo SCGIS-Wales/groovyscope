@@ -108,9 +108,12 @@ class Pricing {
 - **Elvis uses Groovy truth,** so `count ?: 10` replaces a valid `0`. GS002 leaves `name ?: ''`, `count ?: 0`,
   `items ?: []` and `options ?: [:]` alone: the default is the same empty value, so only null changes. It also
   leaves an Elvis passed straight to a parser that rejects empty input (`readTree(body ?: '{}')`,
-  `parseText`, `parseInt`): defaulting empty and null alike is deliberate there. Its safe fix
-  (`x != null ? x : default`) applies when the tested value is a plain variable.
-- **Safe navigation into a primitive** fails when the receiver is null. Supply a default: `int n = list?.size() ?: 0`.
+  `parseText`, `parseInt`): defaulting empty and null alike is deliberate there. On a string or a collection
+  it is information, since the empty value there is often absent in all but name; on a number it stays a
+  warning. Its fix (`x != null ? x : default`) applies when the tested value is a plain variable.
+- **Safe navigation into a primitive** fails when the receiver is null, whether the result is stored or returned
+  (`int size() { list?.size() }`). Supply a default: `int n = list?.size() ?: 0`. GS003 leaves `boolean` alone:
+  Groovy turns null into false there.
 
 ```groovy
 // BAD
@@ -379,7 +382,8 @@ sql.rows('SELECT * FROM users WHERE name = ?', [name])
 | 6.x | `org.spockframework:spock-core:2.5-groovy-6.0`\[16\] |
 
 **Behaviour changes:**
-- Since 2.4, `.with {}` is no longer an implicit condition; use Spock `with(obj) {}`.\[39\]
+- Groovy's `.with {}` is a plain method call, not a condition block: the comparisons inside it are never asserted.
+  Use Spock's `with(obj) {}`, which asserts each one (GS011).
 - With 2.5 on Groovy 6, a top level arrow switch in `expect:` or `then:` "is now a statement and is no longer checked".\[15\]
 - An interaction declared on a null target now throws `InvalidSpecException`.\[15\]
 - `spock-core` now depends only on `groovy.jar`, so declare any other Groovy modules yourself.\[39\]
@@ -649,11 +653,11 @@ settle; the agent judges the rest (does `resolveAssignments` resolve assignments
 
 | Code | Checks | Example | Severity |
 |---|---|---|---|
-| GS020 | A boolean field, property, parameter or method whose name is not a question | `boolean valid` → `isValid` | warning |
+| GS020 | A boolean field, parameter or method whose name is not a question (a property is left out: its accessor is already `isX()`) | `private boolean valid` → `isValid` | warning |
 | GS021 | A `get...` method that assigns a field | `getToken()` that refreshes | warning |
 | GS022 | A class named with a verb, or a public method named without one | `class ValidateInput`, `orderTotal()` | info |
 | GS023 | A name that says nothing: `data`, `info`, `tmp`, `obj`, classes ending in `Manager`, `Helper`, `Util` | `def data = ...` | info |
-| GS024 | An abbreviation (`cfg`, `mgr`, `svc`) or a single letter outside a loop or closure | `def mgr = ...` | info |
+| GS024 | An abbreviation (`cfg`, `mgr`, `svc`) or a single letter outside a loop or closure; idiomatic shorthand (`dir`, `doc`, `impl`, `init`, `lib`, `org`, `prev`, `sub`) is allowed | `def mgr = ...` | info |
 | GS025 | A type encoded in the name | `strName`, `m_count`, `arrItems` | info |
 | GS026 | A name that contradicts the type: a `Map` called `...List`, a `String` called `...Count` or `...Date`, a yes/no name on a non-boolean, a plural on a single value | `Map userList` | warning |
 | GS027 | Several verbs for one idea in a class (`get`, `fetch`, `load`), or a verb the project vocabulary replaces | `getUser` and `fetchAccount` | info |

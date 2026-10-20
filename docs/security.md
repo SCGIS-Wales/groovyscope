@@ -31,7 +31,8 @@ repository are ignored, and `doctor` and every command name them:
 |---|---|
 | `workspace.trust` | Global AST transformations from the workspace classpath run inside the engine at compile time |
 | `jdk.home` | groovyscope starts `<jdk.home>/bin/java` |
-| `lint.ruleset`, `lint.jenkinsRuleset` | CodeNarc rule sets are Groovy scripts the engine evaluates; remote (`http(s)`) rule sets are always refused |
+| `lint.ruleset`, `lint.jenkinsRuleset`, `lint.gradleRuleset` | CodeNarc rule sets are Groovy scripts the engine evaluates; remote (`http(s)`) rule sets are always refused |
+| `typecheck.configScript` | A compiler configuration script is Groovy code; the engine runs it only in a trusted workspace, whatever path is set |
 | emulation jars of a runtime profile kept in the repository | The emulation compile loads those jars |
 | `logging.file` | The engine would write wherever it names |
 | `jdk.autoProvision`, `jdk.vendor` | They download and run a JDK |

@@ -196,6 +196,12 @@
             "null"
           ]
         },
+        "gradleRuleset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "failOnPriority": {
           "type": "integer",
           "minimum": 1,
@@ -214,7 +220,10 @@
           "additionalProperties": {
             "oneOf": [
               {
-                "const": "off"
+                "enum": [
+                  "on",
+                  "off"
+                ]
               },
               {
                 "type": "object",
@@ -279,6 +288,10 @@
         },
         "combiner": {
           "type": "boolean"
+        },
+        "configScript": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

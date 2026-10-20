@@ -24,12 +24,15 @@ import org.codehaus.groovy.ast.AnnotatedNode;
 import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ConstructorNode;
+import org.codehaus.groovy.ast.FieldNode;
 import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.Parameter;
+import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
 import org.codehaus.groovy.ast.expr.CastExpression;
 import org.codehaus.groovy.ast.expr.ClassExpression;
+import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.Expression;
@@ -37,6 +40,7 @@ import org.codehaus.groovy.ast.expr.GStringExpression;
 import org.codehaus.groovy.ast.expr.ListExpression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.PropertyExpression;
+import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.groovyscope.engine.index.AstIndex;
 import org.groovyscope.engine.index.AstRanges;
@@ -46,8 +50,9 @@ import org.groovyscope.engine.model.Range;
 
 /**
  * Finds the constructs that defeat static analysis: classes without an explicit typing choice,
- * {@code def} on public API, dynamic-dispatch hooks, metaclass mutation, {@code @Grab}, and runtime
- * evaluation of code. Each finding says what and where, so an agent can review them before relying on
+ * {@code def} on public API, dynamic-dispatch hooks, metaclass mutation, {@code @Grab}, runtime evaluation of
+ * code, computed method names, categories, expandos, mixins, delegates, interceptors and reflective class
+ * loading. Each finding says what and where, so an agent can review them before relying on
  * navigation or impact answers around them.
  */
 public final class DynamicCodeFinder {
@@ -64,6 +69,10 @@ public final class DynamicCodeFinder {
             "getProperty", "setProperty", "$static_methodMissing", "$static_propertyMissing");
     static final Set<String> EVAL_CLASSES = Set.of("groovy.util.Eval", "groovy.lang.GroovyShell", "groovy.lang.GroovyClassLoader",
             "groovy.lang.GroovyCodeSource", "groovy.text.GStringTemplateEngine", "groovy.text.SimpleTemplateEngine");
+    static final Set<String> MIXIN_ANNOTATIONS = Set.of("groovy.lang.Mixin");
+    static final Set<String> DELEGATE_ANNOTATIONS = Set.of("groovy.lang.Delegate");
+    static final String INTERCEPTABLE = "groovy.lang.GroovyInterceptable";
+    static final Set<String> EXPANDO_CLASSES = Set.of("groovy.util.Expando", "groovy.lang.Expando");
 
     private DynamicCodeFinder() {
     }
@@ -97,16 +106,27 @@ public final class DynamicCodeFinder {
             }
         } else if (entry.isDeclaration() && node instanceof MethodNode method) {
             inspectMethod(index, entry, method, out);
+        } else if (entry.isDeclaration() && (node instanceof PropertyNode || node instanceof FieldNode)) {
+            inspectMember(index, entry, (AnnotatedNode) node, out);
         } else if (entry.role() == NodeEntry.Role.PROPERTY_NAME && entry.parent() instanceof PropertyExpression property
                 && "metaClass".equals(property.getPropertyAsString())) {
             out.add(new Finding("metaclass-mutation", location(entry), describe(entry),
                     "metaClass access: methods or properties added at runtime are invisible to static analysis"));
         } else if (entry.role() == NodeEntry.Role.METHOD_NAME && entry.parent() instanceof MethodCallExpression call) {
             inspectCall(entry, call, out);
+        } else if (entry.role() == NodeEntry.Role.OTHER && node instanceof MethodCallExpression call
+                && !(call.getMethod() instanceof ConstantExpression)) {
+            out.add(new Finding("dynamic-method-name", location(entry), describe(entry),
+                    "the method name is computed at runtime, so no declaration can be matched to this call"));
         } else if (entry.role() == NodeEntry.Role.CONSTRUCTOR_CALL && node instanceof ConstructorCallExpression call
-                && call.getType() != null && EVAL_CLASSES.contains(call.getType().getName())) {
-            out.add(new Finding("dynamic-evaluation", location(entry), describe(entry),
-                    "code evaluated at runtime through " + call.getType().getNameWithoutPackage()));
+                && call.getType() != null) {
+            if (EVAL_CLASSES.contains(call.getType().getName())) {
+                out.add(new Finding("dynamic-evaluation", location(entry), describe(entry),
+                        "code evaluated at runtime through " + call.getType().getNameWithoutPackage()));
+            } else if (EXPANDO_CLASSES.contains(call.getType().getName())) {
+                out.add(new Finding("expando", location(entry), describe(entry),
+                        "an Expando takes properties and methods added at runtime, invisible to static analysis"));
+            }
         }
     }
 
@@ -117,6 +137,17 @@ public final class DynamicCodeFinder {
         if (!hasAnnotation(classNode, STATIC_ANNOTATIONS) && !hasAnnotation(classNode, DYNAMIC_ANNOTATIONS)) {
             out.add(new Finding("untyped-class", nameLocation(index, entry, classNode), classNode.getName(),
                     "no @CompileStatic, @TypeChecked or @CompileDynamic: dynamic dispatch by default"));
+        }
+        if (hasAnnotation(classNode, MIXIN_ANNOTATIONS)) {
+            out.add(new Finding("mixin", nameLocation(index, entry, classNode), classNode.getName(),
+                    "@Mixin adds the methods of other classes at runtime"));
+        }
+        for (ClassNode type : Members.hierarchy(classNode)) {
+            if (INTERCEPTABLE.equals(type.getName())) {
+                out.add(new Finding("interceptable", nameLocation(index, entry, classNode), classNode.getName(),
+                        "GroovyInterceptable sends every call through invokeMethod"));
+                break;
+            }
         }
         for (AnnotationNode annotation : classNode.getAnnotations()) {
             if (isGrab(annotation)) {
@@ -157,18 +188,26 @@ public final class DynamicCodeFinder {
         }
     }
 
+    /** A field or property whose {@code @Delegate} forwards the delegate's methods through generated code. */
+    private static void inspectMember(AstIndex index, NodeEntry entry, AnnotatedNode member, List<Finding> out) {
+        boolean delegate = hasAnnotation(member, DELEGATE_ANNOTATIONS)
+                || member instanceof PropertyNode property && property.getField() != null
+                        && hasAnnotation(property.getField(), DELEGATE_ANNOTATIONS);
+        if (delegate) {
+            ClassNode owner = member.getDeclaringClass();
+            String name = member instanceof PropertyNode property ? property.getName() : ((FieldNode) member).getName();
+            out.add(new Finding("delegate", nameLocation(index, entry, member),
+                    (owner == null ? "" : owner.getName()) + "#" + name,
+                    "@Delegate forwards the methods of the delegate's type; they have no declaration in this class"));
+        }
+    }
+
+    /** Calls on a METHOD_NAME entry, whose name is always a constant (a computed name is an OTHER entry). */
     private static void inspectCall(NodeEntry entry, MethodCallExpression call, List<Finding> out) {
         String name = call.getMethodAsString();
-        if (name == null) {
-            return;
-        }
-        ClassNode receiver = null;
-        if (call.getObjectExpression() instanceof ClassExpression classExpression) {
-            receiver = classExpression.getType();
-        } else if (call.getObjectExpression() instanceof VariableExpression variable && !variable.isThisExpression()
-                && variable.getAccessedVariable() == null && Character.isUpperCase(variable.getName().charAt(0))) {
-            receiver = null;
-        }
+        ClassNode receiver = call.getObjectExpression() instanceof ClassExpression classExpression
+                ? classExpression.getType()
+                : null;
         if (receiver != null && EVAL_CLASSES.contains(receiver.getName())) {
             out.add(new Finding("dynamic-evaluation", location(entry), describe(entry),
                     receiver.getNameWithoutPackage() + "." + name + " evaluates code at runtime"));
@@ -180,7 +219,37 @@ public final class DynamicCodeFinder {
         } else if (("invokeMethod".equals(name) || "setMetaClass".equals(name)) && !call.isImplicitThis()) {
             out.add(new Finding("metaclass-mutation", location(entry), describe(entry),
                     name + " bypasses static dispatch"));
+        } else if ("enableGlobally".equals(name) && receiver != null
+                && "groovy.lang.ExpandoMetaClass".equals(receiver.getName())) {
+            out.add(new Finding("metaclass-mutation", location(entry), describe(entry),
+                    "ExpandoMetaClass.enableGlobally() lets every class take methods added at runtime"));
+        } else if ("forName".equals(name) && receiver != null && "java.lang.Class".equals(receiver.getName())) {
+            out.add(new Finding("reflection", location(entry), describe(entry),
+                    "Class.forName loads a class by name at runtime; its uses cannot be followed statically"));
+        } else if ("use".equals(name) && call.isImplicitThis() && isCategoryUse(call.getArguments())) {
+            out.add(new Finding("category-use", location(entry), describe(entry),
+                    "use(Category) adds the category's methods inside the closure at runtime"));
         }
+    }
+
+    /** {@code use(SomeCategory) { ... }} or {@code use(A, B) { ... }}: classes or lists of them, then a closure. */
+    static boolean isCategoryUse(Expression arguments) {
+        if (!(arguments instanceof TupleExpression tuple) || tuple.getExpressions().size() < 2) {
+            return false;
+        }
+        List<Expression> expressions = tuple.getExpressions();
+        if (!(expressions.get(expressions.size() - 1) instanceof ClosureExpression)) {
+            return false;
+        }
+        for (Expression category : expressions.subList(0, expressions.size() - 1)) {
+            boolean classes = category instanceof ClassExpression
+                    || category instanceof ListExpression list
+                            && list.getExpressions().stream().allMatch(ClassExpression.class::isInstance);
+            if (!classes) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static boolean isGrab(AnnotationNode annotation) {

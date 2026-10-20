@@ -59,6 +59,21 @@ class PracticeFinderSpec extends Specification {
         fixed('Numbers.groovy', 'GS003').contains('int n = items?.size() ?: 0')
     }
 
+    def 'Elvis on text or a collection is information; safe navigation into a primitive is found in returns, never for boolean'() {
+        when:
+        def practices = services.quality().practices(uri('Truth.groovy'))
+
+        then:
+        practices.collect { [it.diagnostic().code(), it.diagnostic().range().start().line() + 1, it.diagnostic().severity()] } == [
+            ['GS002', 5, Diagnostic.Severity.INFORMATION], ['GS002', 9, Diagnostic.Severity.INFORMATION],
+            ['GS003', 18, Diagnostic.Severity.WARNING], ['GS003', 22, Diagnostic.Severity.WARNING]]
+        fixed('Truth.groovy', 'GS003').contains('return items?.size() ?: 0')
+
+        and: 'a number keeps the warning'
+        services.quality().practices(uri('Numbers.groovy')).find { it.diagnostic().code() == 'GS002' }
+                .diagnostic().severity() == Diagnostic.Severity.WARNING
+    }
+
     def 'a default that is the same empty value is not an Elvis pitfall'() {
         given:
         def string = org.codehaus.groovy.ast.ClassHelper.STRING_TYPE
@@ -126,6 +141,8 @@ class PracticeFinderSpec extends Specification {
     def 'Spock .with {} in then: is found and rewritten; @Grab in tests is allowed'() {
         expect:
         found('ThingSpec.groovy') == [['GS011', 13]]
+        services.quality().practices(uri('ThingSpec.groovy'))[0].diagnostic().message()
+                .contains("Groovy's .with {} is a plain method call")
         fixed('ThingSpec.groovy', 'GS011').contains("with(thing) { name == 'x' }\n        with(thing) { name == 'x' }")
         found('Clean.groovy').empty
     }

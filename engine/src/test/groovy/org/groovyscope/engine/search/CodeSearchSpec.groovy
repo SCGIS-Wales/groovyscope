@@ -132,7 +132,7 @@ class Shapes {
     }
 
     List<CodeSearch.Match> find(CodeSearch.Query query, Collection<String> uris = []) {
-        CodeSearch.find(snapshot.result().modules(), snapshot.index()::lines, uris, query)
+        CodeSearch.find(snapshot.result().modules(), snapshot.index()::lines, uris, query, snapshot.resolver())
     }
 
     def 'empty blocks of every statement kind are found in a script'() {
@@ -223,18 +223,21 @@ class Shapes {
         CodeSearch.typeMatches(null, ' ')
     }
 
-    def 'receiver types are known only for declared receivers'() {
+    def 'the declared type fallback names only casts, constructions and typed variables'() {
         given:
-        ClassNode current = ClassHelper.make('demo.Current')
+        ClassNode missing = ClassHelper.make('com.example.Missing')
+        def typed = new VariableExpression('x', missing)
+        typed.accessedVariable = typed
 
         expect:
-        CodeSearch.receiverType(VariableExpression.THIS_EXPRESSION, current) == current
-        CodeSearch.receiverType(VariableExpression.SUPER_EXPRESSION, null) == null
-        CodeSearch.receiverType(new VariableExpression('x'), current) == null
-        CodeSearch.receiverType(new ConstantExpression('s'), current) == ClassHelper.STRING_TYPE
-        CodeSearch.receiverType(new ConstantExpression(1), current) == null
-        CodeSearch.receiverType(new CastExpression(ClassHelper.Integer_TYPE, new ConstantExpression(1)), current) == ClassHelper.Integer_TYPE
-        CodeSearch.receiverType(new GStringExpression('$x'), current) == ClassHelper.GSTRING_TYPE
+        CodeSearch.declaredType(VariableExpression.THIS_EXPRESSION) == null
+        CodeSearch.declaredType(VariableExpression.SUPER_EXPRESSION) == null
+        CodeSearch.declaredType(new VariableExpression('x')) == null
+        CodeSearch.declaredType(typed) == missing
+        CodeSearch.declaredType(new ConstantExpression('s')) == null
+        CodeSearch.declaredType(new CastExpression(ClassHelper.Integer_TYPE, new ConstantExpression(1))) == ClassHelper.Integer_TYPE
+        CodeSearch.declaredType(new CastExpression(ClassHelper.OBJECT_TYPE, new ConstantExpression(1))) == null
+        CodeSearch.declaredType(new GStringExpression('$x')) == null
     }
 
     def 'helpers: emptiness, shortening and modifier text'() {

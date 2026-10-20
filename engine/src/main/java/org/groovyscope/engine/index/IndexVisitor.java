@@ -63,6 +63,9 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
     private final Set<ASTNode> implicitReceivers = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private ClassNode currentClass;
     private MethodNode currentMethod;
+    private ClosureExpression currentClosure;
+    // A closure passed as an argument, mapped to the call that receives it (the closure's parent entry).
+    private final java.util.Map<ClosureExpression, Expression> closureCalls = new java.util.IdentityHashMap<>();
 
     /**
      * @param uri the document being indexed
@@ -123,8 +126,10 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
     public void visitClass(ClassNode node) {
         ClassNode previousClass = currentClass;
         MethodNode previousMethod = currentMethod;
+        ClosureExpression previousClosure = currentClosure;
         currentClass = node;
         currentMethod = null;
+        currentClosure = null;
         if (node.isScript() && AstRanges.rangeOf(node) == null) {
             if (recorded.add(node)) {
                 entries.add(new NodeEntry(uri, node, Role.DECLARATION, fullRange, null, null, null));
@@ -147,6 +152,7 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
         } finally {
             currentClass = previousClass;
             currentMethod = previousMethod;
+            currentClosure = previousClosure;
         }
     }
 
@@ -157,7 +163,7 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
             if (range != null) {
                 ClassNode type = annotation.getClassNode();
                 if (type != null && recorded.add(annotation)) {
-                    entries.add(new NodeEntry(uri, type, Role.TYPE_USAGE, range, annotation, currentClass, currentMethod));
+                    entries.add(new NodeEntry(uri, type, Role.TYPE_USAGE, range, annotation, currentClass, currentMethod, currentClosure));
                 }
             }
         }
@@ -237,18 +243,21 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
             record(constant, Role.METHOD_NAME, call);
         }
         record(call, Role.OTHER, null);
+        noteClosureArguments(call.getArguments(), call);
         super.visitMethodCallExpression(call);
     }
 
     @Override
     public void visitStaticMethodCallExpression(StaticMethodCallExpression call) {
         record(call, Role.STATIC_CALL, null);
+        noteClosureArguments(call.getArguments(), call);
         super.visitStaticMethodCallExpression(call);
     }
 
     @Override
     public void visitConstructorCallExpression(ConstructorCallExpression call) {
         record(call, Role.CONSTRUCTOR_CALL, null);
+        noteClosureArguments(call.getArguments(), call);
         if (!call.isSpecialCall()) {
             recordType(call.getType(), null);
         }
@@ -284,7 +293,7 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
         Range range = AstRanges.rangeOf(expression);
         if (range != null && recorded.add(expression)) {
             entries.add(new NodeEntry(uri, expression.getType(), Role.TYPE_USAGE, range, expression, currentClass,
-                    currentMethod));
+                    currentMethod, currentClosure));
         }
         super.visitClassExpression(expression);
     }
@@ -302,8 +311,14 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
                 recordParameter(parameter);
             }
         }
-        record(expression, Role.OTHER, null);
-        super.visitClosureExpression(expression);
+        record(expression, Role.OTHER, closureCalls.get(expression));
+        ClosureExpression previous = currentClosure;
+        currentClosure = expression;
+        try {
+            super.visitClosureExpression(expression);
+        } finally {
+            currentClosure = previous;
+        }
     }
 
     @Override
@@ -340,7 +355,7 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
             Range range = AstRanges.rangeOf(generic);
             ClassNode type = generic.getType();
             if (range != null && type != null && recorded.add(generic)) {
-                entries.add(new NodeEntry(uri, type, Role.TYPE_USAGE, range, generic, currentClass, currentMethod));
+                entries.add(new NodeEntry(uri, type, Role.TYPE_USAGE, range, generic, currentClass, currentMethod, currentClosure));
             }
             recordGenerics(type == null ? null : type.getGenericsTypes());
         }
@@ -357,7 +372,7 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
         if (range == null || !recorded.add(positioned == type ? type : positioned)) {
             return;
         }
-        entries.add(new NodeEntry(uri, type, Role.TYPE_USAGE, range, positionSource, currentClass, currentMethod));
+        entries.add(new NodeEntry(uri, type, Role.TYPE_USAGE, range, positionSource, currentClass, currentMethod, currentClosure));
         recordGenerics(type.getGenericsTypes());
     }
 
@@ -366,6 +381,17 @@ final class IndexVisitor extends ClassCodeVisitorSupport {
         if (range == null || !recorded.add(node)) {
             return;
         }
-        entries.add(new NodeEntry(uri, node, role, range, parent, currentClass, currentMethod));
+        entries.add(new NodeEntry(uri, node, role, range, parent, currentClass, currentMethod, currentClosure));
+    }
+
+    /** Remembers which call receives each closure argument, so the closure's entry names it as its parent. */
+    private void noteClosureArguments(Expression arguments, Expression call) {
+        if (arguments instanceof org.codehaus.groovy.ast.expr.TupleExpression tuple) {
+            for (Expression argument : tuple.getExpressions()) {
+                if (argument instanceof ClosureExpression closure) {
+                    closureCalls.put(closure, call);
+                }
+            }
+        }
     }
 }

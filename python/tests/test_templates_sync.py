@@ -21,12 +21,8 @@ def pairs() -> list[tuple[Path, Path]]:
             found.append((file, mirror / file.relative_to(source)))
     found.append((PACKAGE / "defaults.yaml", REPO / "config" / "defaults.yaml"))
     engine = REPO / "engine" / "src" / "main" / "resources" / "org" / "groovyscope" / "engine"
-    found.append(
-        (PACKAGE / "_templates" / "config" / "codenarc" / "groovyscope.groovy", engine / "lint" / "groovyscope.groovy")
-    )
-    found.append(
-        (PACKAGE / "_templates" / "config" / "codenarc" / "jenkins.groovy", engine / "lint" / "jenkins.groovy")
-    )
+    for profile in ("groovyscope.groovy", "jenkins.groovy", "gradle.groovy"):
+        found.append((PACKAGE / "_templates" / "config" / "codenarc" / profile, engine / "lint" / profile))
     found.append(
         (PACKAGE / "_templates" / "config" / "practices" / "practices.json", engine / "practices" / "practices.json")
     )

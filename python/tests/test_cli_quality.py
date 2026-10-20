@@ -156,6 +156,8 @@ def test_engine_view_resolves_bundled_rulesets(tmp_path: Path) -> None:
     assert view["lint"]["ruleset"].endswith("codenarc/groovyscope.groovy")
     assert Path(view["lint"]["ruleset"]).is_file()
     assert view["lint"]["jenkinsRuleset"] == str(Path("~/my/jenkins.groovy").expanduser())
+    assert view["lint"]["gradleRuleset"].endswith("codenarc/gradle.groovy")
+    assert Path(view["lint"]["gradleRuleset"]).is_file()
     assert view["root"] == str(tmp_path)
 
 

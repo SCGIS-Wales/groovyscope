@@ -397,7 +397,7 @@ Tick each box in the phase PR.
 - [x] Phase 1: security and fix safety (1.1 to 1.12)
 - [x] Phase 2: concurrency and resilience (engine E-11 to E-28, Python P-11 to P-27, P9/P10 rest)
 - [x] Phase 3: release, build and supply chain (D-01 to D-23, Q-15, P-31)
-- [ ] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27)
+- [x] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27; Q-15 landed in Phase 3, Q-26 is 6.3)
 - [ ] Phase 5: new quality checks (GS017 to GS052, GS035 to GS038)
 - [ ] Phase 6: hygiene and deduplication (6.1 to 6.6)
 - [ ] Phase 7: docs, Kiro assets and polish
@@ -493,3 +493,19 @@ their own lock, a reload is bounded by the call's deadline, and the start lock t
 | D-12 | `CODEOWNERS` moved to `.github/` (owner `@api-py`, the account that merges). Requiring code owner review is left to the owner: it would require an approval on every PR, release PRs included. |
 | D-22, P-31 | Timeouts on every job, the dead upload step gone, ruff and mypy strict over `scripts/`, sleeps replaced by events in the relay and progress tests. |
 | D-20, D-23 | The benchmark corpus refuses a checkout without its licence and notice. The Homebrew formula installs the dependencies by hash from the release's attested `groovyscope-requirements.txt` (`--require-hashes`, then the package with `--no-deps`), with an `all_of` licence; releases before 0.24.4 fall back to the unhashed install with a warning. |
+
+### Phase 4 (20 October 2026)
+
+| Item | Result |
+|---|---|
+| Q-04 | **Confirmed.** A shared library (`vars/` beside `src/` or `resources/`, with no `src/main` or `src/test`) now lints its `src/` classes with the Jenkins profile, and discovery adds the library's `src/` and a root `Jenkinsfile*`. `lint-sample` has a `vars/` folder but is not a library, which is why the detection needs both conditions. |
+| Q-05 | **Confirmed.** CodeNarc gets a `GroovyClassLoader` over the source roots (plus the classpath in a trusted workspace) as the context loader, one per snapshot, so enhanced rules see workspace classes; the Jenkins rules run in every file of the Jenkins profile, not only files named `Jenkinsfile`. The probe spec is flipped. |
+| Q-09 | Departed from the plan: making every implicit-this call in a closure `DYNAMIC_UNKNOWN` would make rename refuse `list.each { helper(it) }`. A call only the owner or only the `@DelegatesTo` type declares is `INFERRED`; one both declare is `DYNAMIC_UNKNOWN`, so rename refuses as the plan's test asks. |
+| Q-10, Q-11 | Workspace extension and `@Category` methods answer calls on classpath types. Overloads of one arity are narrowed by static argument types; several left are `DYNAMIC_UNKNOWN` (the plan's alternative to a new `AMBIGUOUS` confidence). Impact compares erased parameter types. |
+| Q-12 | Transitive callers list dynamic edges (flagged, not followed); dynamic call sites in test files are possible tests, so `verify` runs them with no Python change. |
+| Q-13, Q-14 | New dynamic finding kinds (computed method names, categories, expandos, mixins, delegates, interceptors, `Class.forName`, global `ExpandoMetaClass`); the dead branch deleted. Call search types receivers through the resolver and also matches the literal parts of GStrings. |
+| Q-16 | `typecheck.configScript` (default `config/groovyc/compile-static.groovy`) runs as `groovyc --configscript`, only in a trusted workspace, and is gated in the front end too. The checker customizer moved to canonicalization: an import alias and an `@AnnotationCollector` now reach the Groovy 6 checkers (they did not before). A whole-workspace `check` adds one `typecheck-coverage` information note naming the classes left dynamic. The Groovy 6 checkers still apply only to annotated classes, not to those a configuration script makes static. |
+| Q-17 | `typecheck.nullChecker` accepts only `off`, `lenient` or `strict`, in the schema and the engine. |
+| Q-20, Q-21 | `ImplementationAsType` is back at priority 3. The default profile adds `junit.xml`, with the rules that misread Spock skipping `*Spec` files; the Jenkins profile adds the size rules; `*.gradle` files get a Gradle profile without `NoDef`, `CompileStatic` and the `*TypeRequired` rules (`lint.gradleRuleset` replaces it, trust gated). |
+| Q-22 to Q-25 | GS020 skips properties; `dir`, `doc`, `impl`, `init`, `lib`, `org`, `prev`, `sub` are allowed shorthand; GS002 is information on text and collections, a warning on numbers; GS003 covers explicit and implicit returns and leaves `boolean` alone; GS011 no longer blames Spock 2.4 (Groovy's `.with {}` was never a condition block). |
+| Q-27 | `lint.rules` accepts `on` to enable a rule the profile leaves out; an unknown rule name appears in `check` as `lint-config`. |

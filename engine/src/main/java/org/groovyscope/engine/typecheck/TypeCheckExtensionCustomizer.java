@@ -35,7 +35,9 @@ import org.codehaus.groovy.control.customizers.CompilationCustomizer;
 /**
  * Adds type-checking extensions (the Groovy 6 checkers) to every {@code @CompileStatic} and
  * {@code @TypeChecked} annotation already present in the workspace, so static code gets the extra checks
- * without forcing static typing onto dynamic code.
+ * without forcing static typing onto dynamic code. It runs at canonicalization, after semantic analysis has resolved
+ * import aliases ({@code import groovy.transform.CompileStatic as Static}) and expanded annotation collectors, and
+ * before the type checker reads the annotations.
  */
 public final class TypeCheckExtensionCustomizer extends CompilationCustomizer {
 
@@ -45,7 +47,7 @@ public final class TypeCheckExtensionCustomizer extends CompilationCustomizer {
     private final List<String> extensions;
 
     public TypeCheckExtensionCustomizer(List<String> extensions) {
-        super(CompilePhase.CONVERSION);
+        super(CompilePhase.CANONICALIZATION);
         this.extensions = List.copyOf(extensions);
     }
 

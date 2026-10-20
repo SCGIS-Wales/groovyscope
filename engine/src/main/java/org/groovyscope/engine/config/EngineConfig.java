@@ -146,17 +146,21 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      *
      * @param ruleset path of the default profile, or {@code null} for the bundled defensive profile
      * @param jenkinsRuleset path of the Jenkins profile, or {@code null} for the bundled one
+     * @param gradleRuleset path of the profile for Gradle build scripts, or {@code null} for the bundled one
      * @param failOnPriority {@code check} fails on violations with this priority or more severe (1 is worst)
      * @param publish whether lint findings are pushed as LSP diagnostics
      * @param rules per-rule overrides on top of the loaded rule sets ({@code lint.rules}): rule name to a priority
-     *     (1 to 3), or {@link #RULE_OFF} to remove the rule
+     *     (1 to 3, which also switches on a rule the profile leaves out), {@link #RULE_OFF} to remove the rule, or
+     *     {@link #RULE_ON} to switch on a left-out rule at CodeNarc's own priority
      * @param publishMaxPriority pushed diagnostics include CodeNarc findings only with this priority or more severe
      *     ({@code lint.publishMaxPriority}, 1 to 3); {@code check} and review requests are never filtered
      */
-    public record Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish,
-            Map<String, Integer> rules, int publishMaxPriority) {
+    public record Lint(String ruleset, String jenkinsRuleset, String gradleRuleset, int failOnPriority,
+            boolean publish, Map<String, Integer> rules, int publishMaxPriority) {
         /** The value of a {@link #rules} entry that removes the rule. */
         public static final int RULE_OFF = 0;
+        /** The value of a {@link #rules} entry that switches on a rule the profile leaves out. */
+        public static final int RULE_ON = -1;
         /** Default of {@code lint.publishMaxPriority}. */
         public static final int DEFAULT_PUBLISH_MAX_PRIORITY = 2;
         public static final Lint DEFAULTS = new Lint(null, null, 2, true);
@@ -166,14 +170,14 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             publishMaxPriority = Math.max(1, Math.min(3, publishMaxPriority));
         }
 
-        /** The original four settings: no rule overrides, the default publish threshold. */
+        /** The original four settings: the bundled Gradle profile, no rule overrides, the default publish threshold. */
         public Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish) {
-            this(ruleset, jenkinsRuleset, failOnPriority, publish, Map.of(), DEFAULT_PUBLISH_MAX_PRIORITY);
+            this(ruleset, jenkinsRuleset, null, failOnPriority, publish, Map.of(), DEFAULT_PUBLISH_MAX_PRIORITY);
         }
 
         /**
-         * Parses {@code lint.rules}: each value is {@code "off"} or {@code {"priority": 1|2|3}}. Entries of any
-         * other shape are ignored with a warning.
+         * Parses {@code lint.rules}: each value is {@code "on"}, {@code "off"} or {@code {"priority": 1|2|3}}.
+         * Entries of any other shape are ignored with a warning.
          */
         static Map<String, Integer> parseRules(JsonElement element) {
             Map<String, Integer> rules = new java.util.TreeMap<>();
@@ -186,12 +190,16 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                     rules.put(entry.getKey(), RULE_OFF);
                     continue;
                 }
+                if (value.isJsonPrimitive() && "on".equalsIgnoreCase(value.getAsString())) {
+                    rules.put(entry.getKey(), RULE_ON);
+                    continue;
+                }
                 JsonElement priority = value.isJsonObject() ? value.getAsJsonObject().get("priority") : null;
                 if (priority != null && priority.isJsonPrimitive() && priority.getAsJsonPrimitive().isNumber()
                         && priority.getAsInt() >= 1 && priority.getAsInt() <= 3) {
                     rules.put(entry.getKey(), priority.getAsInt());
                 } else {
-                    org.groovyscope.engine.log.EngineLog.warn("lint.rules.%s: expected \"off\" or {\"priority\": 1|2|3}; ignored",
+                    org.groovyscope.engine.log.EngineLog.warn("lint.rules.%s: expected \"on\", \"off\" or {\"priority\": 1|2|3}; ignored",
                             entry.getKey());
                 }
             }
@@ -206,14 +214,32 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param nullChecker {@code off}, {@code lenient} or {@code strict}
      * @param sqlInjection whether to add the SQL injection checker
      * @param purity whether to add the purity and modifies checkers
+     * @param configScript the project's compiler configuration script ({@code groovyc --configscript}), relative to
+     *     the workspace root; applied when it exists and the workspace is trusted, since it is code
      */
     public record TypeCheck(String nullChecker, boolean sqlInjection, boolean purity, boolean regex,
-            boolean formatString, boolean combiner) {
+            boolean formatString, boolean combiner, String configScript) {
+        /** Where a project keeps its compiler configuration script by convention. */
+        public static final String DEFAULT_CONFIG_SCRIPT = "config/groovyc/compile-static.groovy";
         public static final TypeCheck DEFAULTS = new TypeCheck("strict", true, false, true, true, true);
+
+        public TypeCheck {
+            configScript = configScript == null || configScript.isBlank() ? DEFAULT_CONFIG_SCRIPT : configScript;
+            if (!java.util.Set.of("off", "lenient", "strict").contains(nullChecker)) {
+                throw new IllegalArgumentException("typecheck.nullChecker must be off, lenient or strict, not '"
+                        + nullChecker + "'");
+            }
+        }
 
         /** The original three settings; the regex, format-string and combiner checkers stay on. */
         public TypeCheck(String nullChecker, boolean sqlInjection, boolean purity) {
             this(nullChecker, sqlInjection, purity, true, true, true);
+        }
+
+        /** The checker settings with the conventional configuration script. */
+        public TypeCheck(String nullChecker, boolean sqlInjection, boolean purity, boolean regex,
+                boolean formatString, boolean combiner) {
+            this(nullChecker, sqlInjection, purity, regex, formatString, combiner, DEFAULT_CONFIG_SCRIPT);
         }
     }
 
@@ -475,6 +501,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                 new Lint(
                         string(lint.get("ruleset"), null),
                         string(lint.get("jenkinsRuleset"), null),
+                        string(lint.get("gradleRuleset"), null),
                         integer(lint.get("failOnPriority"), Lint.DEFAULTS.failOnPriority()),
                         bool(lint.get("publish"), Lint.DEFAULTS.publish()),
                         Lint.parseRules(lint.get("rules")),
@@ -485,7 +512,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         bool(typecheck.get("purity"), TypeCheck.DEFAULTS.purity()),
                         bool(typecheck.get("regex"), TypeCheck.DEFAULTS.regex()),
                         bool(typecheck.get("formatString"), TypeCheck.DEFAULTS.formatString()),
-                        bool(typecheck.get("combiner"), TypeCheck.DEFAULTS.combiner())),
+                        bool(typecheck.get("combiner"), TypeCheck.DEFAULTS.combiner()),
+                        string(typecheck.get("configScript"), TypeCheck.DEFAULT_CONFIG_SCRIPT)),
                 new Format(
                         string(format.get("engine"), Format.DEFAULTS.engine()),
                         integer(format.get("indentSize"), Format.DEFAULTS.indentSize()),

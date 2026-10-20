@@ -128,8 +128,7 @@ public final class PracticeFinder {
      */
     static final Set<String> EMPTY_REJECTING_PARSERS = Set.of("readTree", "readValue", "parseText", "parse",
             "parseInt", "parseLong", "parseDouble", "parseFloat", "parseShort", "parseByte", "fromJson");
-    static final Set<String> PRIMITIVE_DEFAULTS = Set.of("int", "long", "short", "byte", "double", "float", "boolean",
-            "char");
+    static final Set<String> PRIMITIVE_DEFAULTS = Set.of("int", "long", "short", "byte", "double", "float", "char");
     static final Set<String> FILE_TYPES = Set.of("java.io.File", "java.nio.file.Path");
     static final Set<String> LOG_METHODS = Set.of("trace", "debug", "info", "warn", "error");
     /** Logger types and their library; only SLF4J and Log4j2 take {@code {}} placeholders. */
@@ -473,7 +472,8 @@ public final class PracticeFinder {
                 String closureText = source(closure);
                 List<TextEdit> fix = receiver == null || closureText == null ? List.of()
                         : List.of(replace(call, "with(" + receiver + ") " + closureText));
-                report("GS011", call, "the assertions inside .with {} are not checked since Spock 2.4",
+                report("GS011", call, "Groovy's .with {} is a plain method call, so the comparisons inside it are "
+                        + "evaluated but never asserted; Spock asserts each one only inside with(obj) {}",
                         "Use with(" + (receiver == null ? "obj" : receiver) + ") {}", fix);
             }
             super.visitExpressionStatement(statement);
@@ -525,11 +525,19 @@ public final class PracticeFinder {
         private void checkPrimitiveSafeNavigation(Expression target, Expression value) {
             ClassNode type = target instanceof VariableExpression variable && !variable.isDynamicTyped()
                     ? variable.getOriginType() : typeOf(target);
+            checkSafeIntoPrimitive(type, value);
+        }
+
+        /**
+         * GS003: a safe-navigation result stored in, or returned as, a primitive. A {@code boolean} is left out:
+         * Groovy turns null into false there, which is what the code means.
+         */
+        private void checkSafeIntoPrimitive(ClassNode type, Expression value) {
             boolean safe = value instanceof MethodCallExpression call && call.isSafe()
                     || value instanceof PropertyExpression property && property.isSafe();
             if (type != null && PRIMITIVE_DEFAULTS.contains(type.getName()) && safe) {
                 String text = source(value);
-                String fallback = "boolean".equals(type.getName()) ? "false" : "0";
+                String fallback = "0";
                 List<TextEdit> fix = text == null ? List.of() : List.of(replace(value, text + " ?: " + fallback));
                 report("GS003", value, "null when the receiver is null, which a " + type.getName() + " cannot hold",
                         "Default with ?: " + fallback, fix);
@@ -549,6 +557,9 @@ public final class PracticeFinder {
             if (currentMethod != null && named(currentMethod.getReturnType(), INTEGRAL)) {
                 narrowed.add(statement.getExpression());
             }
+            if (currentMethod != null && !currentMethod.isDynamicReturnType()) {
+                checkSafeIntoPrimitive(currentMethod.getReturnType(), statement.getExpression());
+            }
             super.visitReturnStatement(statement);
         }
 
@@ -556,8 +567,20 @@ public final class PracticeFinder {
         protected void visitConstructorOrMethod(MethodNode node, boolean isConstructor) {
             MethodNode saved = currentMethod;
             currentMethod = node;
+            if (!isConstructor && !node.isDynamicReturnType() && lastStatement(node.getCode()) instanceof
+                    ExpressionStatement implicit) {
+                checkSafeIntoPrimitive(node.getReturnType(), implicit.getExpression()); // the implicit return
+            }
             super.visitConstructorOrMethod(node, isConstructor);
             currentMethod = saved;
+        }
+
+        private static Statement lastStatement(Statement code) {
+            if (code instanceof BlockStatement block) {
+                List<Statement> statements = block.getStatements();
+                return statements.isEmpty() ? null : lastStatement(statements.get(statements.size() - 1));
+            }
+            return code;
         }
 
         @Override
@@ -576,9 +599,11 @@ public final class PracticeFinder {
                     List<TextEdit> fix = fixable
                             ? List.of(replace(elvis, testedText + " != null ? " + testedText + " : " + fallback))
                             : List.of();
-                    report("GS002", elvis, "?: also replaces " + emptyValue(type) + ", which is a valid "
-                            + type.getNameWithoutPackage() + "; a defect only where that empty value is a real input, "
-                            + "distinct from absent", "Compare with null", fix);
+                    // An empty text or collection is more often absent in all but name than a 0 is: advice there.
+                    reportAtMost(emptyValue(type).equals("0") ? Severity.ERROR : Severity.INFORMATION, "GS002", elvis,
+                            "?: also replaces " + emptyValue(type) + ", which is a valid " + type.getNameWithoutPackage()
+                            + "; a defect only where that empty value is a real input, distinct from absent",
+                            "Compare with null", fix);
                 }
             } else {
                 checkTruthiness(expression.getBooleanExpression());
