@@ -156,6 +156,31 @@ public final class WorkspaceModel {
         return discover(config.javaSources());
     }
 
+    /**
+     * The Gradle build scripts ({@code *.gradle}, the root's and every subproject's) that the compile does not
+     * already read, keyed by URI with their current text. They are never compiled with the workspace: their Gradle
+     * API imports would not resolve, and every subproject's {@code build.gradle} would be the same script class. Lint
+     * and the practices read them on their own. Source folders ({@code src}) are not entered.
+     */
+    public Map<String, String> buildScripts() {
+        Map<String, String> scripts = new TreeMap<>();
+        if (!Files.isDirectory(root)) {
+            return scripts;
+        }
+        Set<Path> compiled = new HashSet<>(discoverSourceFiles());
+        for (Path file : FileWalker.files(root, root, excludes, Set.of("src"), (path, attributes) ->
+                path.getFileName().toString().endsWith(".gradle") && !isExcluded(path))) {
+            if (!compiled.contains(file)) {
+                String uri = toUri(file);
+                String text = text(uri);
+                if (text != null) {
+                    scripts.put(uri, text);
+                }
+            }
+        }
+        return scripts;
+    }
+
     /** The source root folders that exist inside the workspace (a shared library's {@code src/} included). */
     public List<Path> sourceRootPaths() {
         List<Path> roots = new ArrayList<>();

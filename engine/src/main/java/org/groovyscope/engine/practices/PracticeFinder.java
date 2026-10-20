@@ -177,6 +177,8 @@ public final class PracticeFinder {
         SecretFinder.find(context);
         PitfallFinder.find(context);
         JenkinsFinder.find(context);
+        SpockFinder.find(context);
+        GradleFinder.find(context);
         return out;
     }
 
