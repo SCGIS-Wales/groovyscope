@@ -34,6 +34,7 @@ import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
 import org.codehaus.groovy.ast.expr.CastExpression;
 import org.codehaus.groovy.ast.expr.ClassExpression;
+import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.DeclarationExpression;
@@ -228,6 +229,9 @@ public final class Resolver {
             return null;
         }
         int count = Members.argumentCount(call.getArguments());
+        if (call.isImplicitThis() && entry.enclosingClosure() != null) {
+            return closureCall(name, count, entry);
+        }
         Receiver receiver = receiverOf(call.getObjectExpression(), call.isImplicitThis(), entry);
         if (receiver.type != null) {
             List<MethodNode> candidates = Members.accepting(Members.methodsNamed(receiver.type, name), count);
@@ -248,6 +252,140 @@ public final class Resolver {
         }
         List<ASTNode> byName = workspaceMethodsNamed(name, count);
         return byName.isEmpty() ? null : new Resolution(byName, Confidence.DYNAMIC_UNKNOWN);
+    }
+
+    /**
+     * An implicit-this call inside a closure goes to the closure's owner (the enclosing class) unless its delegate
+     * answers first: a delegate known from a {@code @DelegatesTo} on the parameter that receives the closure is
+     * looked up as well. One of them declaring the method gives an inferred answer; both declaring it is ambiguous
+     * (the resolve strategy decides at run time), so the answer is dynamic and a rename refuses.
+     */
+    private Resolution closureCall(String name, int count, NodeEntry entry) {
+        List<ASTNode> owner = new ArrayList<>();
+        ClassNode enclosing = entry.enclosingClass();
+        if (enclosing != null) {
+            owner.addAll(Members.accepting(Members.methodsNamed(enclosing, name), count));
+            if (owner.isEmpty()) {
+                Members.membersNamed(enclosing, name).forEach(member -> owner.add(canonical(member)));
+            }
+        }
+        List<ASTNode> delegated = new ArrayList<>();
+        for (ClassNode delegate : delegateTypes(entry.enclosingClosure())) {
+            for (MethodNode method : Members.accepting(Members.methodsNamed(delegate, name), count)) {
+                if (!delegated.contains(method)) {
+                    delegated.add(method);
+                }
+            }
+        }
+        if (!owner.isEmpty() && !delegated.isEmpty()) {
+            List<ASTNode> both = new ArrayList<>(owner);
+            both.addAll(delegated);
+            return new Resolution(both, Confidence.DYNAMIC_UNKNOWN);
+        }
+        List<ASTNode> chosen = delegated.isEmpty() ? owner : delegated;
+        if (!chosen.isEmpty()) {
+            return new Resolution(chosen, Confidence.INFERRED);
+        }
+        List<ASTNode> byName = workspaceMethodsNamed(name, count);
+        return byName.isEmpty() ? null : new Resolution(byName, Confidence.DYNAMIC_UNKNOWN);
+    }
+
+    /** The {@code @DelegatesTo} types of a closure and of the closures around it, innermost first. */
+    private List<ClassNode> delegateTypes(ClosureExpression innermost) {
+        List<ClassNode> types = new ArrayList<>();
+        ClosureExpression closure = innermost;
+        while (closure != null) {
+            NodeEntry closureEntry = closureEntries().get(closure);
+            if (closureEntry == null) {
+                break;
+            }
+            for (ClassNode delegate : delegatesOf(closure, closureEntry.parent())) {
+                if (!types.contains(delegate)) {
+                    types.add(delegate);
+                }
+            }
+            closure = closureEntry.enclosingClosure();
+        }
+        return types;
+    }
+
+    /** The types the {@code @DelegatesTo} of the parameter receiving {@code closure} in {@code call} names. */
+    private List<ClassNode> delegatesOf(ClosureExpression closure, ASTNode call) {
+        Expression arguments;
+        List<ASTNode> targets;
+        if (call instanceof MethodCallExpression methodCall) {
+            NodeEntry name = methodNameEntries().get(methodCall);
+            Resolution resolution = name == null ? null : resolve(name).orElse(null);
+            targets = resolution == null ? List.of() : resolution.candidates();
+            arguments = methodCall.getArguments();
+        } else if (call instanceof StaticMethodCallExpression staticCall) {
+            Resolution resolution = staticCall(staticCall);
+            targets = resolution == null ? List.of() : resolution.candidates();
+            arguments = staticCall.getArguments();
+        } else {
+            return List.of();
+        }
+        int position = -1;
+        if (arguments instanceof org.codehaus.groovy.ast.expr.TupleExpression tuple) {
+            for (int i = 0; i < tuple.getExpressions().size(); i++) {
+                if (tuple.getExpression(i) == closure) {
+                    position = i;
+                }
+            }
+        }
+        List<ClassNode> types = new ArrayList<>();
+        for (ASTNode target : targets) {
+            if (!(target instanceof MethodNode method) || method.getParameters().length == 0 || position < 0) {
+                continue;
+            }
+            Parameter[] parameters = method.getParameters();
+            Parameter receiving = parameters[Math.min(position, parameters.length - 1)];
+            for (org.codehaus.groovy.ast.AnnotationNode annotation : receiving.getAnnotations()) {
+                if (DELEGATES_TO.equals(annotation.getClassNode().getName())
+                        && annotation.getMember("value") instanceof ClassExpression value) {
+                    ClassNode delegate = usable(value.getType());
+                    if (delegate != null && !types.contains(delegate)) {
+                        types.add(delegate);
+                    }
+                }
+            }
+        }
+        return types;
+    }
+
+    private static final String DELEGATES_TO = "groovy.lang.DelegatesTo";
+
+    private volatile Map<ClosureExpression, NodeEntry> closures;
+    private volatile Map<MethodCallExpression, NodeEntry> methodNames;
+
+    /** Every closure's own entry (its parent is the call that receives it), built on first use. */
+    private Map<ClosureExpression, NodeEntry> closureEntries() {
+        Map<ClosureExpression, NodeEntry> built = closures;
+        if (built == null) {
+            built = new IdentityHashMap<>();
+            for (NodeEntry candidate : index.allEntries()) {
+                if (candidate.node() instanceof ClosureExpression closure) {
+                    built.put(closure, candidate);
+                }
+            }
+            closures = built;
+        }
+        return built;
+    }
+
+    /** The method name entry of every call, so a call's target can be resolved from the call, built on first use. */
+    private Map<MethodCallExpression, NodeEntry> methodNameEntries() {
+        Map<MethodCallExpression, NodeEntry> built = methodNames;
+        if (built == null) {
+            built = new IdentityHashMap<>();
+            for (NodeEntry candidate : index.allEntries()) {
+                if (candidate.role() == NodeEntry.Role.METHOD_NAME && candidate.parent() instanceof MethodCallExpression call) {
+                    built.put(call, candidate);
+                }
+            }
+            methodNames = built;
+        }
+        return built;
     }
 
     private Resolution property(PropertyExpression expression, NodeEntry entry) {

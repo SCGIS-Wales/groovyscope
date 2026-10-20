@@ -18,6 +18,7 @@ package org.groovyscope.engine.index;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
+import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.groovyscope.engine.model.Range;
 
 /**
@@ -30,9 +31,17 @@ import org.groovyscope.engine.model.Range;
  * @param parent the syntactic parent that gives the node meaning (a call for its method name, for example)
  * @param enclosingClass the class whose body contains the node, or {@code null}
  * @param enclosingMethod the method or constructor whose body contains the node, or {@code null}
+ * @param enclosingClosure the innermost closure the node sits in ({@code null} outside closures, and in a class
+ *     declared inside a closure)
  */
 public record NodeEntry(String uri, ASTNode node, Role role, Range range, ASTNode parent, ClassNode enclosingClass,
-        MethodNode enclosingMethod) {
+        MethodNode enclosingMethod, ClosureExpression enclosingClosure) {
+
+    /** An entry outside any closure. */
+    public NodeEntry(String uri, ASTNode node, Role role, Range range, ASTNode parent, ClassNode enclosingClass,
+            MethodNode enclosingMethod) {
+        this(uri, node, role, range, parent, enclosingClass, enclosingMethod, null);
+    }
 
     /** What an indexed node stands for. */
     public enum Role {
