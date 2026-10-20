@@ -2,7 +2,8 @@
 classpath export with absolute paths, the contract baseline, workspace profiles). The entry goes into the
 repository's top-level ``.gitignore`` once: a line that already ignores the folder, or any rule git already applies
 (``git check-ignore``, global excludes included), counts as present, and a deliberate ``!.groovyscope`` is left as
-the team wrote it. Pure apart from the reads, the one ``git check-ignore`` call and the write the caller asks for."""
+the team wrote it. During a merge, rebase, cherry-pick or revert the entry waits, so it never joins the commit that
+concludes one. Pure apart from the reads, the ``git`` calls and the write the caller asks for."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Literal, TypedDict
 
-from groovyscope import atomic, process
+from groovyscope import atomic, conflicts, process
 
 ENTRY = ".groovyscope/"
 FOLDER = ".groovyscope"
@@ -20,7 +21,7 @@ COMMENT = "# groovyscope: this machine's classpath export; share a contract base
 EQUIVALENT = frozenset(f"{prefix}{FOLDER}{suffix}" for prefix in ("", "/", "**/") for suffix in ("", "/", "/**", "/*"))
 CHECK_TIMEOUT_SECONDS = 5.0
 
-State = Literal["no-repository", "present", "negated", "missing", "added"]
+State = Literal["no-repository", "present", "negated", "missing", "added", "deferred"]
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -94,6 +95,9 @@ def ensure(start: Path, *, write: bool, run: Runner = process.run_text) -> Outco
         return {"state": "present", "path": str(path)}
     if not write:
         return {"state": "missing", "path": str(path)}
+    if conflicts.busy(repository, run):
+        # A changed .gitignore in the middle of a merge or rebase lands in the commit that concludes it.
+        return {"state": "deferred", "path": str(path)}
     # Bytes in, bytes out: the team's lines stay exactly as written (any encoding, CRLF endings kept), and a
     # symlinked .gitignore stays a link, its target getting the entry.
     try:

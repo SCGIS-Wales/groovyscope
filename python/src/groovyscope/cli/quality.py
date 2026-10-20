@@ -134,7 +134,12 @@ def run_hook(obj: dict[str, Any], event: str | None) -> None:
         return
     # Everything that needs no engine comes first: most hook events end here, in milliseconds.
     settings = hooks.settings(load_config(obj["root"], obj["config_path"], dict(os.environ)))
-    paths = hook_targets(obj["root"], name, payload, settings)
+    paths, notes = hooks.split_conflicted(hook_targets(obj["root"], name, payload, settings), obj["root"])
+    if notes:
+        decision = hooks.conflict_decision(notes) if name == "stop" else None
+        click.echo(json.dumps(decision) if decision else "\n".join(notes))
+        if name == "stop":
+            return
     if not paths:
         return
     # A hook never starts the engine: a cold JVM would hold the agent for its start-up and compile. The LSP

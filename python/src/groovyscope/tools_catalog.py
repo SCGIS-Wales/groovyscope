@@ -47,6 +47,9 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "check_naming": ("Naming findings and facts", True),
     "symbol_context": ("Symbol context in one call", True),
     "test_results": ("Test results from JUnit XML", True),
+    "merge_conflicts": ("Merge conflicts and their hunks", True),
+    "resolve_conflicts": ("Resolve merge conflict hunks", False),
+    "merge_review": ("Review a merge for lost code", True),
 }
 
 # What the agent reads for each tool. Arguments in capitals; PATH:LINE:COL is 1-based everywhere.
@@ -87,11 +90,19 @@ DESCRIPTIONS: dict[str, str] = {
     "symbol_context": "Definition, hover and reference count of the symbol at PATH:LINE:COL in one call.",
     "test_results": "Failing tests from TEST-*.xml at any depth under SOURCES (folders or .zip archives; default "
     "the workspace): message and the first frames in the code and the test.",
+    "merge_conflicts": (
+        "Conflicted files of the merge in progress; with PATH its hunks as numbered lines with a suggestion per hunk."
+    ),
+    "resolve_conflicts": (
+        "Resolve hunks of PATH in one write: RESOLUTIONS [{hunk, take: ours|theirs|both|base|neither}] or "
+        "[{hunk, text}], SUGGESTED for the rest; parsed first; APPLY writes."
+    ),
+    "merge_review": "Declarations a merge lost or changes it dropped in Groovy files both sides changed (or PATHS).",
 }
 
 
 # Tools whose `apply` overwrites workspace files, so a client should confirm before calling them that way.
-DESTRUCTIVE_TOOLS = frozenset({"fix", "format", "rename"})
+DESTRUCTIVE_TOOLS = frozenset({"fix", "format", "rename", "resolve_conflicts"})
 # Repeating the call with the same arguments does not give the same result: after a rename the symbol at the
 # position already carries the new name.
 NOT_IDEMPOTENT_TOOLS = frozenset({"rename"})
@@ -167,6 +178,9 @@ SAFE_GROOVYSCOPE_OPTIONS: dict[str, tuple[str, ...]] = {
     "fix": ("--code V", "--changed", "--base V", "--json"),
     "format": ("--json",),
     "checkup": ("--agent", "--json"),
+    "merge status": ("--json",),
+    "merge show": ("--hunk V", "--json"),
+    "merge review": ("--json",),
     "logs": ("-n V", "--lines V", "-f", "--follow", "--kiro"),
     "version": (),  # no options and no values
     "doctor": (),
@@ -193,6 +207,8 @@ SAFE_SHELL_GLOBS = (
     "groovyscope version",
     "groovyscope doctor",
     "groovyscope checkup --agent",
+    "groovyscope merge status",
+    "groovyscope merge review",
     "groovyscope daemon status",
     "./gradlew test",
     "./gradlew check",

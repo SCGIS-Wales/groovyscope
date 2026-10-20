@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import atomic
+from groovyscope import atomic, conflicts
 from groovyscope import config as config_module
 from groovyscope.paths import GROOVY_SUFFIXES
 
@@ -134,6 +134,37 @@ def render_after_write(rows: Sequence[Mapping[str, Any]], paths: Sequence[Path],
     if errors:
         lines.append("  fix the errors before moving on; `groovyscope.fix` applies the safe ones")
     return "\n".join(lines)
+
+
+def split_conflicted(paths: Sequence[Path], root: Path) -> tuple[list[Path], list[str]]:
+    """The files still worth a check, and one line for each file that holds conflict markers: such a file cannot
+    compile, so checking it only costs the agent seconds per edit of a merge in progress."""
+    clean: list[Path] = []
+    notes: list[str] = []
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not conflicts.has_markers(text):
+            clean.append(path)
+            continue
+        parsed = conflicts.parse(text)
+        where = ", ".join(str(hunk["start"] + 1) for hunk in parsed["hunks"][:8])
+        note = f"groovyscope: {_relative(path, root)} still has {len(parsed['hunks'])} conflict hunk(s)"
+        note += f" (at lines {where})" if where else ""
+        if parsed["leftovers"]:
+            stray = ", ".join(str(item["line"]) for item in parsed["leftovers"][:8])
+            note += f" and stray markers at lines {stray} left by an edit of part of a hunk"
+        notes.append(note + "; not checked until they are gone. resolve_conflicts resolves hunks in one write.")
+    return clean, notes
+
+
+def conflict_decision(notes: Sequence[str]) -> dict[str, str] | None:
+    """The ``Stop`` answer while changed files still hold conflict markers."""
+    if not notes:
+        return None
+    return {"decision": "block", "reason": " ".join(notes) + " Resolve them before finishing."}
 
 
 def changed_groovy_files(root: Path, runner: Runner) -> list[Path]:
