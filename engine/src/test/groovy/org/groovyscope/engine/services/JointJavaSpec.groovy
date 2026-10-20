@@ -74,8 +74,7 @@ class JointJavaSpec extends Specification {
     def 'workspace.javaSources: false keeps Java out of the compile'() {
         given:
         def base = EngineConfig.DEFAULTS
-        def config = new EngineConfig(base.sourceRoots(), base.classpath(), base.exclude(), base.trust(),
-                base.lint(), base.typecheck(), base.format(), false)
+        def config = base.toBuilder().javaSources(false).build()
         def services = new LanguageServices(new WorkspaceModel(Fixtures.project('joint-java'), config), new GroovyCompiler())
 
         when:

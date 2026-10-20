@@ -363,7 +363,10 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             Practices.DEFAULTS,
             List.of(),
             DEFAULT_MAX_FILE_BYTES,
-            "");
+            Diagnostics.DEFAULTS,
+            "",
+            Daemon.DEFAULTS,
+            Budget.DEFAULTS);
 
     public EngineConfig {
         sourceRoots = List.copyOf(sourceRoots);
@@ -381,62 +384,158 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         budget = budget == null ? Budget.DEFAULTS : budget;
     }
 
-    /** Every setting except the workspace budget, which keeps its defaults. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
-            List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, Diagnostics diagnostics,
-            String configHash, Daemon daemon) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
-                maxFileBytes, diagnostics, configHash, daemon, Budget.DEFAULTS);
-    }
-
-    /** Every setting except the daemon's, which keep their defaults. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
-            List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, Diagnostics diagnostics,
-            String configHash) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
-                maxFileBytes, diagnostics, configHash, Daemon.DEFAULTS);
-    }
-
-    /** Every setting, with the default file size limit and no configuration hash. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
-            List<org.groovyscope.engine.profiles.Profile> profiles) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
-                DEFAULT_MAX_FILE_BYTES, "");
-    }
-
-    /** Every setting except the diagnostics delivery, which keeps its defaults. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices,
-            List<org.groovyscope.engine.profiles.Profile> profiles, long maxFileBytes, String configHash) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, profiles,
-                maxFileBytes, Diagnostics.DEFAULTS, configHash);
-    }
-
     /** This configuration with another Groovy target (used for files a runtime profile governs). */
     public EngineConfig withGroovy(Groovy target) {
-        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, target,
-                practices, profiles, maxFileBytes, diagnostics, configHash, daemon, budget);
+        return toBuilder().groovy(target).build();
     }
 
     /** This configuration with other daemon settings. */
     public EngineConfig withDaemon(Daemon replacement) {
-        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, maxFileBytes, diagnostics, configHash, replacement, budget);
+        return toBuilder().daemon(replacement).build();
     }
 
     /** This configuration with the hash of the raw JSON it was read from. */
     public EngineConfig withConfigHash(String hash) {
-        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, maxFileBytes, diagnostics, hash, daemon, budget);
+        return toBuilder().configHash(hash).build();
     }
 
     /** This configuration with another file size limit (0 means no limit). */
     public EngineConfig withMaxFileBytes(long limit) {
-        return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
-                practices, profiles, limit, diagnostics, configHash, daemon, budget);
+        return toBuilder().maxFileBytes(limit).build();
+    }
+
+    /** A builder starting from {@link #DEFAULTS}. */
+    public static Builder builder() {
+        return new Builder(DEFAULTS);
+    }
+
+    /** A builder starting from this configuration. */
+    public Builder toBuilder() {
+        return new Builder(this);
+    }
+
+    /** A configuration set field by field; every field not set keeps the value of the one it started from. */
+    public static final class Builder {
+        private List<String> sourceRoots;
+        private List<String> classpath;
+        private List<String> exclude;
+        private boolean trust;
+        private Lint lint;
+        private TypeCheck typecheck;
+        private Format format;
+        private boolean javaSources;
+        private Groovy groovy;
+        private Practices practices;
+        private List<org.groovyscope.engine.profiles.Profile> profiles;
+        private long maxFileBytes;
+        private Diagnostics diagnostics;
+        private String configHash;
+        private Daemon daemon;
+        private Budget budget;
+
+        private Builder(EngineConfig from) {
+            sourceRoots = from.sourceRoots;
+            classpath = from.classpath;
+            exclude = from.exclude;
+            trust = from.trust;
+            lint = from.lint;
+            typecheck = from.typecheck;
+            format = from.format;
+            javaSources = from.javaSources;
+            groovy = from.groovy;
+            practices = from.practices;
+            profiles = from.profiles;
+            maxFileBytes = from.maxFileBytes;
+            diagnostics = from.diagnostics;
+            configHash = from.configHash;
+            daemon = from.daemon;
+            budget = from.budget;
+        }
+
+        public Builder sourceRoots(List<String> value) {
+            sourceRoots = value;
+            return this;
+        }
+
+        public Builder classpath(List<String> value) {
+            classpath = value;
+            return this;
+        }
+
+        public Builder exclude(List<String> value) {
+            exclude = value;
+            return this;
+        }
+
+        public Builder trust(boolean value) {
+            trust = value;
+            return this;
+        }
+
+        public Builder lint(Lint value) {
+            lint = value;
+            return this;
+        }
+
+        public Builder typecheck(TypeCheck value) {
+            typecheck = value;
+            return this;
+        }
+
+        public Builder format(Format value) {
+            format = value;
+            return this;
+        }
+
+        public Builder javaSources(boolean value) {
+            javaSources = value;
+            return this;
+        }
+
+        public Builder groovy(Groovy value) {
+            groovy = value;
+            return this;
+        }
+
+        public Builder practices(Practices value) {
+            practices = value;
+            return this;
+        }
+
+        public Builder profiles(List<org.groovyscope.engine.profiles.Profile> value) {
+            profiles = value;
+            return this;
+        }
+
+        public Builder maxFileBytes(long value) {
+            maxFileBytes = value;
+            return this;
+        }
+
+        public Builder diagnostics(Diagnostics value) {
+            diagnostics = value;
+            return this;
+        }
+
+        public Builder configHash(String value) {
+            configHash = value;
+            return this;
+        }
+
+        public Builder daemon(Daemon value) {
+            daemon = value;
+            return this;
+        }
+
+        public Builder budget(Budget value) {
+            budget = value;
+            return this;
+        }
+
+        public EngineConfig build() {
+            return new EngineConfig(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy,
+                    practices, profiles, maxFileBytes, diagnostics, configHash, daemon, budget);
+        }
     }
 
     /** SHA-256 (hex) of a raw configuration document, or empty when there is none. */
@@ -447,31 +546,6 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         return org.groovyscope.engine.util.Hashes.sha256Hex(json);
     }
 
-    /** All settings except runtime profiles. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-            Lint lint, TypeCheck typecheck, Format format, boolean javaSources, Groovy groovy, Practices practices) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, groovy, practices, List.of());
-    }
-
-    /** Everything except the Groovy target and practice settings, which keep their defaults. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-            Lint lint, TypeCheck typecheck, Format format, boolean javaSources) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, javaSources, Groovy.DEFAULTS,
-                Practices.DEFAULTS);
-    }
-
-    /** Convenience for callers that only care about workspace settings. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust) {
-        this(sourceRoots, classpath, exclude, trust, Lint.DEFAULTS, TypeCheck.DEFAULTS, Format.DEFAULTS, true,
-                Groovy.DEFAULTS, Practices.DEFAULTS);
-    }
-
-    /** All settings except {@code javaSources}, which stays on. */
-    public EngineConfig(List<String> sourceRoots, List<String> classpath, List<String> exclude, boolean trust,
-            Lint lint, TypeCheck typecheck, Format format) {
-        this(sourceRoots, classpath, exclude, trust, lint, typecheck, format, true, Groovy.DEFAULTS,
-                Practices.DEFAULTS);
-    }
 
     /**
      * Parses the JSON form of the effective configuration. Unknown keys are ignored; missing keys keep

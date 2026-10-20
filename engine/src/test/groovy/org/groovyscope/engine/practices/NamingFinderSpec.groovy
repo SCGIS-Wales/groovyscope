@@ -144,12 +144,10 @@ class User { }
     def 'the configuration allows abbreviations, records vocabulary and switches the checks off'() {
         given:
         def base = EngineConfig.DEFAULTS
-        def tuned = new EngineConfig(base.sourceRoots(), base.classpath(), base.exclude(), base.trust(), base.lint(),
-                base.typecheck(), base.format(), base.javaSources(), base.groovy(),
-                new EngineConfig.Practices(true, [:], new EngineConfig.Naming(true, ['cfg', 'mgr'], [fetch: 'get'])))
-        def off = new EngineConfig(base.sourceRoots(), base.classpath(), base.exclude(), base.trust(), base.lint(),
-                base.typecheck(), base.format(), base.javaSources(), base.groovy(),
-                new EngineConfig.Practices(true, [:], new EngineConfig.Naming(false, [], [:])))
+        def tuned = base.toBuilder().practices(new EngineConfig.Practices(true, [:],
+                new EngineConfig.Naming(true, ['cfg', 'mgr'], [fetch: 'get']))).build()
+        def off = base.toBuilder().practices(new EngineConfig.Practices(true, [:],
+                new EngineConfig.Naming(false, [], [:]))).build()
 
         when:
         def allowed = findings(SearchFixtures.uri(root, 'naming/Messy.groovy'), tuned)

@@ -44,6 +44,8 @@ dependencies {
     }
 
     testImplementation(libs.spock.core)
+    // Specs read the shipped defaults.yaml to check the engine's own defaults agree with it.
+    testImplementation("org.apache.groovy:groovy-yaml:${libs.versions.groovy.get()}")
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

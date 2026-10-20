@@ -55,7 +55,7 @@ class MissingClasspathSpec extends Specification {
         given:
         Path workspace = Files.createDirectories(dir.resolve('ws/src/main/groovy'))
         Files.writeString(workspace.resolve('User.groovy'), 'class User {\n    String go() {\n        lib.Api.hello()\n    }\n    String twice() { go() + go() }\n}\n')
-        def config = new EngineConfig(['src/main/groovy'], [jarWithoutDependency().toString()], [], false)
+        def config = EngineConfig.builder().sourceRoots(['src/main/groovy']).classpath([jarWithoutDependency().toString()]).exclude([]).build()
         def services = new LanguageServices(new WorkspaceModel(dir.resolve('ws'), config), new GroovyCompiler())
 
         when:

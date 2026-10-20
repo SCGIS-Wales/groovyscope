@@ -52,9 +52,8 @@ class Service {
             Map<String, String> files = ['Service.groovy': SOURCE]) {
         Path src = Files.createDirectories(dir.resolve('src/main/groovy/app'))
         files.each { name, text -> Files.writeString(src.resolve(name), text) }
-        def config = new EngineConfig(['src/main/groovy'], classpath, [], false, EngineConfig.Lint.DEFAULTS,
-                EngineConfig.TypeCheck.DEFAULTS, EngineConfig.Format.DEFAULTS, true, EngineConfig.Groovy.DEFAULTS,
-                new EngineConfig.Practices(true, severities))
+        def config = EngineConfig.builder().sourceRoots(['src/main/groovy']).classpath(classpath).exclude([])
+                .practices(new EngineConfig.Practices(true, severities)).build()
         new LanguageServices(new WorkspaceModel(dir, config), new GroovyCompiler())
     }
 

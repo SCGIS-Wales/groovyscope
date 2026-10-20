@@ -133,8 +133,7 @@ class QualityServicesSpec extends Specification {
 
     def 'an unbundled formatter engine is refused'() {
         given:
-        def config = new EngineConfig(EngineConfig.DEFAULTS.sourceRoots(), [], EngineConfig.DEFAULTS.exclude(), false,
-            EngineConfig.Lint.DEFAULTS, EngineConfig.TypeCheck.DEFAULTS, new EngineConfig.Format('greclipse', 4, 1, true))
+        def config = EngineConfig.builder().format(new EngineConfig.Format('greclipse', 4, 1, true)).build()
         def other = new LanguageServices(new WorkspaceModel(Fixtures.project('lint-sample'), config), new GroovyCompiler())
 
         when:

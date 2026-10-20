@@ -26,7 +26,7 @@ class ProjectsSpec extends Specification {
 
     def 'jenkins shared library: vars script resolves into src classes'() {
         given:
-        def config = new EngineConfig(['vars', 'src'], [], EngineConfig.DEFAULTS.exclude(), false)
+        def config = EngineConfig.builder().sourceRoots(['vars', 'src']).build()
         def services = Fixtures.services('jenkins-lib', config)
         String script = 'vars/deployProxy.groovy'
 
