@@ -214,7 +214,10 @@
           "additionalProperties": {
             "oneOf": [
               {
-                "const": "off"
+                "enum": [
+                  "on",
+                  "off"
+                ]
               },
               {
                 "type": "object",

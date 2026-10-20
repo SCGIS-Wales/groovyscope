@@ -53,7 +53,8 @@ lint:
   failOnPriority: 2       # check exits non-zero on violations with this priority or higher
   publish: true           # push lint findings to the editor/agent as diagnostics
   publishMaxPriority: 2   # only priority 1-2 findings are pushed; priority 3 stays available through check/review
-  rules: {}               # per-rule overrides on top of the profile, e.g. {CompileStatic: off, LineLength: {priority: 3}}
+  rules: {}               # per-rule overrides on top of the profile, e.g. {CompileStatic: off, LineLength: {priority: 3},
+                          # Println: on}; on (or a priority) switches on a rule the profile leaves out
 diagnostics:
   push: "open"            # which documents get pushed diagnostics after an edit: open (the documents the editor or
                           # agent has open; the rest stays available through check and pull diagnostics) |
