@@ -358,6 +358,11 @@ def test_approval_rules_follow_the_tool_catalogue() -> None:
     assert set(tools_catalog.read_only_tools()) | set(tools_catalog.mutating_tools()) == set(tools_catalog.TOOL_INFO)
     template = json.loads(load_template("agents/groovy.json"))
     assert template["allowedTools"] == ["read", "grep", "glob", "code", *tools_catalog.v2_allowed_entries()]
+    # The reviewer is read only in what it can load as well as in what runs unasked: no bare server entry, which
+    # would hand it fix, format, rename and the classpath export.
+    reviewer = json.loads(load_template("agents/groovy-reviewer.json"))
+    expected = ["read", "code", *tools_catalog.v2_allowed_entries()]
+    assert reviewer["tools"] == expected and reviewer["allowedTools"] == expected
     assert kiro_agent.major_version("3.0.1") == 3 and kiro_agent.major_version("2.32.0") == 2
     assert kiro_agent.major_version(None) is None and kiro_agent.major_version("beta") is None
 
