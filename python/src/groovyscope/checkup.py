@@ -234,10 +234,10 @@ def daemon_item(root: Path, environ: Mapping[str, str], config_hash: str | None)
         return {
             "level": "info",
             "name": "daemon",
-            "message": f"running (engine {status.get('engineVersion', '?')}) with a {grown} heap, grown after an "
+            "message": f"running (engine {status.get('engine', '?')}) with a {grown} heap, grown after an "
             "out-of-memory exit; raise daemon.heap to keep it",
         }
-    return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engineVersion', '?')})"}
+    return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engine', '?')})"}
 
 
 def cache_item(environ: Mapping[str, str], logs_kept: int, *, fix: bool) -> tuple[Item, list[str]]:

@@ -144,14 +144,14 @@ def test_daemon_item_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         checkup.daemon,
         "info",
-        lambda *_a, **_k: {"running": True, "status": {"engineVersion": "1", "memory": {"usedMb": 9, "maxMb": 10}}},
+        lambda *_a, **_k: {"running": True, "status": {"engine": "1", "memory": {"usedMb": 9, "maxMb": 10}}},
     )
     hot = checkup.daemon_item(tmp_path, {}, "abc")
     assert hot["level"] == "warn" and "9 of 10 MB" in hot["message"]
     monkeypatch.setattr(
         checkup.daemon,
         "info",
-        lambda *_a, **_k: {"running": True, "status": {"configHash": "old", "engineVersion": "1"}},
+        lambda *_a, **_k: {"running": True, "status": {"configHash": "old", "engine": "1"}},
     )
     older = checkup.daemon_item(tmp_path, {}, "abc")
     assert older["level"] == "info" and "reloads it in place" in older["message"] and "fix" not in older
