@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.25.0...v0.25.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* phase 6 hygiene and deduplication of the improvement plan ([#116](https://github.com/SCGIS-Wales/groovyscope/issues/116)) ([81f6a89](https://github.com/SCGIS-Wales/groovyscope/commit/81f6a8924234b4b95d320d4460098277592af0d5))
+
 ## [0.25.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.4...v0.25.0) (2026-10-20)
 
 
