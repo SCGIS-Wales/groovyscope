@@ -138,6 +138,10 @@ public final class JenkinsFinder {
                 continue;
             }
             String mutable = mutableValue(field.getInitialValueExpression());
+            if ("java.util.ArrayList".equals(mutable) && !field.isDynamicTyped()
+                    && field.getOriginType().getName().endsWith("Set")) {
+                mutable = "java.util.LinkedHashSet"; // a list literal given to a Set field is coerced to one
+            }
             if (mutable != null) {
                 Severity ceiling = THREAD_SAFE.contains(mutable) ? Severity.INFORMATION : Severity.WARNING;
                 report038(context, field, ceiling, "static final field '" + field.getName() + "' holds "

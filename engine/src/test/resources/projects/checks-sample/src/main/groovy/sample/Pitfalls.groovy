@@ -77,6 +77,25 @@ class Pitfalls {
     List<String> trimmed(List<String> rows) {
         rows.collect { it.trim() }
     }
+
+    List<Integer> collected(List<Integer> values) {
+        List<Integer> seen = []
+        values.each { Integer value ->
+            seen << value
+            return seen // GS037
+        }
+        seen
+    }
+
+    List<String> wrapped(List<String> rows) {
+        rows.findAll {
+            it.length() > 3 && it.startsWith('a')
+        }
+    }
+
+    String describeLimit(Integer limit) {
+        limit || limit == 0 ? 'set' : 'unset'
+    }
 }
 
 record Tagged(String name, List<String> tags) { } // GS034

@@ -192,10 +192,23 @@ final class PitfallFinder {
                 lookup(gstring, "the subscript on a map with String keys");
             }
             if (op == Types.LOGICAL_AND || op == Types.LOGICAL_OR) {
-                condition(expression.getLeftExpression());
-                condition(expression.getRightExpression());
+                // `count || count == 0` already says what it means about zero
+                if (!comparedBeside(expression.getLeftExpression(), expression.getRightExpression())) {
+                    condition(expression.getLeftExpression());
+                }
+                if (!comparedBeside(expression.getRightExpression(), expression.getLeftExpression())) {
+                    condition(expression.getRightExpression());
+                }
             }
             super.visitBinaryExpression(expression);
+        }
+
+        /** Whether {@code other} compares {@code operand} explicitly (to 0, null or anything else). */
+        private boolean comparedBeside(Expression operand, Expression other) {
+            String text = context.source(operand instanceof BooleanExpression bool ? bool.getExpression() : operand);
+            String beside = context.source(other);
+            return text != null && beside != null && Pattern.compile(Pattern.quote(text) + "\\s*(==|!=|<|>|<=|>=)")
+                    .matcher(beside).find();
         }
 
         /** GS037: an explicit return in an each closure only ends that element's turn. */
@@ -207,9 +220,13 @@ final class PitfallFinder {
                 @Override
                 public void visitReturnStatement(ReturnStatement statement) {
                     String text = context.source(statement);
-                    if (text != null && text.startsWith("return")) {
-                        context.report("GS037", statement, "return inside " + method + " only skips to the next "
-                                + "element, like continue; use find, any or every to stop early, or a for loop");
+                    if (text != null && text.startsWith("return") && !statement.isReturningNullOrVoid()) {
+                        context.report("GS037", statement, "the value returned inside " + method + " is discarded and "
+                                + "the loop goes on with the next element; use find, collect, any or every for a result");
+                    } else if (text != null && text.startsWith("return")) {
+                        context.reportAtMost(Severity.INFORMATION, "GS037", statement, "return inside " + method
+                                + " only skips to the next element, like continue; fine when that is meant, else use "
+                                + "find, any or every to stop early");
                     }
                     super.visitReturnStatement(statement);
                 }
@@ -274,12 +291,25 @@ final class PitfallFinder {
         @Override
         public void visitClosureExpression(ClosureExpression closure) {
             if (!context.gradle() && !closure.isParameterSpecified() && closure.getCode() != null
-                    && closure.getLastLineNumber() > closure.getLineNumber() && usesIt(closure)) {
+                    && closure.getLastLineNumber() > closure.getLineNumber() && hasBody(closure) && usesIt(closure)) {
                 context.reportAtMost(Severity.INFORMATION, "GS029", closure, "this closure spans "
                         + (closure.getLastLineNumber() - closure.getLineNumber() + 1) + " lines on the implicit 'it'; "
                         + "name the parameter (row -> ...) so the body says what it works on");
             }
             super.visitClosureExpression(closure);
+        }
+
+        /**
+         * Whether a closure has a body worth naming its parameter for: several statements, or a block statement
+         * ({@code if}, a loop); one expression wrapped over lines reads fine with {@code it}.
+         */
+        private static boolean hasBody(ClosureExpression closure) {
+            List<org.codehaus.groovy.ast.stmt.Statement> statements =
+                    closure.getCode() instanceof org.codehaus.groovy.ast.stmt.BlockStatement block
+                            ? block.getStatements() : List.of(closure.getCode());
+            return statements.size() > 1 || statements.size() == 1
+                    && !(statements.get(0) instanceof org.codehaus.groovy.ast.stmt.ExpressionStatement)
+                    && !(statements.get(0) instanceof ReturnStatement);
         }
 
         private static boolean usesIt(ClosureExpression closure) {

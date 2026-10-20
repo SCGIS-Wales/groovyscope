@@ -81,6 +81,10 @@ class GeneralChecksSpec extends Specification {
         severity('SqlUse.groovy', 'GS035', 'concatenat') == Diagnostic.Severity.ERROR
         severity('Pitfalls.groovy', 'GS028', "'count'") == Diagnostic.Severity.WARNING
         severity('Pitfalls.groovy', 'GS028', "'size'") == Diagnostic.Severity.INFORMATION
+
+        and: 'a value returned inside each is a mistake; a bare return used as continue is only information'
+        severity('Pitfalls.groovy', 'GS037', 'discarded') == Diagnostic.Severity.WARNING
+        severity('Pitfalls.groovy', 'GS037', 'like continue') == Diagnostic.Severity.INFORMATION
     }
 
     def 'a LIKE wildcard around an interpolation is reported without the quote-removing fix'() {
