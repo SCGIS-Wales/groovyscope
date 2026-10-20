@@ -153,8 +153,11 @@ V2 agent files. What that means for groovyscope:
   an `ask` rule for the mutating ones, derived from the same tool catalogue the MCP server uses.
 - Hooks: V3 names the start hook `SessionStart`; the 2.x name `agentSpawn` in the universal file is reported
   to keep working. The check below confirms it.
-- Steering: V3 honours `inclusion: fileMatch`, so a later release can load the Groovy steering only when
-  Groovy files are in play.
+- Steering: the Groovy steering files carry `inclusion: fileMatch` on `**/*.groovy`, `**/*.gradle` and
+  `**/Jenkinsfile*`, so an agent other than `groovy` loads them only when such files are in play (V3 honours
+  the mode; the 2.x engines honour only `always`, so there they load for the `groovy` agent alone). The
+  `groovy` agent always has them: its `resources` list the steering folder, and resources ignore the front
+  matter.
 
 Checklist to run once on Kiro CLI 2.31 and again on 3.0, with the results pasted into `docs/roadmap.md`:
 

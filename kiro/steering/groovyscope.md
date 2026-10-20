@@ -1,5 +1,6 @@
 ---
-inclusion: always
+inclusion: fileMatch
+fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
 ---
 <!-- written by groovyscope {{version}}; refreshed by `groovyscope kiro repair --global` -->
 # Groovy navigation and quality policy
