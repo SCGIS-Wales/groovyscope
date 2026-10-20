@@ -24,7 +24,7 @@ def python_modules() -> list[str]:
 
 
 def engine_packages() -> list[str]:
-    """Each engine package that holds Java sources, dotted below `org.groovyscope.engine` (the root by its full name)."""
+    """Each engine package holding Java sources, dotted below `org.groovyscope.engine` (the root by its full name)."""
     found = {path.parent.relative_to(ENGINE).as_posix().replace("/", ".") for path in ENGINE.rglob("*.java")}
     return sorted("org.groovyscope.engine" if package == "." else package for package in found)
 
