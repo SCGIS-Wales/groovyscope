@@ -74,6 +74,34 @@ class WorkspaceRegistrySpec extends Specification {
         failed.cause instanceof ResponseErrorException
     }
 
+    def 'a damaged symbol cache is set aside and rebuilt instead of staying off for good'() {
+        given:
+        Path root = Files.createDirectories(temp.resolve('project'))
+        Path cache = temp.resolve('cache')
+        Path db = cache.resolve(WorkspaceRegistry.workspaceKey(root)).resolve('symbols.db')
+        Files.createDirectories(db.parent)
+        Files.writeString(db, 'this is not sqlite, a crash left half a page here')
+
+        when:
+        def services = new WorkspaceRegistry(EngineConfig.DEFAULTS, cache).apply(root)
+
+        then: 'a fresh store took its place and the damaged file is kept beside it for inspection'
+        new String(Files.readAllBytes(db), 0, 15, 'US-ASCII') == 'SQLite format 3'
+        Files.readString(db.resolveSibling('symbols.db.damaged')).startsWith('this is not sqlite')
+
+        cleanup:
+        services?.close()
+    }
+
+    def 'only a damaged store is set aside, never one another process holds'() {
+        expect:
+        WorkspaceRegistry.damaged(new IOException('x', new org.sqlite.SQLiteException('not a db', org.sqlite.SQLiteErrorCode.SQLITE_NOTADB)))
+        WorkspaceRegistry.damaged(new IOException('x', new org.sqlite.SQLiteException('bad', org.sqlite.SQLiteErrorCode.SQLITE_CORRUPT)))
+        !WorkspaceRegistry.damaged(new IOException('x', new org.sqlite.SQLiteException('busy', org.sqlite.SQLiteErrorCode.SQLITE_BUSY)))
+        !WorkspaceRegistry.damaged(new IOException('permission denied'))
+        !WorkspaceRegistry.setAside(temp.resolve('missing.db'))
+    }
+
     def 'eviction never hands out a closed workspace, and a stale reference fails fast (E-19)'() {
         given:
         Path root = Files.createDirectories(temp.resolve('w'))

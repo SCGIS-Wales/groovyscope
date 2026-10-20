@@ -99,6 +99,16 @@ final class LintService {
         return loader;
     }
 
+    /** Closes the lint class loaders so their jars and source roots are released now, not at a later GC. */
+    void close() {
+        for (AtomicReference<LintLoader> held : List.of(lintLoader, previousLintLoader)) {
+            LintLoader retired = held.getAndSet(null);
+            if (retired != null) {
+                org.groovyscope.engine.util.Closeables.closeQuietly(retired.loader());
+            }
+        }
+    }
+
     /**
      * The profile of a file in this workspace: {@link QualityServices#profileByName}, and {@code jenkins} as well for
      * the {@code src} classes of a Jenkins shared library (a folder holding {@code vars/} beside {@code src/} or
