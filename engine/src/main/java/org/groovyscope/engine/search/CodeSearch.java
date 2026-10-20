@@ -178,6 +178,12 @@ public final class CodeSearch {
      * filter, a call whose receiver type is unknown still matches when its name is given, with the fact
      * {@code receiverKnown: false}.
      *
+     * @param modules the compiled trees by document URI
+     * @param lines the text of a document, for snippets and positions
+     * @param uris the documents to search; empty for every compiled Groovy document
+     * @param query what to look for
+     * @param resolver types call receivers
+     * @return the matches, sorted by document and position
      * @throws IllegalArgumentException for an unknown kind or modifier, or a pattern that does not compile
      */
     public static List<Match> find(Map<String, ModuleNode> modules, Function<String, TextLines> lines,

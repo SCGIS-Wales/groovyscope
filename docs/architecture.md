@@ -13,6 +13,13 @@ CodeNarc exist only there.
 
 ## Engine (`engine/`, Java 21, bytecode 17)
 
+The engine compiles on a JDK 21 toolchain to Java 17 bytecode (`options.release.set(17)`). Java 17 is the floor
+because it is the oldest long-term-support JDK still common on build agents, and groovyscope runs where the build
+runs; nothing in the engine needs a newer language level. The build's `checkJava17Bytecode` task refuses a
+dependency compiled for a newer JDK, and CI runs the integration tests on the built JAR with Temurin 17, 21 and 25
+and Corretto 21 (since Phase 3 of the improvement plan). Doclint checks the Javadoc of public types and members
+(`-Xdoclint:all,-missing/public`), so a broken reference fails the build.
+
 Packages under `org.groovyscope.engine`:
 
 | Package | Stage | Responsibility |
@@ -22,6 +29,7 @@ Packages under `org.groovyscope.engine`:
 | `config` | 1 | The slice of `.groovyscope.yaml` the engine needs, handed over as JSON by the Python front end. |
 | `workspace` | 1 | Source discovery under the configured roots (whole-tree fallback), open-document overlay, classpath from configuration (never inferred). |
 | `compile` | 1 | `CompilationUnit` to `CANONICALIZATION`, never class generation; Grape and `@ASTTest` off; a filtered parent class loader; global AST transforms gated by `workspace.trust`. See "Compile strategy". |
+| `util` | 6 | `Uris` (a `file:` URI as a path), `Hashes` (the one SHA-256 helper) and `Closeables`, shared by every package. |
 | `index`, `semantics` | 1 | Positioned node index per document, declaration lookup, and a resolver that assigns a confidence to every answer. |
 | `services` | 1 | `LanguageServices`: the protocol-free engine API over an immutable `Snapshot` (compile + index + resolver). |
 | `daemon` | 2 | Unix domain socket server, one front end per connection, shared `WorkspaceRegistry`, idle watchdog, `groovyscope/status` and `groovyscope/shutdownDaemon`. |

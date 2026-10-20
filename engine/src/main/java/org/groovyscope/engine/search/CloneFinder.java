@@ -122,7 +122,16 @@ public final class CloneFinder {
     private CloneFinder() {
     }
 
-    /** Clone groups in the given documents (all compiled Groovy documents when {@code uris} is empty). */
+    /**
+     * Clone groups in the given documents (all compiled Groovy documents when {@code uris} is empty).
+     *
+     * @param modules the compiled trees by document URI
+     * @param lines the text of a document, to compare copies and place them
+     * @param uris the documents to search; empty for every compiled Groovy document
+     * @param minLines the fewest lines a repeated run must span
+     * @param minStatements the fewest statements a repeated run must hold
+     * @return the groups, the most duplicated lines (span times copies) first
+     */
     public static List<Group> find(Map<String, ModuleNode> modules, Function<String, TextLines> lines,
             Collection<String> uris, int minLines, int minStatements) {
         int window = Math.max(1, minStatements);

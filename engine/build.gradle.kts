@@ -52,7 +52,9 @@ dependencies {
 tasks.withType<JavaCompile>().configureEach {
     options.release.set(17)
     options.encoding = "UTF-8"
-    options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror"))
+    // Doclint checks the Javadoc of public types and members (syntax, references, HTML); a missing comment is
+    // allowed, a wrong one fails the build like any other warning.
+    options.compilerArgs.addAll(listOf("-Xlint:all", "-Xdoclint:all,-missing/public", "-Werror"))
 }
 
 tasks.withType<GroovyCompile>().configureEach {
