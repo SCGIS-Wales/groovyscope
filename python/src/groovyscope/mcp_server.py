@@ -42,9 +42,9 @@ from groovyscope.edits import (
     changed_line_count,
     counts_by_path,
     file_edits,
-    uri_path,
+    fix_outcome,
+    settle,
     write_document,
-    write_if_unchanged,
 )
 from groovyscope.kiro import write_atomically
 from groovyscope.paths import (
@@ -500,17 +500,14 @@ def format_files(
     if apply and changed:
         decision = confirm_edits(confirm_policy, f"Format {len(changed)} file(s)", changed, root)
         apply = not declined(decision)
-    files = []
-    for edit in changed:
-        if apply and not write_if_unchanged(edit, refused):
-            continue
-        files.append(
-            {
-                "path": relative_path(edit["path"].as_uri(), root),
-                "linesChanged": changed_line_count(edit["before"], edit["after"]),
-                "applied": apply,
-            }
-        )
+    files = [
+        {
+            "path": relative_path(row["edit"]["path"].as_uri(), root),
+            "linesChanged": row["lines"],
+            "applied": row["applied"],
+        }
+        for row in settle(changed, refused, apply=apply)
+    ]
     result: dict[str, Any] = {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
     if refused:
         result["refused"] = [relative_path(uri, root) for uri in refused]
@@ -950,25 +947,21 @@ def fix(
     if apply and changed:
         decision = confirm_edits(confirm_policy, f"Apply safe fixes to {len(changed)} file(s)", changed, root)
         apply = not declined(decision)
-    fixed = counts_by_path(raw.get("appliedCounts", {}))
+    settled = settle(changed, refused, apply=apply)
+    outcome = fix_outcome(raw, refused)
     files: list[dict[str, Any]] = []
-    for edit in changed:
-        if apply and not write_if_unchanged(edit, refused):
-            continue
-        uri = edit["path"].as_uri()
+    for row in settled:
+        path = row["edit"]["path"]
         entry: dict[str, Any] = {
-            "path": relative_path(uri, root),
-            "codes": next((v for k, v in raw.get("applied", {}).items() if uri_path(k) == edit["path"]), []),
-            "linesChanged": changed_line_count(edit["before"], edit["after"]),
-            "applied": apply,
+            "path": relative_path(path.as_uri(), root),
+            "codes": outcome["codes"].get(path, []),
+            "linesChanged": row["lines"],
+            "applied": row["applied"],
         }
-        if edit["path"] in fixed:
-            entry["fixed"] = fixed[edit["path"]]
+        if path in outcome["fixed"]:
+            entry["fixed"] = outcome["fixed"][path]
         files.append(entry)
-    rejected = {
-        **{relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()},
-        **{relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused},
-    }
+    rejected = {relative_path(path.as_uri(), root): why for path, why in outcome["rejected"].items()}
     answer: dict[str, Any] = {"changed": len(files), "files": files[:cap], "rejected": rejected}
     answer.update(unfixed(raw, root, cap))
     return with_decision(answer, decision)

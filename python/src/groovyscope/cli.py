@@ -52,10 +52,9 @@ from groovyscope import paths as workspace_paths
 from groovyscope.config import dump_yaml, load_config, load_config_with_notes
 from groovyscope.doctor import build_report, has_failures
 from groovyscope.edits import (
-    changed_line_count,
-    counts_by_path,
     file_edits,
-    write_if_unchanged,
+    fix_outcome,
+    settle,
 )
 from groovyscope.jar import locate_jar, read_manifest
 from groovyscope.java import JdkInfo, discover
@@ -1804,18 +1803,11 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
     result = engine_call(
         socket_file, "groovyscope/format", {"root": str(obj["root"]), "uris": to_uris(obj["root"], paths)}
     )
-    rows: list[dict[str, Any]] = []
     changed, refused = file_edits(result.get("edits", {}), obj["root"])
-    for edit in changed:
-        if apply_changes and not write_if_unchanged(edit, refused):
-            continue
-        rows.append(
-            {
-                "path": shown_path(edit["path"], obj["root"]),
-                "lines": changed_line_count(edit["before"], edit["after"]),
-                "applied": apply_changes,
-            }
-        )
+    rows = [
+        {"path": shown_path(row["edit"]["path"], obj["root"]), "lines": row["lines"], "applied": row["applied"]}
+        for row in settle(changed, refused, apply=apply_changes)
+    ]
     for uri in refused:
         LOG.warning(f"groovyscope: refused an edit outside the workspace: {uri}")
     checked = int(result.get("checked", 0))
@@ -1862,28 +1854,22 @@ def fix(
         params.update(scope)
     socket_file, _ = daemon_socket_for(obj)
     result = engine_call(socket_file, "groovyscope/fix", params)
-    rows: list[dict[str, Any]] = []
     changed, refused = file_edits(result.get("edits", {}), obj["root"])
-    applied_codes = {uri_to_path(uri): codes for uri, codes in result.get("applied", {}).items()}
-    fixed = counts_by_path(result.get("appliedCounts", {}))
-    left = {shown_path(path, obj["root"]): counts for path, counts in counts_by_path(result.get("left", {})).items()}
-    review = {
-        shown_path(path, obj["root"]): counts for path, counts in counts_by_path(result.get("needsReview", {})).items()
-    }
-    for edit in changed:
-        if apply_changes and not write_if_unchanged(edit, refused):
-            continue
-        rows.append(
-            {
-                "path": shown_path(edit["path"], obj["root"]),
-                "codes": applied_codes.get(edit["path"], []),
-                "fixed": fixed.get(edit["path"], {}),
-                "lines": changed_line_count(edit["before"], edit["after"]),
-                "applied": apply_changes,
-            }
-        )
-    rejected = {shown_path(uri_to_path(uri), obj["root"]): why for uri, why in result.get("rejected", {}).items()}
-    rejected.update({shown_path(uri_to_path(uri), obj["root"]): "outside the workspace; refused" for uri in refused})
+    settled = settle(changed, refused, apply=apply_changes)
+    outcome = fix_outcome(result, refused)
+    rows: list[dict[str, Any]] = [
+        {
+            "path": shown_path(row["edit"]["path"], obj["root"]),
+            "codes": outcome["codes"].get(row["edit"]["path"], []),
+            "fixed": outcome["fixed"].get(row["edit"]["path"], {}),
+            "lines": row["lines"],
+            "applied": row["applied"],
+        }
+        for row in settled
+    ]
+    left = {shown_path(path, obj["root"]): counts for path, counts in outcome["left"].items()}
+    review = {shown_path(path, obj["root"]): counts for path, counts in outcome["needsReview"].items()}
+    rejected = {shown_path(path, obj["root"]): why for path, why in outcome["rejected"].items()}
     if as_json:
         click.echo(compact_json({"files": rows, "left": left, "needsReview": review, "rejected": rejected}))
     else:
