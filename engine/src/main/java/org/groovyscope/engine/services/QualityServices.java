@@ -621,7 +621,7 @@ public final class QualityServices {
             config = config.withGroovy(new EngineConfig.Groovy(governing.get().target().groovy(), List.of()));
         }
         List<PracticeFinder.Practice> found = new ArrayList<>();
-        for (PracticeFinder.Practice practice : PracticeFinder.find(uri, module, text, config)) {
+        for (PracticeFinder.Practice practice : PracticeFinder.find(uri, module, text, config, profileFor(uri))) {
             if (governing.isPresent() && "GS010".equals(practice.diagnostic().code())) {
                 Diagnostic.Severity severity = PracticeFinder.severity("RP002", workspace.config());
                 if (severity != null) {

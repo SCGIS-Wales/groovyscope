@@ -151,13 +151,23 @@ public final class PracticeFinder {
     private PracticeFinder() {
     }
 
-    /** Practice findings for one Groovy document. */
+    /** Practice findings for one Groovy document, its profile read from the path. */
     public static List<Practice> find(String uri, ModuleNode module, String text, EngineConfig config) {
+        return find(uri, module, text, config, null);
+    }
+
+    /**
+     * Practice findings for one Groovy document checked with lint profile {@code profile} ({@code null} to read it
+     * from the path).
+     */
+    public static List<Practice> find(String uri, ModuleNode module, String text, EngineConfig config,
+            String profile) {
         List<Practice> out = new ArrayList<>();
         if (module == null || text == null || !config.practices().enabled() || uri.endsWith(".java")) {
             return out;
         }
-        Visitor visitor = new Visitor(uri, module, new TextLines(text), config, out);
+        PracticeContext context = PracticeContext.of(uri, module, text, config, profile, out);
+        Visitor visitor = new Visitor(uri, module, context.lines(), config, out);
         visitor.visitModule();
         out.addAll(NamingFinder.find(uri, module, config));
         out.addAll(TestDoubleFinder.find(uri, module, config));
