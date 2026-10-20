@@ -73,6 +73,9 @@ public final class SymbolStore implements Closeable {
                           start_line INTEGER, start_col INTEGER, end_line INTEGER, end_col INTEGER,
                           sel_start_line INTEGER, sel_start_col INTEGER, sel_end_line INTEGER, sel_end_col INTEGER)""");
                 statement.execute("CREATE INDEX IF NOT EXISTS symbols_uri ON symbols(uri)");
+            } catch (SQLException e) {
+                connection.close(); // a file that is not a database: release its handle before reporting it
+                throw e;
             }
             return new SymbolStore(connection);
         } catch (SQLException e) {
