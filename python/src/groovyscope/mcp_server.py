@@ -22,6 +22,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from groovyscope import (
     changes,
+    config,
     daemon,
     diagnostics,
     interaction,
@@ -146,7 +147,7 @@ def compact_site(site: Mapping[str, Any], root: Path) -> dict[str, Any]:
     }
 
 
-MESSAGE_CHARS = 400  # default for output.maxMessageChars
+MESSAGE_CHARS = int(config.default("output", "maxMessageChars"))
 
 
 def compact_diagnostic(uri: str, item: Mapping[str, Any], root: Path, limit: int = MESSAGE_CHARS) -> dict[str, Any]:
@@ -239,8 +240,8 @@ def imported_findings(
 
 def pager(output: Mapping[str, Any]) -> tuple[Paged, int]:
     """A paging function honouring output.maxResults / output.maxBytes, plus the result cap it applies."""
-    max_results = int(output.get("maxResults", 50))
-    max_bytes = int(output.get("maxBytes", 16000))
+    max_results = int(output.get("maxResults", config.default("output", "maxResults")))
+    max_bytes = int(output.get("maxBytes", config.default("output", "maxBytes")))
 
     def paged(items: Sequence[Any], limit: int | None, cursor: int) -> dict[str, Any]:
         size = min(max_results, limit) if limit else max_results
@@ -1150,16 +1151,21 @@ def build_tools(
 ) -> dict[str, Callable[..., Any]]:
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
-    clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
+    clip_at = int(output.get("maxMessageChars", config.default("output", "maxMessageChars")))
     report_settings = output.get("reports") if isinstance(output.get("reports"), Mapping) else {}
     classpath_settings = output.get("classpath") if isinstance(output.get("classpath"), Mapping) else {}
     mcp_settings: Mapping[str, Any] = output.get("mcp") or {}
-    policy = str(mcp_settings.get("confirmWrites", interaction.POLICY_AUTO))
+    policy = str(mcp_settings.get("confirmWrites", config.default("mcp", "confirmWrites")))
     tools: dict[str, Callable[..., Any]] = {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, paged, cap),
         **mcp_search.search_tools(
-            root, call, paged, cap, settings=output, max_chars=int(output.get("maxBytes", 16000))
+            root,
+            call,
+            paged,
+            cap,
+            settings=output,
+            max_chars=int(output.get("maxBytes", config.default("output", "maxBytes"))),
         ),
         **quality_tools(
             root,
@@ -1182,7 +1188,7 @@ def build_tools(
         )
     )
     diagram_settings: Mapping[str, Any] = output.get("diagram") or {}
-    shared_callers = int(diagram_settings.get("sharedHelperCallers", 5))
+    shared_callers = int(diagram_settings.get("sharedHelperCallers", config.default("diagram", "sharedHelperCallers")))
     tools.update(
         mcp_understanding.understanding_tools(
             root, call, cap, tools, confirm_policy=policy, shared_callers=shared_callers
@@ -1408,8 +1414,8 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
     register_prompts(server)
     register_resources(server)
-    structured = bool(output.get("structured", False))
-    max_bytes = int(output.get("maxBytes", 16000))
+    structured = bool(output.get("structured", config.default("output", "structured")))
+    max_bytes = int(output.get("maxBytes", config.default("output", "maxBytes")))
     record = client_recorder(daemon.client_path(root, environ))
     for name, function in build_tools(root, call, output, environ).items():
         title, read_only = TOOL_INFO.get(name, (name, True))
@@ -1515,8 +1521,8 @@ def compact_registered_schema(server: MCPServer, name: str) -> None:
 
 Configuration = Callable[[], tuple[str, str] | None]
 RELOAD_METHOD = rpc.RELOAD_METHOD
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 100.0  # under Kiro's 120 s tool budget
-DEFAULT_MAX_IN_FLIGHT = 4
+DEFAULT_REQUEST_TIMEOUT_SECONDS = float(config.default("mcp", "requestTimeoutSeconds"))  # under Kiro's 120 s budget
+DEFAULT_MAX_IN_FLIGHT = int(config.default("mcp", "maxInFlight"))
 RELOAD_TIMEOUT_SECONDS = 60.0
 Opener = Callable[[Path], Any]
 EngineCall = Callable[..., Any]
@@ -1645,7 +1651,7 @@ def engine_dispatcher(
     return (dispatch, lambda: closer(state["session"]))
 
 
-DEFAULT_PROGRESS_SECONDS = 5.0
+DEFAULT_PROGRESS_SECONDS = float(config.default("mcp", "progressSeconds"))
 
 
 def single_flight(

@@ -101,6 +101,24 @@ def test_parse_scalar(raw: str, expected: object) -> None:
     assert parse_scalar(raw) == expected
 
 
+def test_env_values_follow_the_schema_type_of_their_setting() -> None:
+    env = {
+        "GROOVYSCOPE_GROOVY__VERSION": "6.0",
+        "GROOVYSCOPE_DAEMON__IDLETIMEOUTMINUTES": "45",
+        "GROOVYSCOPE_LINT__RULESET": "null",
+        "GROOVYSCOPE_PRACTICES__SEVERITY__GS001": "off",
+        "GROOVYSCOPE_MCP__REQUESTTIMEOUTSECONDS": "90",
+        "GROOVYSCOPE_DAEMON__NOSUCHKEY": "12",
+    }
+    overrides = env_overrides(env, load_defaults())
+    assert overrides["groovy"]["version"] == "6.0"
+    assert overrides["daemon"]["idleTimeoutMinutes"] == 45
+    assert overrides["lint"]["ruleset"] is None
+    assert list(overrides["practices"]["severity"].values()) == ["off"]  # a string map: values stay strings
+    assert overrides["mcp"]["requestTimeoutSeconds"] == 90
+    assert overrides["daemon"]["nosuchkey"] == 12  # unknown to the schema: YAML rules, and validation reports it
+
+
 def test_match_key_recovers_camel_case() -> None:
     assert match_key({"idleTimeoutMinutes": 1}, "IDLETIMEOUTMINUTES") == "idleTimeoutMinutes"
     assert match_key({"a": 1}, "UNKNOWN") == "unknown"

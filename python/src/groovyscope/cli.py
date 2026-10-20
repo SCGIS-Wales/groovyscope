@@ -543,7 +543,11 @@ def cds_archive_for(
     effective: dict[str, Any], jdk: JdkInfo, jar_sha256: str | None, environ: dict[str, str]
 ) -> Path | None:
     """The CDS archive to use, or None when disabled, unsupported by the JDK, or the JAR is unverified."""
-    if not effective["daemon"].get("cds", True) or jdk["version"] < MIN_JDK_FOR_AUTO_CDS or not jar_sha256:
+    if (
+        not effective["daemon"].get("cds", config_module.default("daemon", "cds"))
+        or jdk["version"] < MIN_JDK_FOR_AUTO_CDS
+        or not jar_sha256
+    ):
         return None
     return daemon_lifecycle.cache_dir(environ) / "cds" / f"engine-{jar_sha256[:16]}.jsa"
 
@@ -567,7 +571,9 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
     )
     try:
         installed = provision.provision_jdk(
-            provision.jdk_dir(environ), feature=feature, vendor=str(effective["jdk"].get("vendor", "temurin"))
+            provision.jdk_dir(environ),
+            feature=feature,
+            vendor=str(effective["jdk"].get("vendor", config_module.default("jdk", "vendor"))),
         )
     except (OSError, ValueError, KeyError) as exc:
         click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
@@ -1268,7 +1274,7 @@ def changed_uncovered(root: Path, effective: Mapping[str, Any], base: str | None
 
 
 def shown_limit(effective: Mapping[str, Any]) -> int:
-    return int((effective.get("output") or {}).get("maxResults", 20))
+    return int((effective.get("output") or {}).get("maxResults", config_module.default("output", "maxResults")))
 
 
 def coverage_lines(coverage: Mapping[str, Any]) -> list[str]:
@@ -1347,7 +1353,9 @@ def verify_command(
     gradle: dict[str, Any] | None = None
     uncovered: dict[str, Any] | None = None
     if args and not dry_run:
-        gradle = run_tests(args, obj["root"], int(settings.get("timeoutSeconds", 1800)))
+        gradle = run_tests(
+            args, obj["root"], int(settings.get("timeoutSeconds", config_module.default("verify", "timeoutSeconds")))
+        )
         lines += build_lines(gradle, args, shown_limit(effective))
         if coverage and plan_result.get("coverageTask"):
             uncovered = changed_uncovered(obj["root"], effective, base, staged=staged)
@@ -1386,7 +1394,9 @@ def verify_failed(obj: dict[str, Any], sources: Sequence[Path], *, dry_run: bool
         if dry_run:
             lines.append("dry run: nothing was built")
         else:
-            timeout = int((effective.get("verify") or {}).get("timeoutSeconds", 1800))
+            timeout = int(
+                (effective.get("verify") or {}).get("timeoutSeconds", config_module.default("verify", "timeoutSeconds"))
+            )
             gradle = run_tests(command, root, timeout)
             lines += build_lines(gradle, command, shown_limit(effective))
     if as_json:
@@ -1446,7 +1456,9 @@ def classpath_settings(obj: dict[str, Any], effective: Mapping[str, Any]) -> dic
     how long the MCP tool waits for it before answering that it still runs."""
     workspace = effective.get("workspace", {})
     listed = workspace.get("classpathFile") or classpath_export.DEFAULT_FILE
-    budget = float((effective.get("mcp") or {}).get("requestTimeoutSeconds", 100))
+    budget = float(
+        (effective.get("mcp") or {}).get("requestTimeoutSeconds", config_module.default("mcp", "requestTimeoutSeconds"))
+    )
     return {
         "file": str(obj["root"] / Path(listed).expanduser()),
         "configured": bool(workspace.get("classpath")),
@@ -1455,7 +1467,9 @@ def classpath_settings(obj: dict[str, Any], effective: Mapping[str, Any]) -> dic
         "javaHome": obj.get("jdk_home"),
         "timeoutSeconds": export_timeout(effective),
         "waitSeconds": max(1.0, budget - EXPORT_REPLY_MARGIN_SECONDS),
-        "progressSeconds": float((effective.get("mcp") or {}).get("progressSeconds", 5)),
+        "progressSeconds": float(
+            (effective.get("mcp") or {}).get("progressSeconds", config_module.default("mcp", "progressSeconds"))
+        ),
     }
 
 
@@ -1465,7 +1479,7 @@ EXPORT_REPLY_MARGIN_SECONDS = 10.0  # refresh_classpath answers this long before
 def export_timeout(effective: Mapping[str, Any]) -> int:
     """``classpath.timeoutSeconds``: how long a classpath export (the build) may run."""
     section = effective.get("classpath") or {}
-    return max(1, int(section.get("timeoutSeconds", classpath_export.DEFAULT_TIMEOUT_SECONDS)))
+    return max(1, int(section.get("timeoutSeconds", config_module.default("classpath", "timeoutSeconds"))))
 
 
 def triage_lines(triage: Mapping[str, Any]) -> list[str]:

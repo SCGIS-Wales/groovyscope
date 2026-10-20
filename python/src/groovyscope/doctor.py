@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from groovyscope import __version__, daemon, kiro_agent, kiro_steer, profiles, sweep
+from groovyscope import config as config_module
 from groovyscope.config import load_config_with_notes
 from groovyscope.jar import locate_jar
 from groovyscope.java import RECOMMENDED_JDK, JdkInfo, discover, jdk_status
@@ -44,7 +45,7 @@ def config_check(
 def jdk_check(config: Mapping[str, Any] | None, environ: Mapping[str, str]) -> tuple[Check, JdkInfo | None]:
     jdk_section = (config or {}).get("jdk", {})
     configured = jdk_section.get("home")
-    minimum = int(jdk_section.get("minimum", 17))
+    minimum = int(jdk_section.get("minimum", config_module.default("jdk", "minimum")))
     provisioned = provisioned_homes(jdk_dir(environ))
     found = discover(configured, environ, minimum=minimum, provisioned=provisioned)
     info = found["jdk"]
@@ -198,7 +199,9 @@ def cache_check(environ: Mapping[str, str], config: Mapping[str, Any] | None) ->
     """What has piled up under the cache directory: rotated logs beyond the kept count, stale CDS archives and
     old heap dumps; `groovyscope checkup --fix` removes them."""
     section = (config or {}).get("daemon", {}) if isinstance(config, Mapping) else {}
-    kept = int(section.get("logsKept", 3)) if isinstance(section, Mapping) else 3
+    kept = int(
+        (section if isinstance(section, Mapping) else {}).get("logsKept", config_module.default("daemon", "logsKept"))
+    )
     items = sweep.inventory(daemon.cache_dir(environ), logs_kept=kept)
     if not items:
         return ("ok", "cache", f"nothing to sweep under {daemon.cache_dir(environ)}")
