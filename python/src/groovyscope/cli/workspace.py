@@ -42,8 +42,8 @@ from groovyscope.render import compact_json, table
     "--agent",
     "for_agent",
     is_flag=True,
-    help="The compact block the Kiro agent's start hook injects: reports and offers the repairs, writes nothing, "
-    "never fails.",
+    help="The compact block the Kiro agent's start hook injects: reports and offers the repairs, never fails; the one "
+    "write is adding .groovyscope/ to the repository's .gitignore (workspace.gitignore).",
 )
 @click.option("--fix", is_flag=True, help="Apply the safe repairs (Kiro files, project LSP entry, benchmark corpus).")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable report.")
@@ -65,6 +65,7 @@ def checkup_command(obj: dict[str, Any], *, for_agent: bool, fix: bool, as_json:
             environ,
             Path.home(),
             fix=fix,  # the start hook (--agent) only reports and offers; --fix writes
+            agent=for_agent,  # ... except the .gitignore entry for .groovyscope/ (workspace.gitignore)
             run=None if for_agent else common._KIRO(),
             config_hash=common.config_hash_or_none(obj),
         )

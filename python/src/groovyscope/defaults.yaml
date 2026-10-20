@@ -15,6 +15,8 @@ workspace:
   javaSources: true       # compile .java files under the roots too, so Groovy code resolves the project's Java classes
   classpath: []           # jars/dirs added to the analysis classpath; never inferred silently
   classpathFile: ".groovyscope/classpath.txt"  # written by `groovyscope classpath`; its entries join `classpath`
+  gitignore: true         # keep .groovyscope/ (classpath export, contract baseline) out of git: the groovy agent's
+                          # start hook and `checkup --fix` add it to the repository's .gitignore once
   exclude: ["**/build/**", "**/.gradle/**", "**/target/**", "**/node_modules/**"]
   trust: false            # only honoured after `groovyscope trust` (or GROOVYSCOPE_WORKSPACE__TRUST=true): allows
                           # global AST transforms from the workspace classpath, jdk.home and rule sets from this file

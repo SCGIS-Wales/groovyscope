@@ -188,3 +188,46 @@ def test_cache_fix_prunes_surplus_backups_in_the_kiro_home(tmp_path: Path) -> No
     assert report["level"] == "info" and "1 file(s)" in report["message"]
     checkup.cache_item(environ, 3, fix=True, kiro_global=kiro_global)
     assert sorted(path.name for path in steering.iterdir()) == ["groovy.md.bak", "groovy.md.bak.2"]
+
+
+def _git_project(tmp_path: Path) -> Path:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "build.gradle").write_text("plugins { id 'groovy' }\n", encoding="utf-8")
+    return root
+
+
+def test_gitignore_item_adds_the_entry_once_when_asked_to_write(tmp_path: Path) -> None:
+    root = _git_project(tmp_path)
+    (root / ".gitignore").write_text("build/\n", encoding="utf-8")
+    environ = {"GROOVYSCOPE_CACHE_DIR": str(tmp_path / "cache")}
+    item, done = checkup.gitignore_item(root, None, environ, write=False)
+    assert item["level"] == "warn" and item.get("safe") and done == []
+    assert (root / ".gitignore").read_text(encoding="utf-8") == "build/\n"
+    item, done = checkup.gitignore_item(root, None, environ, write=True)
+    assert item["level"] == "ok" and done and ".groovyscope/" in done[0]
+    item, done = checkup.gitignore_item(root, None, environ, write=True)
+    assert item["level"] == "ok" and done == []
+    assert (root / ".gitignore").read_text(encoding="utf-8").count(".groovyscope/") == 1
+
+
+def test_gitignore_item_honours_the_setting_and_skips_non_projects(tmp_path: Path) -> None:
+    root = _git_project(tmp_path)
+    (root / ".groovyscope.yaml").write_text("workspace: {gitignore: false}\n", encoding="utf-8")
+    item, done = checkup.gitignore_item(root, None, {}, write=True)
+    assert item["level"] == "info" and done == [] and not (root / ".gitignore").exists()
+    plain = tmp_path / "plain"
+    (plain / ".git").mkdir(parents=True)
+    item, _ = checkup.gitignore_item(plain, None, {}, write=True)
+    assert item["level"] == "info" and not (plain / ".gitignore").exists()
+
+
+def test_the_agent_checkup_writes_the_gitignore_entry_and_nothing_else(tmp_path: Path) -> None:
+    root = _git_project(tmp_path)
+    home = tmp_path / "home"
+    environ = {"GROOVYSCOPE_CACHE_DIR": str(tmp_path / "cache"), "GROOVYSCOPE_BENCHMARK_DIR": str(tmp_path / "bench")}
+    report = checkup.build(root, None, environ, home, fix=False, agent=True)
+    assert any(".groovyscope/" in done for done in report["repaired"])
+    assert ".groovyscope/" in (root / ".gitignore").read_text(encoding="utf-8")
+    assert not (root / ".kiro").exists() and not (home / ".kiro").exists()
+    assert "repaired: " in checkup.render_agent(report)
