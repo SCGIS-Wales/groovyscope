@@ -484,6 +484,14 @@ public final class QualityServices {
         return TypeCheckService.anyMayNeedTypeCheck(targets, sources);
     }
 
+    /**
+     * A text parsed on its own under the virtual name {@code name} (see {@link GroovyCompiler#parse}): syntax only,
+     * nothing read from or written to disk, nothing from the workspace classpath and no transformation of its own.
+     */
+    public GroovyCompiler.Parsed parse(String name, String text) {
+        return compiler.parse(name, text);
+    }
+
     /** The formatting edits for one document (empty when it is already formatted). */
     public List<TextEdit> format(String uri) {
         return fixes.format(uri);
