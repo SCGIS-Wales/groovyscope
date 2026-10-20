@@ -26,6 +26,7 @@ from groovyscope import (
     daemon,
     diagnostics,
     interaction,
+    mcp_merge,
     mcp_search,
     mcp_understanding,
     practices,
@@ -1295,6 +1296,7 @@ def build_tools(
         ),
         **practice_tools(root, call, cap, clip_at, report_settings, confirm_policy=policy),
         **test_tools(root, cap),
+        **mcp_merge.merge_tools(root, call, cap, output, confirm_policy=policy),
     }
     verify_settings: Mapping[str, Any] = output.get("verify") or {}
     tools.update(

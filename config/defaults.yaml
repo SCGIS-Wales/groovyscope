@@ -80,6 +80,11 @@ hooks:
   afterWriteMaxFindings: 12 # findings listed after a write; the rest is counted
   stopGate: false           # Kiro Stop: refuse to end the turn while changed Groovy files have compile errors
   timeoutSeconds: 25        # engine request budget inside a hook, under Kiro's own hook limit; over it the hook says so
+merge:
+  contextLines: 3           # unchanged lines shown around each conflict hunk
+  sideLines: 40             # lines shown per side of a hunk before the middle is elided (merge_conflicts)
+  boundaryLines: 3          # shared lines git moved out of a hunk that keeping both sides may repeat (at most)
+  reviewFiles: 40           # Groovy files merge_review compares in one call
 practices:
   enabled: true           # groovyscope's GS diagnostics (docs/practices.md); per-code overrides below
   severity: {}            # e.g. {GS002: info, RP030: off}; values: error | warning | info | off

@@ -288,6 +288,12 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return quality.format(params);
     }
 
+    /** Whether candidate texts of one file parse, with their declarations (see {@link QualityRequests#parse}). */
+    @JsonRequest("groovyscope/parse")
+    public CompletableFuture<Map<String, Object>> parse(Map<String, Object> params) {
+        return quality.parse(params);
+    }
+
     /** Impact of changing a declaration (see {@link ExplainGraphRequests#impact}). */
     @JsonRequest("groovyscope/impact")
     public CompletableFuture<List<Map<String, Object>>> impact(Map<String, Object> params) {

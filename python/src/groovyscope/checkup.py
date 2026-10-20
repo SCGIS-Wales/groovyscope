@@ -176,6 +176,7 @@ def gitignore_item(
         "negated": ("info", f"{path} keeps .groovyscope/ in git on purpose (a ! rule); left as it is"),
         "present": ("ok", ".groovyscope/ is ignored by git"),
         "added": ("ok", f".groovyscope/ added to {path}"),
+        "deferred": ("info", f".groovyscope/ is not in {path} yet: added once the merge or rebase in progress ends"),
     }[outcome["state"]]
     done = [f".groovyscope/ added to {path}, so the classpath export and baseline stay out of commits"]
     return ({"level": level, "name": "gitignore", "message": message}, done if outcome["state"] == "added" else [])

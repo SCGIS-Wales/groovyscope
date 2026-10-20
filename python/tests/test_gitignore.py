@@ -129,3 +129,18 @@ def test_a_symlinked_gitignore_stays_a_link_and_its_target_gets_the_entry(tmp_pa
     assert gitignore.ensure(root, write=True, run=not_ignored)["state"] == "added"
     assert (root / ".gitignore").is_symlink()
     assert shared.read_text(encoding="utf-8").splitlines()[-1] == ".groovyscope/"
+
+
+def test_the_entry_waits_while_a_merge_or_rebase_is_in_progress(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    (root / ".git" / "MERGE_HEAD").write_text("abc\n")
+
+    def git_path(command: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if list(command[:3]) == ["git", "rev-parse", "--git-path"]:
+            return subprocess.CompletedProcess(list(command), 0, f".git/{command[3]}\n", "")
+        return not_ignored(command)
+
+    assert gitignore.ensure(root, write=True, run=git_path)["state"] == "deferred"
+    assert not (root / ".gitignore").exists()
+    (root / ".git" / "MERGE_HEAD").unlink()
+    assert gitignore.ensure(root, write=True, run=git_path)["state"] == "added"

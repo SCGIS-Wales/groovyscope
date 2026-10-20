@@ -8,7 +8,7 @@ them; to replace one in a test, patch the module that owns it.
 
 from __future__ import annotations
 
-from groovyscope.cli import checks, daemon, graph, kiro, quality, workspace
+from groovyscope.cli import checks, daemon, graph, kiro, merge, quality, workspace
 from groovyscope.cli.checks import hook_seconds
 from groovyscope.cli.common import (
     CONFIG_ENV,
@@ -55,6 +55,7 @@ __all__ = [
     "hook_targets",
     "kiro",
     "main",
+    "merge",
     "profile_guidance_for",
     "quality",
     "resolve_jdk",

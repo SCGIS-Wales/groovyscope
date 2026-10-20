@@ -413,6 +413,17 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   resilience (0.24.3), release, build and supply chain (PR #111), analysis fidelity (0.24.4), new quality checks
   (0.25.0), hygiene and deduplication (PR #116). Phase 7 (documentation, Kiro assets and polish) is under way on
   `docs/phase-7`. Section 11 of the plan tracks the phases; section 13 holds the findings.
+- [ ] **Stage 22: merge conflicts** — branch `feat/merge-conflicts`, 2026-10-20, from the owner's GitLab merge
+  request session, where the agent edited markers one at a time, misjoined a hunk where both sides added tests,
+  waited 6 to 10 s for a hook check after each edit, counted braces and grepped licence files for markers.
+  Engine: `groovyscope/parse` (syntax and declarations of candidate texts, nothing read or written). Front end:
+  `conflicts.py` and three MCP tools, `merge_conflicts`, `resolve_conflicts` (one write per file, parsed first,
+  joins of both sides that repeat the lines git moved out of a hunk) and `merge_review` (lost declarations,
+  undone deletions, dropped changes); `groovyscope merge status|show|resolve|review`; the `groovy-merge` skill;
+  the after-write hook names a file with markers in one line instead of checking it, and the stop gate holds
+  them; the `.gitignore` entry waits while a merge or rebase is in progress. Tool surface: the 29 schemas came
+  to 13,986 bytes, the three tools add 1,017; the budget goes from 14,000 to 15,100.
+  Done when: merged, released, and the owner's next conflicted merge recorded here.
 
 ## Owner checks still open
 

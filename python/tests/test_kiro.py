@@ -358,6 +358,7 @@ def test_approval_rules_follow_the_tool_catalogue() -> None:
         "groovyscope/format",
         "groovyscope/refresh_classpath",
         "groovyscope/relationship_graph",
+        "groovyscope/resolve_conflicts",
     }
     assert reads == {"capability": "fs_read", "effect": "allow"} and shell["capability"] == "shell"
     assert set(tools_catalog.read_only_tools()) | set(tools_catalog.mutating_tools()) == set(tools_catalog.TOOL_INFO)

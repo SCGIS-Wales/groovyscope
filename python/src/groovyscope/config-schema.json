@@ -324,6 +324,29 @@
         }
       }
     },
+    "merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contextLines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sideLines": {
+          "type": "integer",
+          "minimum": 4
+        },
+        "boundaryLines": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "reviewFiles": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "practices": {
       "type": "object",
       "additionalProperties": false,

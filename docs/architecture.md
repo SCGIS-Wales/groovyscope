@@ -263,6 +263,11 @@ apart, a closure whose owner and delegate both declare the method). Rename refus
 - **CLI.** `groovyscope check` and `groovyscope format` talk to the daemon through the custom
   `groovyscope/check` and `groovyscope/format` requests (passing the workspace root, since those connections
   skip `initialize`) and return compact JSON on request.
+- **Merge conflicts.** `groovyscope/parse` parses up to 16 candidate texts of one file (syntax only: empty
+  classpath, no trust, the CONVERSION phase) and returns their errors and, on request, their declarations with
+  line ranges (`index/Declarations`); nothing is read from or written to disk. `resolve_conflicts` uses it to
+  choose among the ways of joining a hunk, `merge_review` to compare the declarations of a merge's result with
+  ours, theirs and the merge base.
 
 ## Practices and runtime profiles (Stage 8)
 
@@ -347,6 +352,7 @@ deliberately loose so shared runners do not fail the build.
 | `cli/quality.py` | `check`, `hook`, `review`, `verify`, test results, coverage, `format`, `fix`, `explain`, naming and the contract baseline |
 | `cli/graph.py` | the relationship graph, `explain-code`, impact and the call graph |
 | `cli/checks.py` | `checks prepare` and `checks report`, the Kiro checks kit |
+| `cli/merge.py` | `merge status`, `show`, `resolve` and `review`: the merge conflict tools from a terminal |
 | `config.py` | defaults ← `.groovyscope.yaml` ← `GROOVYSCOPE_*`; JSON-schema validation |
 | `workspace_init.py` | `groovyscope init`: a starting `.groovyscope.yaml` from the layout and build files, read as text |
 | `classpath.py` | `groovyscope classpath`: the Gradle init script or Maven command, parsing, `workspace.classpathFile`, the build fingerprint and the classpath state |
@@ -354,7 +360,9 @@ deliberately loose so shared runners do not fail the build.
 | `java.py` | JDK discovery with injected `runner`/`which` for testability |
 | `jar.py` | JAR lookup (`GROOVYSCOPE_JAR`, bundled, fetched) and SHA-256 verification |
 | `fetch.py` | `groovyscope fetch`: checksum-verified install of a release JAR into the cache |
-| `gitignore.py` | keeps the workspace's `.groovyscope/` folder out of git: one entry in the repository's `.gitignore`, never duplicated (an equivalent line or a rule git already applies counts) |
+| `gitignore.py` | keeps the workspace's `.groovyscope/` folder out of git: one entry in the repository's `.gitignore`, never duplicated (an equivalent line or a rule git already applies counts), and never written while a merge or rebase is in progress |
+| `conflicts.py` | merge conflict hunks: parsing (with the stray markers a hand edit leaves), suggestions when one side left a hunk unchanged, the choices, the joins of both sides that repeat the lines git moved out of a hunk, and the git state (operation in progress, unmerged files, the base from the index) |
+| `mcp_merge.py` | `merge_conflicts`, `resolve_conflicts` (one write per file, parsed by the engine's `groovyscope/parse` first) and `merge_review` (declarations lost, deletions undone and changes dropped, against ours, theirs and the merge base) |
 | `provision.py` | opt-in Temurin JDK provisioning through the Adoptium API (`jdk install`, `jdk.autoProvision`) |
 | `launch.py` | the JVM command line with non-configurable safety flags and the optional CDS archive |
 | `daemon.py` | socket, log and cache locations; probe, start (detached), stop, status |
