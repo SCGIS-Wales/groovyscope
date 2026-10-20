@@ -51,6 +51,7 @@ import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.lsp.GroovyscopeLanguageServer;
+import static org.groovyscope.engine.util.Closeables.closeQuietly;
 
 /**
  * The warm engine: one JVM listening on a Unix domain socket, speaking LSP to every client that connects.
@@ -443,11 +444,4 @@ public final class DaemonServer implements Closeable {
         }
     }
 
-    private static void closeQuietly(SocketChannel channel) {
-        try {
-            channel.close();
-        } catch (IOException e) {
-            // already closed
-        }
-    }
 }

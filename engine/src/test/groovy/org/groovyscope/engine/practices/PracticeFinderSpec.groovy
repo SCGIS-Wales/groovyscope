@@ -129,8 +129,7 @@ class PracticeFinderSpec extends Specification {
     def 'Groovy 6-only constructs are flagged only while groovy.compat includes 5.x'() {
         given:
         def base = EngineConfig.DEFAULTS
-        def groovy6Only = new EngineConfig(base.sourceRoots(), base.classpath(), base.exclude(), base.trust(), base.lint(),
-                base.typecheck(), base.format(), base.javaSources(), new EngineConfig.Groovy('6.0', []), base.practices())
+        def groovy6Only = base.toBuilder().groovy(new EngineConfig.Groovy('6.0', [])).build()
         def services6 = new LanguageServices(new WorkspaceModel(Fixtures.project('practices-sample'), groovy6Only), new GroovyCompiler())
 
         expect:
@@ -150,11 +149,8 @@ class PracticeFinderSpec extends Specification {
     def 'severities can be overridden or switched off per code, and the whole set disabled'() {
         given:
         def base = EngineConfig.DEFAULTS
-        def tuned = new EngineConfig(base.sourceRoots(), base.classpath(), base.exclude(), base.trust(), base.lint(),
-                base.typecheck(), base.format(), base.javaSources(), base.groovy(),
-                new EngineConfig.Practices(true, [GS001: 'off', GS002: 'info']))
-        def disabled = new EngineConfig(base.sourceRoots(), base.classpath(), base.exclude(), base.trust(), base.lint(),
-                base.typecheck(), base.format(), base.javaSources(), base.groovy(), new EngineConfig.Practices(false, [:]))
+        def tuned = base.toBuilder().practices(new EngineConfig.Practices(true, [GS001: 'off', GS002: 'info'])).build()
+        def disabled = base.toBuilder().practices(new EngineConfig.Practices(false, [:])).build()
         def tunedServices = new LanguageServices(new WorkspaceModel(Fixtures.project('practices-sample'), tuned), new GroovyCompiler())
         def disabledServices = new LanguageServices(new WorkspaceModel(Fixtures.project('practices-sample'), disabled), new GroovyCompiler())
 

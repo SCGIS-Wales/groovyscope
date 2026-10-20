@@ -7,7 +7,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
+from groovyscope import config
+from groovyscope.paths import Call, Paged, clip, relative_path, to_uri
 
 FIND_CODE_KINDS = (
     "catch",
@@ -159,8 +160,8 @@ def search_tools(
         params = {
             "root": str(root),
             "uris": uris(paths),
-            "minLines": int(min_lines or duplicates.get("minLines", 6)),
-            "minStatements": int(duplicates.get("minStatements", 3)),
+            "minLines": int(min_lines or duplicates.get("minLines", config.default("duplicates", "minLines"))),
+            "minStatements": int(duplicates.get("minStatements", config.default("duplicates", "minStatements"))),
         }
         raw = call("groovyscope/duplicates", params)
         groups = [

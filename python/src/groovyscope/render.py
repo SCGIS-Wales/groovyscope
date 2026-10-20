@@ -7,6 +7,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+# LSP diagnostic severities by number, as every front end names them.
+SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
+
 
 def relativize(path: Path, root: Path) -> str:
     """Path relative to ``root`` with forward slashes; absolute when it lies outside the root."""
@@ -16,8 +19,11 @@ def relativize(path: Path, root: Path) -> str:
         return path.resolve().as_posix()
 
 
-def compact_json(value: Any) -> str:
-    return json.dumps(value, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+def compact_json(value: Any, *, sort_keys: bool = True) -> str:
+    """JSON without indentation or spaces after separators: pretty printing costs about a third more characters,
+    and every character reaches an agent's context. ``sort_keys=False`` keeps the order a result was built in
+    (the MCP tools put the summary first); anything JSON cannot encode is written as its text."""
+    return json.dumps(value, separators=(",", ":"), sort_keys=sort_keys, ensure_ascii=False, default=str)
 
 
 def encoded_size(value: Any) -> int:

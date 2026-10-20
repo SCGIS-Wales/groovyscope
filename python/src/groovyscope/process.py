@@ -19,13 +19,16 @@ def run_text(
     cwd: Path | None = None,
     env: Mapping[str, str] | None = None,
     check: bool = False,
+    stdin_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """``subprocess.run`` with captured output decoded as UTF-8 (surrogate escapes for anything else), never a
-    shell. Raises what ``subprocess.run`` raises (``OSError``, ``TimeoutExpired``, ``CalledProcessError``)."""
+    shell; ``stdin_text`` is written to the child's input. Raises what ``subprocess.run`` raises (``OSError``,
+    ``TimeoutExpired``, ``CalledProcessError``)."""
     return subprocess.run(
         list(command),
         cwd=cwd,
         env=None if env is None else dict(env),
+        input=stdin_text,
         capture_output=True,
         encoding=TEXT_ENCODING,
         errors=TEXT_ERRORS,

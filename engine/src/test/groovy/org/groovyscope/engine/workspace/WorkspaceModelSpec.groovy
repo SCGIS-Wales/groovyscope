@@ -53,7 +53,7 @@ class WorkspaceModelSpec extends Specification {
         Files.writeString(temp.resolve('src/main/groovy/A.groovy'), 'class A {}')
         Files.writeString(temp.resolve('build/classes/Gen.groovy'), 'class Gen {}')
         Files.writeString(temp.resolve('notes.txt'), 'nope')
-        def config = new EngineConfig(['src/main/groovy', 'missing'], ['libs/x.jar'], ['**/build/**'], false)
+        def config = EngineConfig.builder().sourceRoots(['src/main/groovy', 'missing']).classpath(['libs/x.jar']).exclude(['**/build/**']).build()
         def model = new WorkspaceModel(temp, config)
 
         expect:

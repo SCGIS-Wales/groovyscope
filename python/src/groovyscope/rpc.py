@@ -17,6 +17,7 @@ HEADER_END = b"\r\n\r\n"
 DEFAULT_TIMEOUT = 10.0
 MAX_FRAME_BYTES = 512 * 1024 * 1024  # a reply larger than this is refused rather than buffered
 MAX_HEADER_BYTES = 8192
+RELOAD_METHOD = "groovyscope/reloadConfig"  # the engine method that swaps in a new configuration
 DAEMON_EXITING_CODE = -32099  # the engine answers this, "daemon is exiting ...", while it shuts down: reconnect
 DAEMON_EXITING_PREFIX = "daemon is exiting"
 
@@ -137,69 +138,6 @@ def notify(socket_path: Path, method: str, params: Any = None, timeout: float = 
     message = {"jsonrpc": "2.0", "method": method, "params": {} if params is None else params}
     with _connect(socket_path, timeout) as sock:
         sock.sendall(encode(message))
-
-
-# ---- persistent sessions (one connection, many requests; used by the MCP server) ----
-
-Session = dict[str, Any]
-
-
-def open_session(socket_path: Path, timeout: float = DEFAULT_TIMEOUT) -> Session:
-    """Connect once; the returned mapping carries the socket, the read buffer and the next request id."""
-    return {"sock": _connect(socket_path, timeout), "buffer": b"", "next_id": 1, "notifications": 0}
-
-
-def _read_frame(session: Session) -> dict[str, Any]:
-    sock: socket.socket = session["sock"]
-    while True:
-        parsed, session["buffer"] = split_frame(session["buffer"])
-        if parsed is not None:
-            return parsed
-        chunk = sock.recv(65536)
-        if not chunk:
-            msg = "engine closed the session"
-            raise ConnectionError(msg)
-        session["buffer"] += chunk
-
-
-def call(session: Session, method: str, params: Any = None, timeout: float | None = None) -> Any:
-    """Send a request on the session and wait for its reply (within ``timeout`` in all); notifications in between
-    are dropped."""
-    sock: socket.socket = session["sock"]
-    deadline = None if timeout is None else time.monotonic() + timeout
-    if timeout is not None:
-        sock.settimeout(timeout)
-    request_id = session["next_id"]
-    session["next_id"] = request_id + 1
-    sock.sendall(
-        encode({"jsonrpc": "2.0", "id": request_id, "method": method, "params": {} if params is None else params})
-    )
-    while True:
-        if deadline is not None and timeout is not None:
-            _until(sock, deadline, method, timeout)
-        message = _read_frame(session)
-        if message.get("id") == request_id and ("result" in message or "error" in message):
-            if "error" in message:
-                raise error_from(method, message["error"])
-            return message.get("result")
-        if "method" in message and "id" in message:
-            # A request from the engine (none are expected): answer with an error so it does not hang.
-            sock.sendall(
-                encode({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": "unsupported"}})
-            )
-        elif "method" in message:
-            session["notifications"] += 1  # counted, not kept: a long session must not grow without bound
-
-
-def notify_session(session: Session, method: str, params: Any = None) -> None:
-    sock: socket.socket = session["sock"]
-    sock.sendall(encode({"jsonrpc": "2.0", "method": method, "params": {} if params is None else params}))
-
-
-def close_session(session: Session) -> None:
-    sock: socket.socket = session["sock"]
-    with contextlib.suppress(OSError):
-        sock.close()
 
 
 # ---- channels (one connection, many requests in flight; used by the MCP server) ----

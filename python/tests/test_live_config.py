@@ -14,6 +14,10 @@ import pytest
 from click.testing import CliRunner
 
 from groovyscope import classpath, cli, mcp_server, trust
+from groovyscope import classpath as classpath_export
+from groovyscope import daemon as daemon_lifecycle
+from groovyscope.cli import common as cli_common
+from groovyscope.config import load_config
 
 
 def write(path: Path, text: str) -> None:
@@ -272,16 +276,14 @@ def test_cli_reloads_a_daemon_running_an_older_configuration(
     jar.write_bytes(b"x")
     monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
     monkeypatch.setenv("GROOVYSCOPE_JAR", str(jar))
-    monkeypatch.setattr(
-        cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9", "configHash": "old"}
-    )
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9", "configHash": "old"})
     sent: list[tuple[str, dict[str, Any]]] = []
 
     def rpc(_socket: Path, method: str, params: dict[str, Any], _timeout: float) -> Any:
         sent.append((method, params))
         return {"configHash": "new", "reloaded": True} if method == cli.RELOAD_METHOD else {}
 
-    monkeypatch.setattr(cli, "_RPC", rpc)
+    monkeypatch.setattr(cli_common, "_RPC", rpc)
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"])
     assert result.exit_code == 0, result.output
     assert sent[0][0] == cli.RELOAD_METHOD and json.loads(sent[0][1]["config"])["root"] == str(tmp_path)
@@ -309,11 +311,11 @@ def test_classpath_command_reloads_the_running_daemon_in_place(
 ) -> None:
     (tmp_path / "settings.gradle").write_text("", encoding="utf-8")
     trust.set_trusted(tmp_path, isolated_home, trusted=True)
-    monkeypatch.setattr(cli.classpath_export, "export", lambda *_a, **_k: EXPORT)
-    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _t=5.0: {"engine": "x", "configHash": "old"})
+    monkeypatch.setattr(classpath_export, "export", lambda *_a, **_k: EXPORT)
+    monkeypatch.setattr(daemon_lifecycle, "probe", lambda _s, _t=5.0: {"engine": "x", "configHash": "old"})
     stopped: list[Path] = []
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
-    monkeypatch.setattr(cli, "_RPC", lambda _s, _m, _p, _t: {"configHash": "new", "reloaded": True})
+    monkeypatch.setattr(daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
+    monkeypatch.setattr(cli_common, "_RPC", lambda _s, _m, _p, _t: {"configHash": "new", "reloaded": True})
     done = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
     assert done.exit_code == 0, done.output
     assert "reloaded the new classpath" in done.output and not stopped
@@ -323,7 +325,7 @@ def test_classpath_command_reloads_the_running_daemon_in_place(
         msg = "reloadConfig failed"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli, "_RPC", refusing)
+    monkeypatch.setattr(cli_common, "_RPC", refusing)
     fallback = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
     assert fallback.exit_code == 0 and "was stopped" in fallback.output and stopped
 
@@ -333,15 +335,15 @@ def test_an_unchanged_classpath_keeps_the_daemon_running(
 ) -> None:
     (tmp_path / "settings.gradle").write_text("", encoding="utf-8")
     trust.set_trusted(tmp_path, isolated_home, trusted=True)
-    monkeypatch.setattr(cli.classpath_export, "export", lambda *_a, **_k: EXPORT)
+    monkeypatch.setattr(classpath_export, "export", lambda *_a, **_k: EXPORT)
     running = {"engine": "x", "configHash": ""}
-    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _t=5.0: running)
+    monkeypatch.setattr(daemon_lifecycle, "probe", lambda _s, _t=5.0: running)
     stopped: list[Path] = []
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
-    monkeypatch.setattr(cli, "_RPC", lambda *_a: pytest.fail("nothing to reload"))
+    monkeypatch.setattr(daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
+    monkeypatch.setattr(cli_common, "_RPC", lambda *_a: pytest.fail("nothing to reload"))
     first = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
     obj = {"root": tmp_path.resolve(), "config_path": None}
-    cli.hand_over_config(obj, cli.load_config(tmp_path, None, dict(cli.os.environ)))
+    cli.hand_over_config(obj, load_config(tmp_path, None, dict(os.environ)))
     running["configHash"] = cli.config_hash(obj)  # the daemon already runs this very configuration
     again = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
     assert first.exit_code == 0 and again.exit_code == 0, again.output

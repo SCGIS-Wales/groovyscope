@@ -19,7 +19,6 @@ import groovy.lang.Binding;
 import groovy.lang.GroovyClassLoader;
 import groovy.lang.GroovyShell;
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,15 +43,16 @@ import org.codehaus.groovy.control.customizers.ImportCustomizer;
 import org.codehaus.groovy.control.customizers.builder.CompilerCustomizationBuilder;
 import org.codehaus.groovy.control.messages.Message;
 import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
-import org.groovyscope.engine.compile.RetryBudget;
 import org.codehaus.groovy.syntax.SyntaxException;
 import org.codehaus.groovy.transform.sc.StaticCompilationMetadataKeys;
 import org.codehaus.groovy.transform.stc.StaticTypeCheckingVisitor;
 import org.groovyscope.engine.compile.GroovyCompiler;
-import org.groovyscope.engine.compile.WorkspaceParentClassLoader;
 import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.model.Diagnostic;
 import org.groovyscope.engine.model.Diagnostic.Severity;
+import org.groovyscope.engine.compile.CompilationScaffold;
+import org.groovyscope.engine.compile.RetryRounds;
+import static org.groovyscope.engine.util.Closeables.closeQuietly;
 
 /**
  * Runs Groovy's static type checker (to {@code INSTRUCTION_SELECTION}, still no bytecode) over the
@@ -255,10 +255,9 @@ public final class TypeCheckAnalyzer {
         }
         Map<String, String> remaining = new LinkedHashMap<>(sources);
         remaining.keySet().removeAll(skip);
-        long started = System.nanoTime();
-        long deadline = Long.MAX_VALUE;
-        for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
-            if (System.nanoTime() > deadline) {
+        RetryRounds rounds = new RetryRounds(MAX_RETRIES);
+        for (int attempt = 0; rounds.allows(attempt) && !remaining.isEmpty(); attempt++) {
+            if (rounds.overBudget()) {
                 // Each retry is a whole-workspace compile to bytecode generation; past the budget the files still
                 // unresolved go without a type check rather than holding every request for minutes.
                 org.groovyscope.engine.log.EngineLog.warn("type check stopped after %d round(s): %d file(s) unchecked",
@@ -268,9 +267,7 @@ public final class TypeCheckAnalyzer {
             }
             org.groovyscope.engine.concurrent.Cancellation.checkpoint();
             Pass pass = compileOnce(remaining, classpath, trust, extensions, configScript);
-            if (attempt == 0) {
-                deadline = started + RetryBudget.of(System.nanoTime() - started);
-            }
+            rounds.finished(attempt);
             if (pass.crash != null && pass.isolable && remaining.size() > 1) {
                 String culprit = isolate(remaining, classpath, trust, extensions, configScript);
                 if (culprit != null) {
@@ -346,20 +343,10 @@ public final class TypeCheckAnalyzer {
 
     private Pass compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, List<String> extensions,
             Path configScript) {
-        CompilerConfiguration configuration = new CompilerConfiguration();
-        configuration.setSourceEncoding("UTF-8");
-        configuration.setTolerance(Integer.MAX_VALUE);
+        CompilerConfiguration configuration = CompilationScaffold.configuration();
         configuration.addCompilationCustomizers(new TypeCheckExtensionCustomizer(extensions));
 
-        ClassLoader parent = new WorkspaceParentClassLoader(GroovyCompiler.class.getClassLoader());
-        GroovyClassLoader loader = new GroovyClassLoader(parent, configuration);
-        for (Path entry : classpath) {
-            try {
-                loader.addURL(entry.toUri().toURL());
-            } catch (MalformedURLException e) {
-                throw new IllegalArgumentException("bad classpath entry " + entry, e);
-            }
-        }
+        GroovyClassLoader loader = CompilationScaffold.resolutionLoader(configuration, classpath);
         if (configScript != null) {
             try {
                 applyConfigScript(configuration, configScript, loader);
@@ -370,7 +357,7 @@ public final class TypeCheckAnalyzer {
                         + configScript + " failed: " + e, e), null, false);
             }
         }
-        GroovyClassLoader transformLoader = trust ? loader : new GroovyClassLoader(parent, configuration);
+        GroovyClassLoader transformLoader = CompilationScaffold.transformLoader(loader, configuration, trust);
         CompilationUnit unit = new CompilationUnit(configuration, null, loader, transformLoader);
         Map<String, SourceUnit> units = new HashMap<>();
         for (Map.Entry<String, String> source : sources.entrySet()) {
@@ -556,11 +543,4 @@ public final class TypeCheckAnalyzer {
         }
     }
 
-    private static void closeQuietly(GroovyClassLoader loader) {
-        try {
-            loader.close();
-        } catch (IOException e) {
-            // nothing useful to do
-        }
-    }
 }

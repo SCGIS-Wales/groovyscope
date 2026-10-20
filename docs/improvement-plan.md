@@ -399,7 +399,7 @@ Tick each box in the phase PR.
 - [x] Phase 3: release, build and supply chain (D-01 to D-23, Q-15, P-31)
 - [x] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27; Q-15 landed in Phase 3, Q-26 is 6.3)
 - [x] Phase 5: new quality checks (GS017 to GS052, GS035 to GS038)
-- [ ] Phase 6: hygiene and deduplication (6.1 to 6.6)
+- [x] Phase 6: hygiene and deduplication (6.1 to 6.6; 6.3 in part, see section 13)
 - [ ] Phase 7: docs, Kiro assets and polish
 
 ## 12. Already sound (do not rework)
@@ -523,3 +523,15 @@ their own lock, a reload is bounded by the call's deadline, and the start lock t
 | GS050 to GS052 | Gradle build scripts were only seen when a workspace had no source roots. `WorkspaceModel.buildScripts()` now finds root and subproject scripts; they are never compiled with the sources (their Gradle API imports would not resolve), and practices run on a syntax-only parse. |
 | Licence header, SARIF | `lint.licenceHeader` (off by default) adds CodeNarc's `RequiredRegex` as `LicenceHeader`; `docs/ci.md` shows OWASP Dependency-Check SARIF through `reports.sarif`, and why Gradle verification has none. |
 | Exit | Run on the CodeNarc corpus and `jenkins-lib` (`docs/benchmark.md`): 66 findings from the new codes after refinement. A manual sample of 20 had 30% false positives before refinement and 10% after, both remaining ones informational. |
+
+### Phase 6 (20 October 2026)
+
+| Item | Result |
+|---|---|
+| 6.1 Java | `GroovyscopeLanguageServer` 1,174 to 550 lines (requests in `StatusRequests`, `QualityRequests`, `ExplainGraphRequests`, `SearchRequests`, parameters in `RequestParams`); `QualityServices` 1,364 to 553 (`LintService`, `TypeCheckService`, `FixService`, `ProfileService`); `LanguageServices` 1,096 to 431 (`SnapshotManager`, `NavigationQueries`). The three stay as facades, so no spec changed. |
+| 6.1 Python | `cli.py` (2,513 lines) is the `cli/` package (`common`, `workspace`, `kiro`, `daemon`, `quality`, `graph`, `checks`, plus `__main__`); the same 53 command paths with identical options. Each MCP tool is one module-level function bound with `functools.partial`, and the CLI settles fix and format edits through the same functions. Twelve test files changed patch targets only. |
+| 6.2 | Java: `util.Uris`, `Hashes`, `Closeables`, and `compile.CompilationScaffold` and `RetryRounds` shared by the compiler and the type checker. Python: `atomic.py` for every whole-file write, `process.run_text` (UTF-8, `surrogateescape`) for every subprocess but the streaming classpath export, `paths.py` for URIs and the input guard, one owner each for the reload method, severity names, environment variable names, Groovy suffixes, `compact_json` and `write_if_unchanged`. |
+| 6.3 | In part. The old `PracticeFinder` visitor is split by group (`NumberChecks`, `TruthChecks`, `LoggingChecks`, `SecurityChecks`, `VersionChecks`, `SpockWithCheck`) under one walk, `CoreScan`, so its findings keep their order; logger levels and types live once in `semantics/Logging`; test and Spock detection live once in `PracticeContext`, which `NamingFinder` and `TestDoubleFinder` now use (it counts `/src/test/` and `/test/groovy/` paths as tests for both, a small widening no spec noticed). Not done: one walk for every finder. The naming, test double and Phase 5 finders still walk the module themselves; merging them means a dispatching visitor, for little gain now that the drift is gone. |
+| 6.4 | `config.default(section, key)` replaces every literal fallback, with a test that fails on `.get("<known key>", <literal>)`; environment overrides take their setting's schema type (`GROOVYSCOPE_GROOVY__VERSION=6.0` stays a string); heap sizes must match `^[1-9][0-9]*[kKmMgG]$`. `EngineConfig.builder()` replaces the telescoping constructors, and `DefaultsAgreementSpec` proves `defaults.yaml` equals `EngineConfig.DEFAULTS` (they already agreed). |
+| 6.5 | The unused `rpc.py` session API and `workspace.classpathFrom` are gone. A tool's refusal is an MCP tool error (`isError: true`), never an `{"error": ...}` success; CLI diagnostics go through the shared logger. javac runs doclint on public types; the Java 17 bytecode target and its reasons are in `docs/architecture.md`. The `DynamicCodeFinder` dead branch and the Spotless entries were already gone (Phases 4 and 3). |
+| 6.6 | `_templates` is the only source: Gradle `processResources` copies the CodeNarc profiles and `practices.json` into the engine, which keeps no copy, and `scripts/sync_templates.py` regenerates root `kiro/` and `config/` (`--check` runs in CI; the repository has no pre-commit configuration). |

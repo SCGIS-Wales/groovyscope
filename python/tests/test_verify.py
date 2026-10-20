@@ -12,7 +12,9 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import cli, verify, workspace_init
+from groovyscope import changes, cli, verify, workspace_init
+from groovyscope.cli import common as cli_common
+from groovyscope.cli import quality as cli_quality
 
 BUILD = """
 plugins { id 'groovy' }
@@ -154,8 +156,10 @@ def review(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
         },
         "ran": [],
     }
-    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", {"verify": {"timeoutSeconds": 9}}))
-    monkeypatch.setattr(cli, "workspace_tools", lambda *_a: {"review_changes": lambda *_a: state["result"]})
+    monkeypatch.setattr(
+        cli_common, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", {"verify": {"timeoutSeconds": 9}})
+    )
+    monkeypatch.setattr(cli_common, "workspace_tools", lambda *_a: {"review_changes": lambda *_a: state["result"]})
 
     def runner(command: Sequence[str], cwd: Path, timeout: int) -> tuple[int, str]:
         state["ran"].append((list(command), timeout))
@@ -166,7 +170,7 @@ def review(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
             (cwd / name).write_text(text, encoding="utf-8")
         return state.get("build", (0, "BUILD SUCCESSFUL"))
 
-    monkeypatch.setattr(cli, "_VERIFY_RUNNER", runner)
+    monkeypatch.setattr(cli_quality, "_VERIFY_RUNNER", runner)
     return state
 
 
@@ -243,8 +247,8 @@ def test_verify_coverage_lists_changed_methods_no_test_ran(
     (tmp_path / "src/main/groovy/app/Store.groovy").write_text("x", encoding="utf-8")
     change = {"base": "master", "mode": "branch", "files": [
         {"path": "src/main/groovy/app/Store.groovy", "status": "modified", "ranges": [[2, 4]]}]}  # fmt: skip
-    monkeypatch.setattr(cli.changes, "changed_files", lambda *_a, **_k: change)
-    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", {"reports": {}}))
+    monkeypatch.setattr(changes, "changed_files", lambda *_a, **_k: change)
+    monkeypatch.setattr(cli_common, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", {"reports": {}}))
     out = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage"])
     assert review["ran"][0][0] == ["gradle", "test", "jacocoTestReport"]
     assert "coverage: 1 changed method(s) no test executed" in out.output

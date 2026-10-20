@@ -9,7 +9,9 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import checks, cli
+from groovyscope import checks, cli, trust
+from groovyscope.cli import checks as cli_checks
+from groovyscope.cli import kiro as cli_kiro
 
 SOURCE = "package org.codenarc.report\n\nclass JsonReportWriter {\n    String title\n}\n"
 
@@ -62,12 +64,10 @@ def test_report_lists_facts_doctor_lines_and_an_empty_result_table() -> None:
 @pytest.fixture
 def kit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     calls: dict[str, Any] = {"merged": [], "trusted": []}
-    monkeypatch.setattr(cli, "unpack_benchmark", lambda _environ: corpus(tmp_path))
-    monkeypatch.setattr(cli, "_CHECKS_RUNNER", lambda _command, _cwd: None)
-    monkeypatch.setattr(cli, "run_kiro_merge", lambda obj, **_kwargs: calls["merged"].append(obj["root"]))
-    monkeypatch.setattr(
-        cli.trust, "set_trusted", lambda root, _home, *, trusted: calls["trusted"].append((root, trusted))
-    )
+    monkeypatch.setattr(cli_kiro, "unpack_benchmark", lambda _environ: corpus(tmp_path))
+    monkeypatch.setattr(cli_checks, "_CHECKS_RUNNER", lambda _command, _cwd: None)
+    monkeypatch.setattr(cli_kiro, "run_kiro_merge", lambda obj, **_kwargs: calls["merged"].append(obj["root"]))
+    monkeypatch.setattr(trust, "set_trusted", lambda root, _home, *, trusted: calls["trusted"].append((root, trusted)))
     return calls
 
 
@@ -96,15 +96,15 @@ def test_checks_prepare_reports_a_failed_step(tmp_path: Path, kit: dict[str, Any
     def failing(_command: Sequence[str], _cwd: Path) -> None:
         raise OSError("git not found")
 
-    monkeypatch.setattr(cli, "_CHECKS_RUNNER", failing)
+    monkeypatch.setattr(cli_checks, "_CHECKS_RUNNER", failing)
     result = CliRunner().invoke(cli.main, ["checks", "prepare", str(tmp_path / "ws")])
     assert result.exit_code == 1 and "git not found" in result.output
     assert kit["merged"] == []
 
 
 def test_checks_report_prints_the_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "_HOOK_TIMER", lambda _root: 0.25)
-    monkeypatch.setattr(cli, "build_report", lambda *_a, **_k: [("info", "mcp client", "kiro-cli 2.29.1")])
+    monkeypatch.setattr(cli_checks, "_HOOK_TIMER", lambda _root: 0.25)
+    monkeypatch.setattr(cli_checks, "build_report", lambda *_a, **_k: [("info", "mcp client", "kiro-cli 2.29.1")])
     result = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "checks", "report"])
     assert result.exit_code == 0, result.output
     assert "- hook start-up: 0.25 s" in result.output and "- info mcp client: kiro-cli 2.29.1" in result.output

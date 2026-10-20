@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from groovyscope import config as config_module
 from groovyscope.java import java_executable
 
 # Compile-time code execution paths in Groovy stay off regardless of configuration.
@@ -41,12 +42,14 @@ def build_engine_command(
     shortens daemon start-up. Pass it only for JDK 19 or newer.
     """
     daemon = config.get("daemon", {})
-    heap = str(daemon.get("heap", "1g"))
+    heap = str(daemon.get("heap", config_module.default("daemon", "heap")))
     sharing = ["-Xshare:auto"]
     if cds_archive is not None:
         sharing = ["-XX:+AutoCreateSharedArchive", f"-XX:SharedArchiveFile={cds_archive}"]
     dumps: list[str] = []
-    if dump_dir is not None and bool(daemon.get("heapDumpOnOutOfMemory", False)):
+    if dump_dir is not None and bool(
+        daemon.get("heapDumpOnOutOfMemory", config_module.default("daemon", "heapDumpOnOutOfMemory"))
+    ):
         dumps = ["-XX:+HeapDumpOnOutOfMemoryError", f"-XX:HeapDumpPath={dump_dir}"]
     return [
         str(java_executable(java_home)),

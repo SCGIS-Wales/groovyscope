@@ -15,6 +15,7 @@ from typing import Any, TypedDict
 
 from groovyscope import atomic
 from groovyscope import config as config_module
+from groovyscope.paths import GROOVY_SUFFIXES
 
 # Tool ids Kiro uses for file writes, in V2 and V3 catalogues; anything else is not a write.
 WRITE_TOOLS = frozenset({"write", "fs_write", "write_file", "str_replace", "fs_append", "append"})
@@ -29,7 +30,6 @@ EVENT_NAMES = {
     "pretooluse": "preToolUse",
     "sessionend": "sessionEnd",
 }
-GROOVY_SUFFIXES = (".groovy", ".gvy", ".gy", ".gsh", ".gradle")
 ERROR_LEVEL = 1
 PORCELAIN_PATH_OFFSET = 3  # `XY path`: two status letters and a space
 WARNING_LEVEL = 2
@@ -48,14 +48,17 @@ class HookSettings(TypedDict):
 
 def settings(effective: Mapping[str, Any]) -> HookSettings:
     """The ``hooks`` section with the defaults filled in."""
-    defaults = config_module.load_defaults().get("hooks", {})
     section: Mapping[str, Any] = effective.get("hooks") or {}
+
+    def value(key: str) -> Any:
+        return section.get(key, config_module.default("hooks", key))
+
     return {
-        "afterWrite": bool(section.get("afterWrite", defaults.get("afterWrite", True))),
-        "afterWriteInclude": [str(x) for x in section.get("afterWriteInclude", defaults.get("afterWriteInclude", []))],
-        "afterWriteMaxFindings": int(section.get("afterWriteMaxFindings", defaults.get("afterWriteMaxFindings", 12))),
-        "stopGate": bool(section.get("stopGate", defaults.get("stopGate", False))),
-        "timeoutSeconds": int(section.get("timeoutSeconds", defaults.get("timeoutSeconds", 45))),
+        "afterWrite": bool(value("afterWrite")),
+        "afterWriteInclude": [str(x) for x in value("afterWriteInclude")],
+        "afterWriteMaxFindings": int(value("afterWriteMaxFindings")),
+        "stopGate": bool(value("stopGate")),
+        "timeoutSeconds": int(value("timeoutSeconds")),
     }
 
 

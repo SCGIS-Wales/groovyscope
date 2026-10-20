@@ -48,11 +48,6 @@ import org.codehaus.groovy.ast.stmt.ThrowStatement;
 import org.codehaus.groovy.control.SourceUnit;
 import org.codehaus.groovy.syntax.Types;
 import org.groovyscope.engine.config.EngineConfig;
-import org.groovyscope.engine.index.AstRanges;
-import org.groovyscope.engine.model.Diagnostic;
-import org.groovyscope.engine.model.Range;
-import org.groovyscope.engine.model.TextEdit;
-import org.groovyscope.engine.workspace.TestSources;
 
 /**
  * Test doubles that cannot take effect and tests that check nothing, in test sources: a Mockito or Spock stub of a
@@ -83,19 +78,26 @@ public final class TestDoubleFinder {
     /** Findings for one test document; nothing for production code. */
     public static List<PracticeFinder.Practice> find(String uri, ModuleNode module, EngineConfig config) {
         List<PracticeFinder.Practice> out = new ArrayList<>();
-        if (module == null || uri.endsWith(".java") || !TestSources.isTestPath(uri)) {
-            return out;
+        if (module != null) {
+            find(PracticeContext.of(uri, module, "", config, null, out));
         }
-        for (ClassNode classNode : module.getClasses()) {
+        return out;
+    }
+
+    /** The findings of one test document, added to {@code context.out()}; nothing for production code. */
+    static void find(PracticeContext context) {
+        if (context.module() == null || context.uri().endsWith(".java") || !context.test()) {
+            return;
+        }
+        for (ClassNode classNode : context.module().getClasses()) {
             if (classNode.getLineNumber() > 0 && !classNode.getName().contains("$_")) {
-                Visitor visitor = new Visitor(uri, module, config, out, classNode);
+                Visitor visitor = new Visitor(context, classNode);
                 visitor.visitClass(classNode);
                 if (!visitor.spock) {
                     visitor.checkAssertions();
                 }
             }
         }
-        return out;
     }
 
     /** One place a test stubs or overrides a method, by the method's name. */
@@ -240,39 +242,22 @@ public final class TestDoubleFinder {
     }
 
     private static final class Visitor extends ClassCodeVisitorSupport {
-        private final String uri;
-        private final ModuleNode module;
-        private final EngineConfig config;
-        private final List<PracticeFinder.Practice> out;
+        private final PracticeContext context;
         private final ClassNode classNode;
         private final boolean spock;
         /** What each variable or field was last given, by name: where a {@code def} double's type comes from. */
         private final Map<String, Expression> values = new HashMap<>();
 
-        Visitor(String uri, ModuleNode module, EngineConfig config, List<PracticeFinder.Practice> out,
-                ClassNode classNode) {
-            this.uri = uri;
-            this.module = module;
-            this.config = config;
-            this.out = out;
+        Visitor(PracticeContext context, ClassNode classNode) {
+            this.context = context;
             this.classNode = classNode;
-            this.spock = isSpecification(classNode);
+            this.spock = PracticeContext.isSpecification(classNode);
             collectValues();
         }
 
         @Override
         protected SourceUnit getSourceUnit() {
-            return module.getContext();
-        }
-
-        private static boolean isSpecification(ClassNode classNode) {
-            for (ClassNode parent = classNode.getUnresolvedSuperClass(false); parent != null;
-                    parent = parent.getUnresolvedSuperClass(false)) {
-                if (parent.getName().endsWith("Specification")) {
-                    return true;
-                }
-            }
-            return false;
+            return context.module().getContext();
         }
 
         private void collectValues() {
@@ -484,14 +469,7 @@ public final class TestDoubleFinder {
         }
 
         void report(String code, ASTNode node, String message) {
-            Diagnostic.Severity severity = PracticeFinder.severity(code, config);
-            Range range = AstRanges.rangeOf(node);
-            if (severity == null || range == null) {
-                return;
-            }
-            String title = PracticeCatalog.bundled().find(code).map(PracticeCatalog.Entry::title).orElse(code);
-            out.add(new PracticeFinder.Practice(new Diagnostic(uri, range, severity, PracticeFinder.SOURCE, code,
-                    title + ": " + message), null, List.<TextEdit>of()));
+            context.report(code, node, message);
         }
     }
 }

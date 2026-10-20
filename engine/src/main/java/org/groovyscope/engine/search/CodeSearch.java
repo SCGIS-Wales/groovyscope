@@ -162,8 +162,8 @@ public final class CodeSearch {
     /** The rule code of an empty catch block, which outranks the type-based codes. */
     static final String EMPTY_CATCH_CODE = "EmptyCatchBlock";
 
-    private static final Set<String> LOG_METHODS = Set.of("trace", "debug", "info", "warn", "warning", "error",
-            "fatal", "severe", "log");
+    private static final Set<String> LOG_METHODS = org.groovyscope.engine.semantics.Logging.union(
+            org.groovyscope.engine.semantics.Logging.ALL_LEVELS, Set.of("log"));
     private static final Set<String> PRINT_METHODS = Set.of("println", "print", "printf", "printStackTrace");
     private static final Set<String> LOG_RECEIVERS = Set.of("log", "logger", "LOG", "LOGGER", "System.err",
             "System.out");
@@ -178,6 +178,12 @@ public final class CodeSearch {
      * filter, a call whose receiver type is unknown still matches when its name is given, with the fact
      * {@code receiverKnown: false}.
      *
+     * @param modules the compiled trees by document URI
+     * @param lines the text of a document, for snippets and positions
+     * @param uris the documents to search; empty for every compiled Groovy document
+     * @param query what to look for
+     * @param resolver types call receivers
+     * @return the matches, sorted by document and position
      * @throws IllegalArgumentException for an unknown kind or modifier, or a pattern that does not compile
      */
     public static List<Match> find(Map<String, ModuleNode> modules, Function<String, TextLines> lines,

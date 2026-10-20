@@ -22,13 +22,13 @@ from importlib import resources
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
-from groovyscope import atomic
+from groovyscope import atomic, config
 from groovyscope.process import text_options
 
 LOG = logging.getLogger("groovyscope.classpath")
 MARKER = "GROOVYSCOPE_CLASSPATH "
 DEFAULT_FILE = ".groovyscope/classpath.txt"
-DEFAULT_TIMEOUT_SECONDS = 900
+DEFAULT_TIMEOUT_SECONDS = int(config.default("classpath", "timeoutSeconds"))
 GRADLE_FILES = ("settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts")
 MAVEN_OUTPUT = "target/groovyscope-classpath.txt"
 # The files whose change means the exported classpath may be out of date: the root build files plus every

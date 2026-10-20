@@ -63,19 +63,6 @@
             "type": "string"
           }
         },
-        "classpathFrom": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "gradleTask": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          "description": "Deprecated and ignored; run `groovyscope classpath` instead."
-        },
         "exclude": {
           "type": "array",
           "items": {
@@ -129,7 +116,7 @@
         },
         "heap": {
           "type": "string",
-          "pattern": "^[0-9]+[kKmMgG]$"
+          "pattern": "^[1-9][0-9]*[kKmMgG]$"
         },
         "cds": {
           "type": "boolean"
@@ -157,7 +144,7 @@
         },
         "maxHeap": {
           "type": "string",
-          "pattern": "^(auto|[0-9]+[kKmMgG])$"
+          "pattern": "^(auto|[1-9][0-9]*[kKmMgG])$"
         },
         "heapGrowthFactor": {
           "type": "number",

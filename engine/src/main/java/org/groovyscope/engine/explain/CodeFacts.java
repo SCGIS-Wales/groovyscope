@@ -81,8 +81,7 @@ public final class CodeFacts {
     private static final Set<String> IGNORED_SUPERS = Set.of("java.lang.Object", "groovy.lang.Script",
             "groovy.lang.GroovyObject", "groovy.lang.GroovyObjectSupport");
     private static final Set<String> LOGGER_NAMES = Set.of("log", "logger", "LOG", "LOGGER");
-    private static final Set<String> LOG_METHODS = Set.of("trace", "debug", "info", "warn", "error", "fatal",
-            "severe", "warning");
+    private static final Set<String> LOG_METHODS = org.groovyscope.engine.semantics.Logging.ALL_LEVELS;
     private static final Set<String> FILE_TYPES = Set.of("java.io.File", "java.nio.file.Files", "java.nio.file.Paths",
             "java.io.FileReader", "java.io.FileWriter", "java.io.FileInputStream", "java.io.FileOutputStream",
             "java.io.RandomAccessFile");

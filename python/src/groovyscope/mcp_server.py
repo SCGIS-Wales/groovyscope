@@ -22,12 +22,14 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from groovyscope import (
     changes,
+    config,
     daemon,
     diagnostics,
     interaction,
     mcp_search,
     mcp_understanding,
     practices,
+    render,
     reports,
     rpc,
     skills,
@@ -36,16 +38,16 @@ from groovyscope import (
 from groovyscope import classpath as classpath_export
 from groovyscope import test_results as test_results_module
 from groovyscope.edits import (
-    FileChangedError,
     FileEdit,
     changed_line_count,
     counts_by_path,
     file_edits,
-    uri_path,
+    fix_outcome,
+    settle,
     write_document,
 )
 from groovyscope.kiro import write_atomically
-from groovyscope.mcp_server_support import (
+from groovyscope.paths import (
     Call,
     Paged,
     clip,
@@ -67,7 +69,7 @@ INSTRUCTIONS = (
     "review on the changed files and fix what it reports. GS100 means no classpath: suggest `groovyscope classpath`. "
     "Call profile_status before editing a file a runtime profile governs. The groovy-* prompts hold the recipes."
 )
-SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
+SEVERITY_NAMES = render.SEVERITY_NAMES
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "hint": 3}
 KIND_FILTERS = {
     "class": {"class", "interface", "trait", "enum", "record", "annotation"},
@@ -145,7 +147,7 @@ def compact_site(site: Mapping[str, Any], root: Path) -> dict[str, Any]:
     }
 
 
-MESSAGE_CHARS = 400  # default for output.maxMessageChars
+MESSAGE_CHARS = int(config.default("output", "maxMessageChars"))
 
 
 def compact_diagnostic(uri: str, item: Mapping[str, Any], root: Path, limit: int = MESSAGE_CHARS) -> dict[str, Any]:
@@ -238,8 +240,8 @@ def imported_findings(
 
 def pager(output: Mapping[str, Any]) -> tuple[Paged, int]:
     """A paging function honouring output.maxResults / output.maxBytes, plus the result cap it applies."""
-    max_results = int(output.get("maxResults", 50))
-    max_bytes = int(output.get("maxBytes", 16000))
+    max_results = int(output.get("maxResults", config.default("output", "maxResults")))
+    max_bytes = int(output.get("maxBytes", config.default("output", "maxBytes")))
 
     def paged(items: Sequence[Any], limit: int | None, cursor: int) -> dict[str, Any]:
         size = min(max_results, limit) if limit else max_results
@@ -248,167 +250,308 @@ def pager(output: Mapping[str, Any]) -> tuple[Paged, int]:
     return paged, max_results
 
 
+def bind(function: Callable[..., Any], *leading: Any) -> Callable[..., Any]:
+    """``function`` with its leading arguments (the workspace root, the engine call, the caps) fixed: the tool an
+    MCP client calls. It keeps the function's name and docstring, and its signature is what is left, which the
+    MCP SDK reads for the tool's input schema."""
+    bound = functools.partial(function, *leading)
+    signature = inspect.signature(bound, eval_str=True)
+    functools.update_wrapper(bound, function)
+    bound.__signature__ = signature  # type: ignore[attr-defined]
+    return bound
+
+
+def find_symbol(
+    root: Path, call: Call, paged: Paged, query: str, kind: str | None = None, limit: int | None = None, cursor: int = 0
+) -> dict[str, Any]:
+    """Find declarations whose name contains QUERY (case-insensitive). KIND: class, method, field or variable."""
+    raw = call("groovyscope/symbols", {"root": str(root), "query": query})
+    symbols = [compact_symbol(item, root) for item in raw.get("symbols", [])]
+    if kind:
+        allowed = KIND_FILTERS.get(kind.lower(), {kind.lower()})
+        symbols = [s for s in symbols if (s.get("kind") or "").lower() in allowed]
+    return paged(symbols, limit, cursor)
+
+
+def goto_definition(root: Path, call: Call, path: str, line: int, col: int) -> dict[str, Any]:
+    """The declaration under PATH:LINE:COL (1-based) with its confidence; location is null outside the workspace."""
+    params = {"root": str(root), "uri": to_uri(root, path), "line": line - 1, "character": col - 1}
+    raw = call("groovyscope/definition", params)
+    if not raw:
+        return {"found": False}
+    return {"found": True, "symbol": compact_symbol(raw["symbol"], root), "confidence": raw.get("confidence")}
+
+
+def find_references(
+    root: Path,
+    call: Call,
+    paged: Paged,
+    path: str,
+    line: int,
+    col: int,
+    *,
+    limit: int | None = None,
+    cursor: int = 0,
+    include_declaration: bool = False,
+) -> dict[str, Any]:
+    """Every place that refers to the symbol under PATH:LINE:COL (1-based), each with a confidence."""
+    params = {
+        "root": str(root),
+        "uri": to_uri(root, path),
+        "line": line - 1,
+        "character": col - 1,
+        "includeDeclaration": include_declaration,
+    }
+    raw = call("groovyscope/references", params)
+    refs = [
+        {**(compact_location(item, root) or {}), "confidence": item.get("confidence")}
+        for item in raw.get("references", [])
+    ]
+    result = paged(refs, limit, cursor)
+    result["counts"] = raw.get("counts", {})
+    return result
+
+
+def call_graph(
+    root: Path, call: Call, paged: Paged, cap: int, symbol: str, direction: str = "in", depth: int = 2
+) -> dict[str, Any]:
+    """Callers of (in) or calls made by (out) SYMBOL (pkg.Class.method, Class#method or Class), to DEPTH levels."""
+    raw = call("groovyscope/callGraph", {"root": str(root), "symbol": symbol, "direction": direction, "depth": depth})
+    result = paged([compact_site(edge, root) for edge in raw.get("edges", [])], None, 0)
+    result["direction"] = raw.get("direction")
+    result["depth"] = raw.get("depth")
+    result["nodes"] = [compact_symbol(node, root) for node in raw.get("nodes", [])][:cap]
+    return result
+
+
+def impact_of(root: Path, call: Call, cap: int, symbol: str, change: str = "signature") -> dict[str, Any]:
+    """What breaks if SYMBOL changes (CHANGE: signature, rename, delete, behaviour): callers, tests, risk."""
+    raw = call("groovyscope/impact", {"root": str(root), "symbol": symbol, "change": change})
+    reports = [compact_report(report, root, cap) for report in raw or []]
+    return {"found": bool(reports), "reports": reports}
+
+
+def symbol_context(root: Path, call: Call, cap: int, path: str, line: int, col: int) -> dict[str, Any]:
+    """The definition, the hover text and how many places use the symbol at PATH:LINE:COL (1-based), in one
+    call: what an agent otherwise asks goto_definition, hover and find_references for, one after another.
+    The reference count is split by confidence; find_references lists them when they are needed."""
+    params = position_params(root, path, line, col)
+    found = goto_definition(root, call, path, line, col)
+    raw_hover = call("groovyscope/hover", params) or {}
+    raw_refs = call("groovyscope/references", {**params, "includeDeclaration": False}) or {}
+    references = raw_refs.get("references", [])
+    by_confidence: dict[str, int] = {}
+    for item in references:
+        key = str(item.get("confidence") or "UNKNOWN")
+        by_confidence[key] = by_confidence.get(key, 0) + 1
+    return {
+        "found": bool(found.get("found")),
+        "symbol": found.get("symbol"),
+        "confidence": found.get("confidence"),
+        "hover": clip(raw_hover.get("markdown", ""), cap * 40) if raw_hover else None,
+        "references": {"total": len(references), "byConfidence": by_confidence},
+    }
+
+
 def navigation_tools(root: Path, call: Call, paged: Paged, cap: int) -> dict[str, Callable[..., Any]]:
     """find_symbol, goto_definition, find_references, call_graph and impact_of."""
 
-    def find_symbol(query: str, kind: str | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
-        """Find declarations whose name contains QUERY (case-insensitive). KIND: class, method, field or variable."""
-        raw = call("groovyscope/symbols", {"root": str(root), "query": query})
-        symbols = [compact_symbol(item, root) for item in raw.get("symbols", [])]
-        if kind:
-            allowed = KIND_FILTERS.get(kind.lower(), {kind.lower()})
-            symbols = [s for s in symbols if (s.get("kind") or "").lower() in allowed]
-        return paged(symbols, limit, cursor)
-
-    def goto_definition(path: str, line: int, col: int) -> dict[str, Any]:
-        """The declaration under PATH:LINE:COL (1-based) with its confidence; location is null outside the workspace."""
-        params = {"root": str(root), "uri": to_uri(root, path), "line": line - 1, "character": col - 1}
-        raw = call("groovyscope/definition", params)
-        if not raw:
-            return {"found": False}
-        return {"found": True, "symbol": compact_symbol(raw["symbol"], root), "confidence": raw.get("confidence")}
-
-    def find_references(
-        path: str,
-        line: int,
-        col: int,
-        *,
-        limit: int | None = None,
-        cursor: int = 0,
-        include_declaration: bool = False,
-    ) -> dict[str, Any]:
-        """Every place that refers to the symbol under PATH:LINE:COL (1-based), each with a confidence."""
-        params = {
-            "root": str(root),
-            "uri": to_uri(root, path),
-            "line": line - 1,
-            "character": col - 1,
-            "includeDeclaration": include_declaration,
-        }
-        raw = call("groovyscope/references", params)
-        refs = [
-            {**(compact_location(item, root) or {}), "confidence": item.get("confidence")}
-            for item in raw.get("references", [])
-        ]
-        result = paged(refs, limit, cursor)
-        result["counts"] = raw.get("counts", {})
-        return result
-
-    def call_graph(symbol: str, direction: str = "in", depth: int = 2) -> dict[str, Any]:
-        """Callers of (in) or calls made by (out) SYMBOL (pkg.Class.method, Class#method or Class), to DEPTH levels."""
-        raw = call(
-            "groovyscope/callGraph", {"root": str(root), "symbol": symbol, "direction": direction, "depth": depth}
-        )
-        result = paged([compact_site(edge, root) for edge in raw.get("edges", [])], None, 0)
-        result["direction"] = raw.get("direction")
-        result["depth"] = raw.get("depth")
-        result["nodes"] = [compact_symbol(node, root) for node in raw.get("nodes", [])][:cap]
-        return result
-
-    def impact_of(symbol: str, change: str = "signature") -> dict[str, Any]:
-        """What breaks if SYMBOL changes (CHANGE: signature, rename, delete, behaviour): callers, tests, risk."""
-        raw = call("groovyscope/impact", {"root": str(root), "symbol": symbol, "change": change})
-        reports = [compact_report(report, root, cap) for report in raw or []]
-        return {"found": bool(reports), "reports": reports}
-
-    def symbol_context(path: str, line: int, col: int) -> dict[str, Any]:
-        """The definition, the hover text and how many places use the symbol at PATH:LINE:COL (1-based), in one
-        call: what an agent otherwise asks goto_definition, hover and find_references for, one after another.
-        The reference count is split by confidence; find_references lists them when they are needed."""
-        params = position_params(root, path, line, col)
-        found = goto_definition(path, line, col)
-        raw_hover = call("groovyscope/hover", params) or {}
-        raw_refs = call("groovyscope/references", {**params, "includeDeclaration": False}) or {}
-        references = raw_refs.get("references", [])
-        by_confidence: dict[str, int] = {}
-        for item in references:
-            key = str(item.get("confidence") or "UNKNOWN")
-            by_confidence[key] = by_confidence.get(key, 0) + 1
-        return {
-            "found": bool(found.get("found")),
-            "symbol": found.get("symbol"),
-            "confidence": found.get("confidence"),
-            "hover": clip(raw_hover.get("markdown", ""), cap * 40) if raw_hover else None,
-            "references": {"total": len(references), "byConfidence": by_confidence},
-        }
-
     return {
-        "find_symbol": find_symbol,
-        "goto_definition": goto_definition,
-        "find_references": find_references,
-        "call_graph": call_graph,
-        "impact_of": impact_of,
-        "symbol_context": symbol_context,
+        "find_symbol": bind(find_symbol, root, call, paged),
+        "goto_definition": bind(goto_definition, root, call),
+        "find_references": bind(find_references, root, call, paged),
+        "call_graph": bind(call_graph, root, call, paged, cap),
+        "impact_of": bind(impact_of, root, call, cap),
+        "symbol_context": bind(symbol_context, root, call, cap),
     }
+
+
+def hover(root: Path, call: Call, cap: int, path: str, line: int, col: int) -> dict[str, Any]:
+    """What the editor shows on hover at PATH:LINE:COL (1-based): type, signature, documentation, runtime-profile
+    parameter details and why any finding on that line matters."""
+    raw = call("groovyscope/hover", position_params(root, path, line, col))
+    if not raw:
+        return {"found": False}
+    return {"found": True, "markdown": clip(raw.get("markdown", ""), cap * 80)}
+
+
+def type_definition(root: Path, call: Call, path: str, line: int, col: int) -> dict[str, Any]:
+    """The declaration of the type of the expression at PATH:LINE:COL (1-based)."""
+    raw = call("groovyscope/typeDefinition", position_params(root, path, line, col))
+    if not raw:
+        return {"found": False}
+    return {"found": True, "symbol": compact_symbol(raw["symbol"], root), "confidence": raw.get("confidence")}
+
+
+def document_symbols(
+    root: Path,
+    call: Call,
+    paged: Paged,
+    path: str,
+    *,
+    depth: int = 2,
+    kinds: list[str] | None = None,
+    name: str | None = None,
+    limit: int | None = None,
+    cursor: int = 0,
+) -> dict[str, Any]:
+    """The outline of PATH: classes and their members to DEPTH levels, each with its first and last line, plus
+    the file's line count. KINDS (class, method, field...) and NAME (substring) filter members; page with
+    LIMIT and CURSOR. Use with read_symbol instead of reading the file."""
+    raw = call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, path)})
+    wanted = {kind.lower() for kind in kinds or []}
+    needle = (name or "").lower()
+
+    def keep(item: Mapping[str, Any]) -> bool:
+        kind = str(item.get("kind") or "").lower()
+        return (not wanted or kind in wanted) and needle in str(item.get("name") or "").lower()
+
+    def outline(item: Mapping[str, Any], level: int) -> dict[str, Any]:
+        entry = compact_symbol(item, root)
+        entry.pop("path", None)
+        location = entry.pop("location", None) or {}
+        entry["lines"] = [location.get("line"), int(item.get("endLine", location.get("line", 1) - 1)) + 1]
+        children = item.get("children") or []
+        if children and level < depth:
+            entry["children"] = [outline(child, level + 1) for child in children if keep(child)]
+        elif children:
+            entry["members"] = len(children)
+        return entry
+
+    flat: list[dict[str, Any]] = []
+    for item in raw.get("symbols", []):
+        top = outline(item, 1)
+        members = top.pop("children", None)
+        flat.append(top)
+        for member in members or []:
+            flat.append({**member, "in": top.get("name")})
+    result = paged(flat, limit, cursor)
+    result["path"] = path
+    result["fileLines"] = raw.get("lines")
+    return result
 
 
 def insight_tools(root: Path, call: Call, paged: Paged, cap: int) -> dict[str, Callable[..., Any]]:
     """hover, type_definition and document_symbols: the remaining LSP views, for agents."""
 
-    def hover(path: str, line: int, col: int) -> dict[str, Any]:
-        """What the editor shows on hover at PATH:LINE:COL (1-based): type, signature, documentation, runtime-profile
-        parameter details and why any finding on that line matters."""
-        raw = call("groovyscope/hover", position_params(root, path, line, col))
-        if not raw:
-            return {"found": False}
-        return {"found": True, "markdown": clip(raw.get("markdown", ""), cap * 80)}
-
-    def type_definition(path: str, line: int, col: int) -> dict[str, Any]:
-        """The declaration of the type of the expression at PATH:LINE:COL (1-based)."""
-        raw = call("groovyscope/typeDefinition", position_params(root, path, line, col))
-        if not raw:
-            return {"found": False}
-        return {"found": True, "symbol": compact_symbol(raw["symbol"], root), "confidence": raw.get("confidence")}
-
-    def document_symbols(
-        path: str,
-        *,
-        depth: int = 2,
-        kinds: list[str] | None = None,
-        name: str | None = None,
-        limit: int | None = None,
-        cursor: int = 0,
-    ) -> dict[str, Any]:
-        """The outline of PATH: classes and their members to DEPTH levels, each with its first and last line, plus
-        the file's line count. KINDS (class, method, field...) and NAME (substring) filter members; page with
-        LIMIT and CURSOR. Use with read_symbol instead of reading the file."""
-        raw = call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, path)})
-        wanted = {kind.lower() for kind in kinds or []}
-        needle = (name or "").lower()
-
-        def keep(item: Mapping[str, Any]) -> bool:
-            kind = str(item.get("kind") or "").lower()
-            return (not wanted or kind in wanted) and needle in str(item.get("name") or "").lower()
-
-        def outline(item: Mapping[str, Any], level: int) -> dict[str, Any]:
-            entry = compact_symbol(item, root)
-            entry.pop("path", None)
-            location = entry.pop("location", None) or {}
-            entry["lines"] = [location.get("line"), int(item.get("endLine", location.get("line", 1) - 1)) + 1]
-            children = item.get("children") or []
-            if children and level < depth:
-                entry["children"] = [outline(child, level + 1) for child in children if keep(child)]
-            elif children:
-                entry["members"] = len(children)
-            return entry
-
-        flat: list[dict[str, Any]] = []
-        for item in raw.get("symbols", []):
-            top = outline(item, 1)
-            members = top.pop("children", None)
-            flat.append(top)
-            for member in members or []:
-                flat.append({**member, "in": top.get("name")})
-        result = paged(flat, limit, cursor)
-        result["path"] = path
-        result["fileLines"] = raw.get("lines")
-        return result
-
-    return {"hover": hover, "type_definition": type_definition, "document_symbols": document_symbols}
+    return {
+        "hover": bind(hover, root, call, cap),
+        "type_definition": bind(type_definition, root, call),
+        "document_symbols": bind(document_symbols, root, call, paged),
+    }
 
 
 def position_params(root: Path, path: str, line: int, col: int) -> dict[str, Any]:
     return {"root": str(root), "uri": to_uri(root, path), "line": line - 1, "character": col - 1}
+
+
+def check(
+    root: Path,
+    call: Call,
+    paged: Paged,
+    clip_at: int,
+    settings: Mapping[str, Any],
+    classpath: Mapping[str, Any],
+    *,
+    paths: list[str] | None = None,
+    profile: str | None = None,
+    include: list[str] | None = None,
+    codes: list[str] | None = None,
+    max_priority: int | None = None,
+    limit: int | None = None,
+    cursor: int = 0,
+) -> dict[str, Any]:
+    """Lint, compile, type-check and practice (GS) findings for PATHS (whole workspace when empty), worst first,
+    with counts per code. CODES keeps only those codes; MAX_PRIORITY 1 = errors, 2 = and warnings, 3 = and
+    info. Findings marked fixable can be repaired by fix."""
+    params: dict[str, Any] = {
+        "root": str(root),
+        "uris": [to_uri(root, p) for p in paths or []],
+        "include": include or [],
+    }
+    if profile:
+        params["profile"] = profile
+    raw = call("groovyscope/check", params)
+    findings = [
+        compact_diagnostic(uri, item, root, clip_at)
+        for uri, items in raw.get("diagnostics", {}).items()
+        for item in items
+    ]
+    imported, imported_summary = imported_findings(root, settings, paths)
+    findings, extra = summarise([*findings, *imported], codes, max_priority)
+    findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
+    result = paged(findings, limit, cursor)
+    result["summary"] = raw.get("summary", {})
+    result.update(extra)
+    result.update(imported_summary)
+    state = classpath_state(root, classpath)
+    if state is not None and state["state"] in ATTENTION_STATES:
+        result["classpath"] = state
+    return result
+
+
+def format_files(
+    root: Path, call: Call, cap: int, confirm_policy: str, paths: list[str] | None = None, apply: bool = False
+) -> dict[str, Any]:
+    """Formatting edits for PATHS (whole workspace when empty). APPLY writes the files; otherwise only counts."""
+    raw = call("groovyscope/format", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
+    changed, refused = file_edits(raw.get("edits", {}), root)
+    decision = interaction.UNSUPPORTED
+    if apply and changed:
+        decision = confirm_edits(confirm_policy, f"Format {len(changed)} file(s)", changed, root)
+        apply = not declined(decision)
+    files = [
+        {
+            "path": relative_path(row["edit"]["path"].as_uri(), root),
+            "linesChanged": row["lines"],
+            "applied": row["applied"],
+        }
+        for row in settle(changed, refused, apply=apply)
+    ]
+    result: dict[str, Any] = {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
+    if refused:
+        result["refused"] = [relative_path(uri, root) for uri in refused]
+    return with_decision(result, decision)
+
+
+def find_dynamic_code(
+    root: Path, call: Call, paged: Paged, paths: list[str] | None = None, limit: int | None = None, cursor: int = 0
+) -> dict[str, Any]:
+    """Constructs that defeat static analysis: untyped classes, def on public API, methodMissing, metaClass."""
+    raw = call("groovyscope/dynamicCode", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
+    findings = [
+        {
+            "kind": item.get("kind"),
+            "symbol": item.get("symbol"),
+            "detail": item.get("detail"),
+            "location": compact_location(item.get("location"), root),
+        }
+        for item in raw.get("findings", [])
+    ]
+    result = paged(findings, limit, cursor)
+    result["counts"] = raw.get("counts", {})
+    return result
+
+
+def workspace_status(
+    root: Path,
+    environ: Mapping[str, str],
+    call: Call,
+    classpath: Mapping[str, Any],
+    export_job: ExportJob,
+) -> dict[str, Any]:
+    """Daemon, engine version, root, file count, trust flag, index state and whether the classpath still
+    matches the build (fresh, stale, missing, configured, none)."""
+    status = call("groovyscope/status", {"root": str(root)})
+    info = daemon.info(root, environ)
+    result: dict[str, Any] = {
+        "root": str(root),
+        "daemon": {"socket": info["socket"], "running": info["running"], "log": info["log"]},
+        "engine": status,
+    }
+    result.update(client_entry())
+    result.update(classpath_report(root, classpath, export_job))
+    return result
 
 
 def quality_tools(
@@ -428,103 +571,11 @@ def quality_tools(
     classpath = classpath_settings or {}
     export_job = new_export_job()
 
-    def check(
-        *,
-        paths: list[str] | None = None,
-        profile: str | None = None,
-        include: list[str] | None = None,
-        codes: list[str] | None = None,
-        max_priority: int | None = None,
-        limit: int | None = None,
-        cursor: int = 0,
-    ) -> dict[str, Any]:
-        """Lint, compile, type-check and practice (GS) findings for PATHS (whole workspace when empty), worst first,
-        with counts per code. CODES keeps only those codes; MAX_PRIORITY 1 = errors, 2 = and warnings, 3 = and
-        info. Findings marked fixable can be repaired by fix."""
-        params: dict[str, Any] = {
-            "root": str(root),
-            "uris": [to_uri(root, p) for p in paths or []],
-            "include": include or [],
-        }
-        if profile:
-            params["profile"] = profile
-        raw = call("groovyscope/check", params)
-        findings = [
-            compact_diagnostic(uri, item, root, clip_at)
-            for uri, items in raw.get("diagnostics", {}).items()
-            for item in items
-        ]
-        imported, imported_summary = imported_findings(root, settings, paths)
-        findings, extra = summarise([*findings, *imported], codes, max_priority)
-        findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
-        result = paged(findings, limit, cursor)
-        result["summary"] = raw.get("summary", {})
-        result.update(extra)
-        result.update(imported_summary)
-        state = classpath_state(root, classpath)
-        if state is not None and state["state"] in ATTENTION_STATES:
-            result["classpath"] = state
-        return result
-
-    def format_files(paths: list[str] | None = None, apply: bool = False) -> dict[str, Any]:
-        """Formatting edits for PATHS (whole workspace when empty). APPLY writes the files; otherwise only counts."""
-        raw = call("groovyscope/format", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
-        changed, refused = file_edits(raw.get("edits", {}), root)
-        decision = interaction.UNSUPPORTED
-        if apply and changed:
-            decision = confirm_edits(confirm_policy, f"Format {len(changed)} file(s)", changed, root)
-            apply = not declined(decision)
-        files = []
-        for edit in changed:
-            if apply and not write_if_unchanged(edit, refused):
-                continue
-            files.append(
-                {
-                    "path": relative_path(edit["path"].as_uri(), root),
-                    "linesChanged": changed_line_count(edit["before"], edit["after"]),
-                    "applied": apply,
-                }
-            )
-        result: dict[str, Any] = {"checked": raw.get("checked", 0), "changed": len(files), "files": files[:cap]}
-        if refused:
-            result["refused"] = [relative_path(uri, root) for uri in refused]
-        return with_decision(result, decision)
-
-    def find_dynamic_code(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
-        """Constructs that defeat static analysis: untyped classes, def on public API, methodMissing, metaClass."""
-        raw = call("groovyscope/dynamicCode", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []]})
-        findings = [
-            {
-                "kind": item.get("kind"),
-                "symbol": item.get("symbol"),
-                "detail": item.get("detail"),
-                "location": compact_location(item.get("location"), root),
-            }
-            for item in raw.get("findings", [])
-        ]
-        result = paged(findings, limit, cursor)
-        result["counts"] = raw.get("counts", {})
-        return result
-
-    def workspace_status() -> dict[str, Any]:
-        """Daemon, engine version, root, file count, trust flag, index state and whether the classpath still
-        matches the build (fresh, stale, missing, configured, none)."""
-        status = call("groovyscope/status", {"root": str(root)})
-        info = daemon.info(root, environ)
-        result: dict[str, Any] = {
-            "root": str(root),
-            "daemon": {"socket": info["socket"], "running": info["running"], "log": info["log"]},
-            "engine": status,
-        }
-        result.update(client_entry())
-        result.update(classpath_report(root, classpath, export_job))
-        return result
-
     return {
-        "check": check,
-        "format": format_files,
-        "find_dynamic_code": find_dynamic_code,
-        "workspace_status": workspace_status,
+        "check": bind(check, root, call, paged, clip_at, settings, classpath),
+        "format": bind(format_files, root, call, cap, confirm_policy),
+        "find_dynamic_code": bind(find_dynamic_code, root, call, paged),
+        "workspace_status": bind(workspace_status, root, environ, call, classpath, export_job),
         **coverage_tools(root, paged, settings),
         **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy, job=export_job),
     }
@@ -598,6 +649,72 @@ def still_running(job: ExportJob, clock: Callable[[], float] = time.monotonic) -
     }
 
 
+def refresh_classpath(
+    root: Path,
+    environ: Mapping[str, str],
+    clip_at: int,
+    settings: Mapping[str, Any],
+    confirm_policy: str,
+    export_job: ExportJob,
+    limit: int,
+    wait_for: float,
+    every: float,
+    timeout: int | None = None,
+) -> dict[str, Any]:
+    """Export the compile and test classpath again from the project's Gradle or Maven build, after a
+    dependency changed in build.gradle, pom.xml or libs.versions.toml (check and workspace_status say
+    `classpath.state: stale`); the engine picks the new classpath up on its next request, no restart. Runs
+    the build, which can take minutes, and only in a trusted workspace: otherwise ask the user to run
+    `groovyscope trust` and `groovyscope classpath`. When the build outlasts this call the answer says
+    `state: running`; call again (or workspace_status) for the result. TIMEOUT is capped at
+    classpath.timeoutSeconds."""
+    with export_job["lock"]:
+        thread = export_job["thread"]
+        if thread is not None and thread.is_alive():
+            return still_running(export_job)
+        if export_job["outcome"] is not None and not export_job["reported"]:
+            export_job["reported"] = True  # the export the agent started earlier finished: its result
+            return dict(export_job["outcome"])
+    if not settings.get("file"):
+        return {"error": "no classpath settings in this session; run `groovyscope classpath` in a terminal"}
+    # Read now, not when the session started: `groovyscope trust --revoke` takes effect at once.
+    check_trust = settings.get("isTrusted")
+    trusted = bool(check_trust()) if callable(check_trust) else bool(settings.get("trusted"))
+    if not trusted:
+        return {
+            "error": "refused: the export runs the project's build scripts, which only a trusted workspace "
+            "may do; ask the user to run `groovyscope trust` and then `groovyscope classpath`"
+        }
+    build = classpath_export.detect_tool(root) or "build"
+    decision = interaction.confirm(
+        f"Run the {build} build of {root.name} to export its classpath? It runs the project's build scripts "
+        "and can take minutes.",
+        policy=confirm_policy,
+    )
+    if declined(decision):
+        return {"refreshed": False, "confirmation": decision, "reason": "nothing was run: the user said no"}
+    env = dict(environ)
+    if not env.get("JAVA_HOME") and settings.get("javaHome"):
+        env["JAVA_HOME"] = str(settings["javaHome"])
+    target = Path(str(settings["file"]))
+    seconds = min(limit, max(1, int(timeout))) if timeout else limit
+
+    def run() -> None:
+        outcome = export_outcome(root, env, target, seconds, decision=decision, clip_at=clip_at)
+        with export_job["lock"]:
+            export_job["outcome"] = outcome
+
+    worker = threading.Thread(target=run, name="groovyscope-classpath-export", daemon=True)
+    with export_job["lock"]:
+        export_job["thread"] = worker
+        export_job["started"] = time.monotonic()
+        export_job["outcome"] = None
+        export_job["reported"] = False
+    interaction.progress(0, None, f"starting the {build} build")
+    worker.start()
+    return await_export(export_job, worker, wait_for, every, build)
+
+
 def classpath_tools(
     root: Path,
     environ: Mapping[str, str],
@@ -614,61 +731,11 @@ def classpath_tools(
     wait_for = max(0.0, float(settings.get("waitSeconds", DEFAULT_EXPORT_WAIT_SECONDS)))
     every = max(0.5, float(settings.get("progressSeconds", DEFAULT_PROGRESS_SECONDS)))
 
-    def refresh_classpath(timeout: int | None = None) -> dict[str, Any]:
-        """Export the compile and test classpath again from the project's Gradle or Maven build, after a
-        dependency changed in build.gradle, pom.xml or libs.versions.toml (check and workspace_status say
-        `classpath.state: stale`); the engine picks the new classpath up on its next request, no restart. Runs
-        the build, which can take minutes, and only in a trusted workspace: otherwise ask the user to run
-        `groovyscope trust` and `groovyscope classpath`. When the build outlasts this call the answer says
-        `state: running`; call again (or workspace_status) for the result. TIMEOUT is capped at
-        classpath.timeoutSeconds."""
-        with export_job["lock"]:
-            thread = export_job["thread"]
-            if thread is not None and thread.is_alive():
-                return still_running(export_job)
-            if export_job["outcome"] is not None and not export_job["reported"]:
-                export_job["reported"] = True  # the export the agent started earlier finished: its result
-                return dict(export_job["outcome"])
-        if not settings.get("file"):
-            return {"error": "no classpath settings in this session; run `groovyscope classpath` in a terminal"}
-        # Read now, not when the session started: `groovyscope trust --revoke` takes effect at once.
-        check_trust = settings.get("isTrusted")
-        trusted = bool(check_trust()) if callable(check_trust) else bool(settings.get("trusted"))
-        if not trusted:
-            return {
-                "error": "refused: the export runs the project's build scripts, which only a trusted workspace "
-                "may do; ask the user to run `groovyscope trust` and then `groovyscope classpath`"
-            }
-        build = classpath_export.detect_tool(root) or "build"
-        decision = interaction.confirm(
-            f"Run the {build} build of {root.name} to export its classpath? It runs the project's build scripts "
-            "and can take minutes.",
-            policy=confirm_policy,
+    return {
+        "refresh_classpath": bind(
+            refresh_classpath, root, environ, clip_at, settings, confirm_policy, export_job, limit, wait_for, every
         )
-        if declined(decision):
-            return {"refreshed": False, "confirmation": decision, "reason": "nothing was run: the user said no"}
-        env = dict(environ)
-        if not env.get("JAVA_HOME") and settings.get("javaHome"):
-            env["JAVA_HOME"] = str(settings["javaHome"])
-        target = Path(str(settings["file"]))
-        seconds = min(limit, max(1, int(timeout))) if timeout else limit
-
-        def run() -> None:
-            outcome = export_outcome(root, env, target, seconds, decision=decision, clip_at=clip_at)
-            with export_job["lock"]:
-                export_job["outcome"] = outcome
-
-        worker = threading.Thread(target=run, name="groovyscope-classpath-export", daemon=True)
-        with export_job["lock"]:
-            export_job["thread"] = worker
-            export_job["started"] = time.monotonic()
-            export_job["outcome"] = None
-            export_job["reported"] = False
-        interaction.progress(0, None, f"starting the {build} build")
-        worker.start()
-        return await_export(export_job, worker, wait_for, every, build)
-
-    return {"refresh_classpath": refresh_classpath}
+    }
 
 
 def export_outcome(
@@ -717,43 +784,52 @@ def await_export(job: ExportJob, worker: threading.Thread, wait_for: float, ever
         return dict(job["outcome"])
 
 
+def coverage_gaps(
+    root: Path,
+    paged: Paged,
+    settings: Mapping[str, Any],
+    paths: list[str] | None = None,
+    limit: int | None = None,
+    cursor: int = 0,
+) -> dict[str, Any]:
+    """Classes and methods with lines no test executed, from the build's JaCoCo XML report (reports.jacoco),
+    most missed lines first, under PATHS when given; plus the overall line coverage. Run the build's test task
+    with jacocoTestReport first. Use it to decide which tests to write."""
+    report = reports.jacoco_file(root, settings.get("jacoco"))
+    if report is None:
+        expected = settings.get("jacoco") or reports.DEFAULT_JACOCO
+        return {"error": f"no JaCoCo report at {expected}; run the build's tests with jacocoTestReport first"}
+    try:
+        gaps = reports.filter_gaps(reports.read_jacoco(report, root), paths or [])
+        summary = reports.coverage_summary(report)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    result = paged([dict(g) for g in gaps], limit, cursor)
+    result["count"] = len(gaps)
+    result["report"] = relative_path(report.as_uri(), root)
+    result["coverage"] = summary
+    result["uncoveredMethods"] = sum(1 for g in gaps if g["kind"] == "method" and g["status"] == "uncovered")
+    return result
+
+
 def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:
     """coverage_gaps: the build's JaCoCo report as the list of what tests never executed."""
 
-    def coverage_gaps(paths: list[str] | None = None, limit: int | None = None, cursor: int = 0) -> dict[str, Any]:
-        """Classes and methods with lines no test executed, from the build's JaCoCo XML report (reports.jacoco),
-        most missed lines first, under PATHS when given; plus the overall line coverage. Run the build's test task
-        with jacocoTestReport first. Use it to decide which tests to write."""
-        report = reports.jacoco_file(root, settings.get("jacoco"))
-        if report is None:
-            expected = settings.get("jacoco") or reports.DEFAULT_JACOCO
-            return {"error": f"no JaCoCo report at {expected}; run the build's tests with jacocoTestReport first"}
-        try:
-            gaps = reports.filter_gaps(reports.read_jacoco(report, root), paths or [])
-            summary = reports.coverage_summary(report)
-        except ValueError as exc:
-            return {"error": str(exc)}
-        result = paged([dict(g) for g in gaps], limit, cursor)
-        result["count"] = len(gaps)
-        result["report"] = relative_path(report.as_uri(), root)
-        result["coverage"] = summary
-        result["uncoveredMethods"] = sum(1 for g in gaps if g["kind"] == "method" and g["status"] == "uncovered")
-        return result
+    return {"coverage_gaps": bind(coverage_gaps, root, paged, settings)}
 
-    return {"coverage_gaps": coverage_gaps}
+
+def test_results(root: Path, cap: int, sources: list[str] | None = None, limit: int | None = None) -> dict[str, Any]:
+    """Failing tests from TEST-*.xml at any depth under SOURCES (folders or .zip archives; default the
+    workspace): message and the first frames in the code and the test."""
+    summary = test_results_module.summarise(test_results_module.default_sources(root, sources))
+    shown = max(1, min(limit or cap, cap))
+    return {**summary, "failed": summary["failed"][:shown], "failedCount": len(summary["failed"])}
 
 
 def test_tools(root: Path, cap: int) -> dict[str, Callable[..., Any]]:
     """test_results: the JUnit XML reports of the last test run (or of a CI archive), summarised."""
 
-    def test_results(sources: list[str] | None = None, limit: int | None = None) -> dict[str, Any]:
-        """Failing tests from TEST-*.xml at any depth under SOURCES (folders or .zip archives; default the
-        workspace): message and the first frames in the code and the test."""
-        summary = test_results_module.summarise(test_results_module.default_sources(root, sources))
-        shown = max(1, min(limit or cap, cap))
-        return {**summary, "failed": summary["failed"][:shown], "failedCount": len(summary["failed"])}
-
-    return {"test_results": test_results}
+    return {"test_results": bind(test_results, root, cap)}
 
 
 def fix_request(
@@ -788,6 +864,109 @@ def unfixed(raw: Mapping[str, Any], root: Path, cap: int) -> dict[str, Any]:
     return answer
 
 
+def explain(root: Path, call: Call, code: str) -> dict[str, Any]:
+    """What a diagnostic code means (a GS or RP code, a Groovy 6 checker, a CodeNarc rule) and its fix."""
+    answer = call("groovyscope/explain", {"root": str(root), "code": code})
+    return {"found": True, **answer} if answer else {"found": False, "code": code}
+
+
+def review(
+    root: Path,
+    call: Call,
+    cap: int,
+    clip_at: int,
+    settings: Mapping[str, Any],
+    paths: list[str] | None = None,
+    top: int = 5,
+    max_priority: int | None = None,
+) -> dict[str, Any]:
+    """Compile, lint, type-check and practice findings for PATHS in one call, grouped by the review checklist,
+    with counts per code; MAX_PRIORITY as in check. Missing dependencies are summarised, not listed."""
+    raw = call(
+        "groovyscope/check",
+        {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "include": []},
+    )
+    findings = [
+        compact_diagnostic(uri, item, root, clip_at)
+        for uri, items in raw.get("diagnostics", {}).items()
+        for item in items
+    ]
+    imported, imported_summary = imported_findings(root, settings, paths)
+    findings, extra = summarise([*findings, *imported], None, max_priority)
+    groups = practices.review(findings, max(1, min(top, cap)))
+    result: dict[str, Any] = {
+        "summary": raw.get("summary", {}),
+        "groups": groups[:cap],
+        **extra,
+        **imported_summary,
+    }
+    governed = governed_files(root, call, cap, paths or [])
+    if governed:
+        result["profiles"] = governed
+    return result
+
+
+def governed_files(root: Path, call: Call, cap: int, paths: Sequence[str]) -> dict[str, str]:
+    """Profile name per governed path among PATHS (only explicit paths are looked up)."""
+    found: dict[str, str] = {}
+    for path in paths[:cap]:
+        status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
+        if isinstance(status, Mapping) and status.get("governed"):
+            found[path] = str(status.get("profile"))
+    return found
+
+
+def profile_status(root: Path, call: Call, path: str) -> dict[str, Any]:
+    """The runtime profile governing PATH: target Groovy, compiling service, the status of each construct on the
+    runtime (blocked, unproven, proven...), descriptor parameters, test seams, protected methods, whether a
+    contract baseline is recorded, and the profile's guidance."""
+    status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
+    return {"path": path, **(dict(status) if isinstance(status, Mapping) else {"governed": False})}
+
+
+def fix(
+    root: Path,
+    call: Call,
+    cap: int,
+    confirm_policy: str,
+    paths: list[str] | None = None,
+    codes: list[str] | None = None,
+    apply: bool = False,
+    changed_only: bool = False,
+    base: str | None = None,
+) -> dict[str, Any]:
+    """Safe fixes for PATHS (all when empty) and CODES (all fixable when empty). APPLY writes the files.
+    CHANGED_ONLY limits them to the lines this branch changed against BASE (default: the repository's default
+    branch), so existing code is left as it is."""
+    params, early = fix_request(root, paths, codes, changed_only=changed_only, base=base)
+    if early is not None:
+        return early
+    raw = call("groovyscope/fix", params)
+    changed, refused = file_edits(raw.get("edits", {}), root)
+    decision = interaction.UNSUPPORTED
+    if apply and changed:
+        decision = confirm_edits(confirm_policy, f"Apply safe fixes to {len(changed)} file(s)", changed, root)
+        apply = not declined(decision)
+    settled = settle(changed, refused, apply=apply)
+    outcome = fix_outcome(raw, refused)
+    files: list[dict[str, Any]] = []
+    for row in settled:
+        path = row["edit"]["path"]
+        entry: dict[str, Any] = {
+            "path": relative_path(path.as_uri(), root),
+            "codes": outcome["codes"].get(path, []),
+            "linesChanged": row["lines"],
+            "applied": row["applied"],
+        }
+        if path in outcome["fixed"]:
+            entry["fixed"] = outcome["fixed"][path]
+        files.append(entry)
+    rejected = {relative_path(path.as_uri(), root): why for path, why in outcome["rejected"].items()}
+    answer: dict[str, Any] = {"changed": len(files), "files": files[:cap], "rejected": rejected}
+    answer.update(unfixed(raw, root, cap))
+    return with_decision(answer, decision)
+
+
 def practice_tools(
     root: Path,
     call: Call,
@@ -800,102 +979,101 @@ def practice_tools(
     """explain, review, fix and profile_status."""
     settings = report_settings or {}
 
-    def explain(code: str) -> dict[str, Any]:
-        """What a diagnostic code means (a GS or RP code, a Groovy 6 checker, a CodeNarc rule) and its fix."""
-        answer = call("groovyscope/explain", {"root": str(root), "code": code})
-        return {"found": True, **answer} if answer else {"found": False, "code": code}
-
-    def review(paths: list[str] | None = None, top: int = 5, max_priority: int | None = None) -> dict[str, Any]:
-        """Compile, lint, type-check and practice findings for PATHS in one call, grouped by the review checklist,
-        with counts per code; MAX_PRIORITY as in check. Missing dependencies are summarised, not listed."""
-        raw = call(
-            "groovyscope/check",
-            {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "include": []},
-        )
-        findings = [
-            compact_diagnostic(uri, item, root, clip_at)
-            for uri, items in raw.get("diagnostics", {}).items()
-            for item in items
-        ]
-        imported, imported_summary = imported_findings(root, settings, paths)
-        findings, extra = summarise([*findings, *imported], None, max_priority)
-        groups = practices.review(findings, max(1, min(top, cap)))
-        result: dict[str, Any] = {
-            "summary": raw.get("summary", {}),
-            "groups": groups[:cap],
-            **extra,
-            **imported_summary,
-        }
-        governed = governed_files(paths or [])
-        if governed:
-            result["profiles"] = governed
-        return result
-
-    def governed_files(paths: Sequence[str]) -> dict[str, str]:
-        """Profile name per governed path among PATHS (only explicit paths are looked up)."""
-        found: dict[str, str] = {}
-        for path in paths[:cap]:
-            status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
-            if isinstance(status, Mapping) and status.get("governed"):
-                found[path] = str(status.get("profile"))
-        return found
-
-    def profile_status(path: str) -> dict[str, Any]:
-        """The runtime profile governing PATH: target Groovy, compiling service, the status of each construct on the
-        runtime (blocked, unproven, proven...), descriptor parameters, test seams, protected methods, whether a
-        contract baseline is recorded, and the profile's guidance."""
-        status = call("groovyscope/profile", {"root": str(root), "uri": to_uri(root, path)})
-        return {"path": path, **(dict(status) if isinstance(status, Mapping) else {"governed": False})}
-
-    def fix(
-        paths: list[str] | None = None,
-        codes: list[str] | None = None,
-        apply: bool = False,
-        changed_only: bool = False,
-        base: str | None = None,
-    ) -> dict[str, Any]:
-        """Safe fixes for PATHS (all when empty) and CODES (all fixable when empty). APPLY writes the files.
-        CHANGED_ONLY limits them to the lines this branch changed against BASE (default: the repository's default
-        branch), so existing code is left as it is."""
-        params, early = fix_request(root, paths, codes, changed_only=changed_only, base=base)
-        if early is not None:
-            return early
-        raw = call("groovyscope/fix", params)
-        changed, refused = file_edits(raw.get("edits", {}), root)
-        decision = interaction.UNSUPPORTED
-        if apply and changed:
-            decision = confirm_edits(confirm_policy, f"Apply safe fixes to {len(changed)} file(s)", changed, root)
-            apply = not declined(decision)
-        fixed = counts_by_path(raw.get("appliedCounts", {}))
-        files: list[dict[str, Any]] = []
-        for edit in changed:
-            if apply and not write_if_unchanged(edit, refused):
-                continue
-            uri = edit["path"].as_uri()
-            entry: dict[str, Any] = {
-                "path": relative_path(uri, root),
-                "codes": next((v for k, v in raw.get("applied", {}).items() if uri_path(k) == edit["path"]), []),
-                "linesChanged": changed_line_count(edit["before"], edit["after"]),
-                "applied": apply,
-            }
-            if edit["path"] in fixed:
-                entry["fixed"] = fixed[edit["path"]]
-            files.append(entry)
-        rejected = {
-            **{relative_path(uri, root): why for uri, why in raw.get("rejected", {}).items()},
-            **{relative_path(uri, root): "not a Groovy source inside the workspace" for uri in refused},
-        }
-        answer: dict[str, Any] = {"changed": len(files), "files": files[:cap], "rejected": rejected}
-        answer.update(unfixed(raw, root, cap))
-        return with_decision(answer, decision)
-
     return {
-        "explain": explain,
-        "review": review,
-        "fix": fix,
-        "profile_status": profile_status,
+        "explain": bind(explain, root, call),
+        "review": bind(review, root, call, cap, clip_at, settings),
+        "fix": bind(fix, root, call, cap, confirm_policy),
+        "profile_status": bind(profile_status, root, call),
         **rename_tools(root, call, cap, confirm_policy=confirm_policy),
     }
+
+
+def rename(
+    root: Path,
+    call: Call,
+    cap: int,
+    confirm_policy: str,
+    path: str,
+    line: int,
+    col: int,
+    new_name: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Rename the symbol at PATH:LINE:COL (1-based) to NEW_NAME everywhere it is used. Refused when any use is
+    matched by name only (dynamic Groovy). A dry run listing the edits per file unless APPLY."""
+    raw = call("groovyscope/rename", {**position_params(root, path, line, col), "newName": new_name})
+    if raw.get("refused"):
+        return {"renamed": False, "refused": raw["refused"]}
+    changed, refused = file_edits(raw.get("edits", {}), root)
+    files = [
+        {
+            "path": relative_path(edit["path"].as_uri(), root),
+            "edits": len(raw["edits"].get(edit["path"].as_uri(), [])) or None,
+            "linesChanged": changed_line_count(edit["before"], edit["after"]),
+        }
+        for edit in changed
+    ]
+    decision = interaction.UNSUPPORTED
+    if apply and changed:
+        decision = confirm_edits(confirm_policy, f"Rename to {new_name} in {len(changed)} file(s)", changed, root)
+        apply = not declined(decision)
+    result: dict[str, Any] = {"renamed": apply, "files": files[:cap], "fileCount": len(files)}
+    if refused:
+        result["skipped"] = [relative_path(uri, root) for uri in refused][:cap]
+    if apply and changed:
+        result.update(apply_verified(root, call, changed))
+    return with_decision(result, decision)
+
+
+def apply_verified(root: Path, call: Call, changed: list[FileEdit]) -> dict[str, Any]:
+    """Write the edits, recompile the changed files, and restore every file when a write fails, the engine
+    cannot verify, or the rename left new compile errors: the workspace is either fully renamed or untouched."""
+    uris = [edit["path"].as_uri() for edit in changed]
+    try:
+        errors_before = compile_errors(root, call, uris)
+    except (OSError, RuntimeError) as exc:
+        return {"renamed": False, "reason": f"nothing written: the engine could not compile first ({exc})"}
+    written: list[FileEdit] = []
+    try:
+        for edit in changed:
+            write_document(edit["path"], edit["after"], expected=edit["before"])
+            written.append(edit)
+        errors_after = compile_errors(root, call, uris)
+    except (OSError, RuntimeError) as exc:
+        failed = restore(root, written)
+        reason = f"{exc}; the files already changed were restored"
+        if failed:
+            reason += f", except {', '.join(failed)}: restore them from version control"
+        return {"renamed": False, "rolledBack": True, "reason": reason}
+    if errors_after > errors_before:
+        failed = restore(root, written)
+        reason = (
+            f"the rename left {errors_after - errors_before} new compile error(s); the files were restored. "
+            "Check the symbol (a same-named member in another class?) or rename by hand"
+        )
+        if failed:
+            reason += f". Restore {', '.join(failed)} from version control"
+        return {"renamed": False, "rolledBack": True, "reason": reason}
+    return {"verified": "the changed files compile with no new errors"}
+
+
+def restore(root: Path, written: list[FileEdit]) -> list[str]:
+    """Put the original text back; the paths that could not be restored."""
+    failed: list[str] = []
+    for edit in written:
+        try:
+            write_document(edit["path"], edit["before"], expected=edit["after"])
+        except OSError:
+            failed.append(relative_path(edit["path"].as_uri(), root))
+    return failed
+
+
+def compile_errors(root: Path, call: Call, uris: list[str]) -> int:
+    """Compile errors in the given documents, as the engine reports them after re-reading the files."""
+    raw = call("groovyscope/check", {"root": str(root), "uris": uris, "include": ["compile"]})
+    return sum(
+        1 for items in raw.get("diagnostics", {}).values() for item in items if int(item.get("severity", 3)) == 1
+    )
 
 
 def rename_tools(
@@ -903,81 +1081,7 @@ def rename_tools(
 ) -> dict[str, Callable[..., Any]]:
     """rename: refused on name-only matches, applied atomically, verified by a recompile, rolled back on new errors."""
 
-    def rename(path: str, line: int, col: int, new_name: str, apply: bool = False) -> dict[str, Any]:
-        """Rename the symbol at PATH:LINE:COL (1-based) to NEW_NAME everywhere it is used. Refused when any use is
-        matched by name only (dynamic Groovy). A dry run listing the edits per file unless APPLY."""
-        raw = call("groovyscope/rename", {**position_params(root, path, line, col), "newName": new_name})
-        if raw.get("refused"):
-            return {"renamed": False, "refused": raw["refused"]}
-        changed, refused = file_edits(raw.get("edits", {}), root)
-        files = [
-            {
-                "path": relative_path(edit["path"].as_uri(), root),
-                "edits": len(raw["edits"].get(edit["path"].as_uri(), [])) or None,
-                "linesChanged": changed_line_count(edit["before"], edit["after"]),
-            }
-            for edit in changed
-        ]
-        decision = interaction.UNSUPPORTED
-        if apply and changed:
-            decision = confirm_edits(confirm_policy, f"Rename to {new_name} in {len(changed)} file(s)", changed, root)
-            apply = not declined(decision)
-        result: dict[str, Any] = {"renamed": apply, "files": files[:cap], "fileCount": len(files)}
-        if refused:
-            result["skipped"] = [relative_path(uri, root) for uri in refused][:cap]
-        if apply and changed:
-            result.update(apply_verified(changed))
-        return with_decision(result, decision)
-
-    def apply_verified(changed: list[FileEdit]) -> dict[str, Any]:
-        """Write the edits, recompile the changed files, and restore every file when a write fails, the engine
-        cannot verify, or the rename left new compile errors: the workspace is either fully renamed or untouched."""
-        uris = [edit["path"].as_uri() for edit in changed]
-        try:
-            errors_before = compile_errors(uris)
-        except (OSError, RuntimeError) as exc:
-            return {"renamed": False, "reason": f"nothing written: the engine could not compile first ({exc})"}
-        written: list[FileEdit] = []
-        try:
-            for edit in changed:
-                write_document(edit["path"], edit["after"], expected=edit["before"])
-                written.append(edit)
-            errors_after = compile_errors(uris)
-        except (OSError, RuntimeError) as exc:
-            failed = restore(written)
-            reason = f"{exc}; the files already changed were restored"
-            if failed:
-                reason += f", except {', '.join(failed)}: restore them from version control"
-            return {"renamed": False, "rolledBack": True, "reason": reason}
-        if errors_after > errors_before:
-            failed = restore(written)
-            reason = (
-                f"the rename left {errors_after - errors_before} new compile error(s); the files were restored. "
-                "Check the symbol (a same-named member in another class?) or rename by hand"
-            )
-            if failed:
-                reason += f". Restore {', '.join(failed)} from version control"
-            return {"renamed": False, "rolledBack": True, "reason": reason}
-        return {"verified": "the changed files compile with no new errors"}
-
-    def restore(written: list[FileEdit]) -> list[str]:
-        """Put the original text back; the paths that could not be restored."""
-        failed: list[str] = []
-        for edit in written:
-            try:
-                write_document(edit["path"], edit["before"], expected=edit["after"])
-            except OSError:
-                failed.append(relative_path(edit["path"].as_uri(), root))
-        return failed
-
-    def compile_errors(uris: list[str]) -> int:
-        """Compile errors in the given documents, as the engine reports them after re-reading the files."""
-        raw = call("groovyscope/check", {"root": str(root), "uris": uris, "include": ["compile"]})
-        return sum(
-            1 for items in raw.get("diagnostics", {}).values() for item in items if int(item.get("severity", 3)) == 1
-        )
-
-    return {"rename": rename}
+    return {"rename": bind(rename, root, call, cap, confirm_policy)}
 
 
 def flat_outline(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -1011,6 +1115,136 @@ def impact_target(declaration: Mapping[str, Any]) -> str:
     return str(declaration["symbol"])
 
 
+def review_changes(
+    root: Path,
+    call: Call,
+    cap: int,
+    clip_at: int,
+    settings: Mapping[str, Any],
+    verify_settings: Mapping[str, Any],
+    others: Mapping[str, Callable[..., Any]],
+    base: str | None = None,
+    staged: bool = False,
+    top: int = 8,
+) -> dict[str, Any]:
+    """Review what this branch changed against BASE (default: the repository's default branch, from origin/HEAD)
+    or the index with STAGED, as a merge request reviewer:
+    the changed Groovy, Gradle and Jenkinsfile files, every finding on their changed lines grouped blocking,
+    shouldFix and nits, pre-existing findings elsewhere in those files as counts, the impact of changed
+    declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), a
+    `triage` that ranks the changed-line findings into risks, smells and noise with how many the safe fixes
+    repair and the `groovyscope fix` command, `tests`: the test methods the change reaches (through the call
+    graph, Java tests included) with the Gradle command that compiles and runs them (`groovyscope verify` runs
+    it), and a one-sentence verdict, plus `comments` (path, line, body)
+    ready to post as inline merge request discussions and a `summaryComment` for the merge request itself.
+    Nothing is run but git."""
+    try:
+        change = changes.changed_files(root, base, staged=staged)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    existing = [f for f in change["files"] if f["status"] != "deleted"]
+    shown = [
+        {"path": f["path"], "status": f["status"], "changedLines": sum(e - s + 1 for s, e in f["ranges"])}
+        for f in change["files"]
+    ]
+    result: dict[str, Any] = {"base": change["base"], "mode": change["mode"], "files": shown[:cap]}
+    if not existing:
+        result["verdict"] = (
+            f"nothing to review: no Groovy, Java, Gradle or Jenkinsfile changes against {change['base']}"
+        )
+        return result
+    ranges = changes.ranges_by_path(change)
+    paths = [f["path"] for f in existing]
+    raw = call("groovyscope/check", {"root": str(root), "uris": [to_uri(root, p) for p in paths], "include": []})
+    findings = [
+        compact_diagnostic(uri, item, root, clip_at)
+        for uri, items in raw.get("diagnostics", {}).items()
+        for item in items
+    ]
+    imported, imported_summary = imported_findings(root, settings, paths)
+    findings, extra = summarise([*findings, *imported])
+    inside, elsewhere = changes.split_findings(findings, ranges)
+    buckets = changes.bucket(inside)
+    limit = max(1, min(top, cap))
+    impact: list[dict[str, Any]] = []
+    reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
+    touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
+    for file in existing[:cap]:
+        if len(reports) >= verify.MAX_DECLARATIONS:
+            break
+        outline = flat_outline(
+            call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
+        )
+        for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
+            touched.append({**declaration, "path": file["path"]})
+            if len(reports) >= verify.MAX_DECLARATIONS:
+                break
+            report = others["impact_of"](impact_target(declaration), "signature")
+            if not report.get("found"):
+                continue
+            first = report["reports"][0]
+            reports.append(first)
+            if len(impact) >= limit:
+                continue
+            impact.append(
+                {
+                    **declaration,
+                    "path": file["path"],
+                    "riskLevel": first.get("riskLevel"),
+                    "riskScore": first.get("riskScore"),
+                    "callers": first.get("counts", {}),
+                    "tests": len(first.get("tests", [])),
+                    "dynamicSites": len(first.get("dynamicUnknowns", [])),
+                }
+            )
+    risky: list[dict[str, Any]] = []
+    for kind in changes.RISKY_KINDS:
+        matches = others["find_code"](kind, paths=paths).get("items", [])
+        risky += [{"kind": kind, **m} for m in changes.risky_in_change(matches, ranges)]
+    elsewhere_counts: dict[str, int] = {}
+    for finding in elsewhere:
+        elsewhere_counts[str(finding.get("code"))] = elsewhere_counts.get(str(finding.get("code")), 0) + 1
+    coverage = others["coverage_gaps"](paths)
+    uncovered = (
+        [g for g in coverage.get("items", []) if g["kind"] == "method" and in_change(g, ranges)]
+        if "error" not in coverage
+        else []
+    )
+    result.update(
+        {
+            "verdict": changes.verdict(buckets, risky, impact),
+            "triage": changes.triage(inside, limit=limit),
+            "tests": verify.plan(root, reports, paths, verify_settings or {}, limit=limit, touched=touched),
+            "blocking": buckets["blocking"][:limit],
+            "shouldFix": buckets["shouldFix"][:limit],
+            "nits": buckets["nits"][:limit],
+            "counts": {name: len(items) for name, items in buckets.items()},
+            "elsewhere": {
+                "count": len(elsewhere),
+                "byCode": dict(sorted(elsewhere_counts.items(), key=lambda kv: -kv[1])[:limit]),
+            },
+            "impact": impact,
+            "risky": risky[:limit],
+            "riskyCount": len(risky),
+            "uncovered": uncovered[:limit],
+            "uncoveredCount": len(uncovered),
+            "classpath": others["workspace_status"]().get("classpath") if "workspace_status" in others else None,
+            **extra,
+            **imported_summary,
+        }
+    )
+    comments = changes.draft_comments(buckets, risky[:limit], uncovered[:limit], limit=limit * COMMENTS_PER_TOP)
+    result["comments"] = comments
+    result["summaryComment"] = changes.summary_comment(
+        result["verdict"], result["counts"], impact, len(uncovered), len(comments)
+    )
+    return result
+
+
+def in_change(gap: Mapping[str, Any], ranges: Mapping[str, Sequence[Sequence[int]]]) -> bool:
+    return changes.in_ranges(int(gap.get("line", 0)), ranges.get(str(gap.get("path")), ()))
+
+
 def review_tools(
     root: Path,
     call: Call,
@@ -1024,124 +1258,7 @@ def review_tools(
     """review_changes: the merge request review, composed from git, the build's reports and the other tools."""
     settings = report_settings or {}
 
-    def review_changes(base: str | None = None, staged: bool = False, top: int = 8) -> dict[str, Any]:
-        """Review what this branch changed against BASE (default: the repository's default branch, from origin/HEAD)
-        or the index with STAGED, as a merge request reviewer:
-        the changed Groovy, Gradle and Jenkinsfile files, every finding on their changed lines grouped blocking,
-        shouldFix and nits, pre-existing findings elsewhere in those files as counts, the impact of changed
-        declarations (callers, tests, risk), risky constructs the change added (catch, def, return null), a
-        `triage` that ranks the changed-line findings into risks, smells and noise with how many the safe fixes
-        repair and the `groovyscope fix` command, `tests`: the test methods the change reaches (through the call
-        graph, Java tests included) with the Gradle command that compiles and runs them (`groovyscope verify` runs
-        it), and a one-sentence verdict, plus `comments` (path, line, body)
-        ready to post as inline merge request discussions and a `summaryComment` for the merge request itself.
-        Nothing is run but git."""
-        try:
-            change = changes.changed_files(root, base, staged=staged)
-        except ValueError as exc:
-            return {"error": str(exc)}
-        existing = [f for f in change["files"] if f["status"] != "deleted"]
-        shown = [
-            {"path": f["path"], "status": f["status"], "changedLines": sum(e - s + 1 for s, e in f["ranges"])}
-            for f in change["files"]
-        ]
-        result: dict[str, Any] = {"base": change["base"], "mode": change["mode"], "files": shown[:cap]}
-        if not existing:
-            result["verdict"] = (
-                f"nothing to review: no Groovy, Java, Gradle or Jenkinsfile changes against {change['base']}"
-            )
-            return result
-        ranges = changes.ranges_by_path(change)
-        paths = [f["path"] for f in existing]
-        raw = call("groovyscope/check", {"root": str(root), "uris": [to_uri(root, p) for p in paths], "include": []})
-        findings = [
-            compact_diagnostic(uri, item, root, clip_at)
-            for uri, items in raw.get("diagnostics", {}).items()
-            for item in items
-        ]
-        imported, imported_summary = imported_findings(root, settings, paths)
-        findings, extra = summarise([*findings, *imported])
-        inside, elsewhere = changes.split_findings(findings, ranges)
-        buckets = changes.bucket(inside)
-        limit = max(1, min(top, cap))
-        impact: list[dict[str, Any]] = []
-        reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
-        touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
-        for file in existing[:cap]:
-            if len(reports) >= verify.MAX_DECLARATIONS:
-                break
-            outline = flat_outline(
-                call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
-            )
-            for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
-                touched.append({**declaration, "path": file["path"]})
-                if len(reports) >= verify.MAX_DECLARATIONS:
-                    break
-                report = others["impact_of"](impact_target(declaration), "signature")
-                if not report.get("found"):
-                    continue
-                first = report["reports"][0]
-                reports.append(first)
-                if len(impact) >= limit:
-                    continue
-                impact.append(
-                    {
-                        **declaration,
-                        "path": file["path"],
-                        "riskLevel": first.get("riskLevel"),
-                        "riskScore": first.get("riskScore"),
-                        "callers": first.get("counts", {}),
-                        "tests": len(first.get("tests", [])),
-                        "dynamicSites": len(first.get("dynamicUnknowns", [])),
-                    }
-                )
-        risky: list[dict[str, Any]] = []
-        for kind in changes.RISKY_KINDS:
-            matches = others["find_code"](kind, paths=paths).get("items", [])
-            risky += [{"kind": kind, **m} for m in changes.risky_in_change(matches, ranges)]
-        elsewhere_counts: dict[str, int] = {}
-        for finding in elsewhere:
-            elsewhere_counts[str(finding.get("code"))] = elsewhere_counts.get(str(finding.get("code")), 0) + 1
-        coverage = others["coverage_gaps"](paths)
-        uncovered = (
-            [g for g in coverage.get("items", []) if g["kind"] == "method" and in_change(g, ranges)]
-            if "error" not in coverage
-            else []
-        )
-        result.update(
-            {
-                "verdict": changes.verdict(buckets, risky, impact),
-                "triage": changes.triage(inside, limit=limit),
-                "tests": verify.plan(root, reports, paths, verify_settings or {}, limit=limit, touched=touched),
-                "blocking": buckets["blocking"][:limit],
-                "shouldFix": buckets["shouldFix"][:limit],
-                "nits": buckets["nits"][:limit],
-                "counts": {name: len(items) for name, items in buckets.items()},
-                "elsewhere": {
-                    "count": len(elsewhere),
-                    "byCode": dict(sorted(elsewhere_counts.items(), key=lambda kv: -kv[1])[:limit]),
-                },
-                "impact": impact,
-                "risky": risky[:limit],
-                "riskyCount": len(risky),
-                "uncovered": uncovered[:limit],
-                "uncoveredCount": len(uncovered),
-                "classpath": others["workspace_status"]().get("classpath") if "workspace_status" in others else None,
-                **extra,
-                **imported_summary,
-            }
-        )
-        comments = changes.draft_comments(buckets, risky[:limit], uncovered[:limit], limit=limit * COMMENTS_PER_TOP)
-        result["comments"] = comments
-        result["summaryComment"] = changes.summary_comment(
-            result["verdict"], result["counts"], impact, len(uncovered), len(comments)
-        )
-        return result
-
-    def in_change(gap: Mapping[str, Any], ranges: Mapping[str, Sequence[Sequence[int]]]) -> bool:
-        return changes.in_ranges(int(gap.get("line", 0)), ranges.get(str(gap.get("path")), ()))
-
-    return {"review_changes": review_changes}
+    return {"review_changes": bind(review_changes, root, call, cap, clip_at, settings, verify_settings or {}, others)}
 
 
 def build_tools(
@@ -1149,16 +1266,21 @@ def build_tools(
 ) -> dict[str, Callable[..., Any]]:
     """The tool functions, keyed by their MCP names, bound to one workspace root and one engine session."""
     paged, cap = pager(output)
-    clip_at = int(output.get("maxMessageChars", MESSAGE_CHARS))
+    clip_at = int(output.get("maxMessageChars", config.default("output", "maxMessageChars")))
     report_settings = output.get("reports") if isinstance(output.get("reports"), Mapping) else {}
     classpath_settings = output.get("classpath") if isinstance(output.get("classpath"), Mapping) else {}
     mcp_settings: Mapping[str, Any] = output.get("mcp") or {}
-    policy = str(mcp_settings.get("confirmWrites", interaction.POLICY_AUTO))
+    policy = str(mcp_settings.get("confirmWrites", config.default("mcp", "confirmWrites")))
     tools: dict[str, Callable[..., Any]] = {
         **navigation_tools(root, call, paged, cap),
         **insight_tools(root, call, paged, cap),
         **mcp_search.search_tools(
-            root, call, paged, cap, settings=output, max_chars=int(output.get("maxBytes", 16000))
+            root,
+            call,
+            paged,
+            cap,
+            settings=output,
+            max_chars=int(output.get("maxBytes", config.default("output", "maxBytes"))),
         ),
         **quality_tools(
             root,
@@ -1181,7 +1303,7 @@ def build_tools(
         )
     )
     diagram_settings: Mapping[str, Any] = output.get("diagram") or {}
-    shared_callers = int(diagram_settings.get("sharedHelperCallers", 5))
+    shared_callers = int(diagram_settings.get("sharedHelperCallers", config.default("diagram", "sharedHelperCallers")))
     tools.update(
         mcp_understanding.understanding_tools(
             root, call, cap, tools, confirm_policy=policy, shared_callers=shared_callers
@@ -1190,10 +1312,13 @@ def build_tools(
     return tools
 
 
-def compact_json(value: Any) -> str:
-    """JSON without indentation or spaces after separators: the SDK's default pretty printing costs about a
-    third more characters, and every character reaches the agent's context."""
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
+# render.compact_json in the order a tool built its result (the summary first).
+compact_json = functools.partial(render.compact_json, sort_keys=False)
+
+
+def is_refusal(result: Any) -> bool:
+    """Whether a tool's result is a refusal: a mapping with an ``error`` (why nothing was done)."""
+    return isinstance(result, Mapping) and result.get("error") is not None
 
 
 def respond(
@@ -1206,7 +1331,8 @@ def respond(
     """Return a tool result as one compact JSON text block; with ``output.structured`` also as structuredContent
     (for clients that read it; most send the text to the model, so it is off by default to avoid doubling).
     With ``max_bytes`` (``output.maxBytes``) no answer is larger: see :func:`fit`. ``on_client`` sees the request
-    context of every call (the server records the client's name and capabilities from the first)."""
+    context of every call (the server records the client's name and capabilities from the first). A refusal (a
+    result carrying ``error``) is a tool error (``isError``), never a success the client reads as an answer."""
 
     @functools.wraps(function)
     def wrapper(*args: Any, **kwargs: Any) -> CallToolResult:
@@ -1217,9 +1343,11 @@ def respond(
             on_client(context)
         with interaction.bound(context):
             result = fit(function(*args, **kwargs), max_bytes)
+        refused = is_refusal(result)
         return CallToolResult(
             content=[TextContent(type="text", text=compact_json(result))],
-            structured_content=result if structured and isinstance(result, dict) else None,
+            structured_content=result if structured and isinstance(result, dict) and not refused else None,
+            is_error=refused,
         )
 
     signature = inspect.signature(function)
@@ -1409,8 +1537,8 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
     register_prompts(server)
     register_resources(server)
-    structured = bool(output.get("structured", False))
-    max_bytes = int(output.get("maxBytes", 16000))
+    structured = bool(output.get("structured", config.default("output", "structured")))
+    max_bytes = int(output.get("maxBytes", config.default("output", "maxBytes")))
     record = client_recorder(daemon.client_path(root, environ))
     for name, function in build_tools(root, call, output, environ).items():
         title, read_only = TOOL_INFO.get(name, (name, True))
@@ -1515,9 +1643,9 @@ def compact_registered_schema(server: MCPServer, name: str) -> None:
 
 
 Configuration = Callable[[], tuple[str, str] | None]
-RELOAD_METHOD = "groovyscope/reloadConfig"
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 100.0  # under Kiro's 120 s tool budget
-DEFAULT_MAX_IN_FLIGHT = 4
+RELOAD_METHOD = rpc.RELOAD_METHOD
+DEFAULT_REQUEST_TIMEOUT_SECONDS = float(config.default("mcp", "requestTimeoutSeconds"))  # under Kiro's 120 s budget
+DEFAULT_MAX_IN_FLIGHT = int(config.default("mcp", "maxInFlight"))
 RELOAD_TIMEOUT_SECONDS = 60.0
 Opener = Callable[[Path], Any]
 EngineCall = Callable[..., Any]
@@ -1550,17 +1678,6 @@ def with_decision(result: dict[str, Any], decision: str) -> dict[str, Any]:
     if declined(decision):
         result["note"] = "the user said no; nothing was written"
     return result
-
-
-def write_if_unchanged(edit: FileEdit, refused: list[str]) -> bool:
-    """Writes the edit unless the file changed on disk since it was read; then it joins ``refused`` with the
-    reason and nothing is written. True when written."""
-    try:
-        write_document(edit["path"], edit["after"], expected=edit["before"])
-    except FileChangedError as exc:
-        refused.append(f"{edit['path'].as_uri()} ({exc})")
-        return False
-    return True
 
 
 def request_limits(settings: Mapping[str, Any] | None) -> tuple[float, int]:
@@ -1657,7 +1774,7 @@ def engine_dispatcher(
     return (dispatch, lambda: closer(state["session"]))
 
 
-DEFAULT_PROGRESS_SECONDS = 5.0
+DEFAULT_PROGRESS_SECONDS = float(config.default("mcp", "progressSeconds"))
 
 
 def single_flight(

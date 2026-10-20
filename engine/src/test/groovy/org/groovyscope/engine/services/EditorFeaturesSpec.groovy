@@ -89,7 +89,7 @@ class Counter {
         Path src = Files.createDirectories(dir.resolve('src/main/groovy/demo'))
         Files.writeString(src.resolve('Zoo.groovy'), ZOO)
         zoo = src.resolve('Zoo.groovy').toUri().toString()
-        services = new LanguageServices(new WorkspaceModel(dir, new EngineConfig(['src/main/groovy'], [], [], false)),
+        services = new LanguageServices(new WorkspaceModel(dir, EngineConfig.builder().sourceRoots(['src/main/groovy']).exclude([]).build()),
                 new GroovyCompiler())
     }
 

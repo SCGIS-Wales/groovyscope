@@ -16,10 +16,10 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import rpc, selfheal
+from groovyscope import config, rpc, selfheal
 
-SOCKET_DIR_ENV = "GROOVYSCOPE_SOCKET_DIR"
-CACHE_DIR_ENV = "GROOVYSCOPE_CACHE_DIR"
+SOCKET_DIR_ENV = config.SOCKET_DIR_ENV
+CACHE_DIR_ENV = config.CACHE_DIR_ENV
 STATUS_METHOD = "groovyscope/status"
 SHUTDOWN_METHOD = "groovyscope/shutdownDaemon"
 START_TIMEOUT_SECONDS = 60.0
@@ -359,7 +359,7 @@ class CrashLoopRefusedError(RuntimeError):
 def direct_heap(command: list[str], log_file: Path, settings: Mapping[str, Any]) -> list[str]:
     """``command`` with the heap the self-healing grew for this workspace, for an engine started without the
     daemon: a heap that ran out of memory there would run out here too."""
-    configured = selfheal.configured_heap(command, str(settings.get("heap", "1g")))
+    configured = selfheal.configured_heap(command, str(settings.get("heap", config.default("daemon", "heap"))))
     grown = selfheal.kept_heap(selfheal.load_state(selfheal.state_path(log_file)), configured)
     return selfheal.with_heap(command, grown) if grown else command
 
@@ -385,7 +385,7 @@ def prepare_start(
     state_file = selfheal.state_path(log_file)
     previous = selfheal.load_state(state_file)
     cause = selfheal.exit_cause(log_file, previous)
-    configured = selfheal.configured_heap(command, str(settings.get("heap", "1g")))
+    configured = selfheal.configured_heap(command, str(settings.get("heap", config.default("daemon", "heap"))))
     moment = now()
     plan = selfheal.plan_restart(previous, cause, settings, configured, moment, physical=selfheal.physical_memory())
     if not plan["allowed"]:
@@ -395,7 +395,11 @@ def prepare_start(
     if plan["delay"] > 0:
         LOG.info("waiting %.1fs before starting the daemon again", plan["delay"])
         sleep(plan["delay"])
-    if selfheal.rotate_log(log_file, int(settings.get("logMaxBytes", 5_000_000)), int(settings.get("logsKept", 3))):
+    if selfheal.rotate_log(
+        log_file,
+        int(settings.get("logMaxBytes", config.default("daemon", "logMaxBytes"))),
+        int(settings.get("logsKept", config.default("daemon", "logsKept"))),
+    ):
         LOG.info("rotated the daemon log %s", log_file)
     heap = plan["heap"] or configured
     if plan["heap"]:

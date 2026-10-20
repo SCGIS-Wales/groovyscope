@@ -16,9 +16,6 @@
 package org.groovyscope.engine.compile;
 
 import groovy.lang.GroovyClassLoader;
-import java.io.IOException;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -51,6 +48,7 @@ import org.codehaus.groovy.syntax.SyntaxException;
 import org.groovyscope.engine.model.Diagnostic;
 import org.groovyscope.engine.model.Diagnostic.Severity;
 import org.groovyscope.engine.model.Range;
+import static org.groovyscope.engine.util.Closeables.closeQuietly;
 
 /**
  * Compiles workspace sources to {@link Phases#CANONICALIZATION}: names resolved, no bytecode generated.
@@ -126,11 +124,10 @@ public class GroovyCompiler {
             Attempt kept = null;
             int phase = 0;
             int attempts = 0;
-            long started = System.nanoTime();
-            long deadline = Long.MAX_VALUE;
+            RetryRounds rounds = new RetryRounds(MAX_RETRIES);
             boolean overBudget = false;
-            for (int attempt = 0; attempt <= MAX_RETRIES && !remaining.isEmpty(); attempt++) {
-                if (System.nanoTime() > deadline) {
+            for (int attempt = 0; rounds.allows(attempt) && !remaining.isEmpty(); attempt++) {
+                if (rounds.overBudget()) {
                     overBudget = true;
                     break;
                 }
@@ -144,9 +141,7 @@ public class GroovyCompiler {
                 Attempt result = compileOnce(remaining, classpath, trust, Phases.CANONICALIZATION, known);
                 made.add(result);
                 attempts++;
-                if (attempt == 0) {
-                    deadline = started + RetryBudget.of(System.nanoTime() - started);
-                }
+                rounds.finished(attempt);
                 if (previous != null && previous != resolvedOnce) {
                     release(previous);
                 }
@@ -162,7 +157,7 @@ public class GroovyCompiler {
                         && result.phaseReached >= Phases.SEMANTIC_ANALYSIS) {
                     resolvedOnce = result;
                 }
-                if (resolved || result.brokenUris.isEmpty() || attempt == MAX_RETRIES) {
+                if (resolved || result.brokenUris.isEmpty() || rounds.isLast(attempt)) {
                     if (resolved) {
                         modules.putAll(result.modules);
                         kept = result;
@@ -327,22 +322,14 @@ public class GroovyCompiler {
 
     private Attempt compileOnce(Map<String, String> sources, List<Path> classpath, boolean trust, int throughPhase,
             Map<String, ClassNode> known) {
-        CompilerConfiguration configuration = new CompilerConfiguration();
-        configuration.setSourceEncoding("UTF-8");
-        configuration.setTolerance(Integer.MAX_VALUE);
+        CompilerConfiguration configuration = CompilationScaffold.configuration();
         configuration.setWarningLevel(WarningMessage.LIKELY_ERRORS);
         configuration.getOptimizationOptions().put(CompilerConfiguration.GROOVYDOC, Boolean.TRUE);
         configuration.setParameters(true);
 
-        ClassLoader parent = new WorkspaceParentClassLoader(GroovyCompiler.class.getClassLoader());
-        GroovyClassLoader resolutionLoader = new GroovyClassLoader(parent, configuration);
+        GroovyClassLoader resolutionLoader = CompilationScaffold.resolutionLoader(configuration, classpath);
         openLoaders.add(resolutionLoader);
-        for (Path entry : classpath) {
-            resolutionLoader.addURL(toUrl(entry));
-        }
-        GroovyClassLoader transformLoader = trust
-                ? resolutionLoader
-                : new GroovyClassLoader(parent, configuration);
+        GroovyClassLoader transformLoader = CompilationScaffold.transformLoader(resolutionLoader, configuration, trust);
 
         CompilationUnit unit = new CompilationUnit(configuration, null, resolutionLoader, transformLoader);
         if (!known.isEmpty()) {
@@ -607,21 +594,6 @@ public class GroovyCompiler {
         return Range.of(startLine - 1, startColumn - 1, endLine - 1, endColumn - 1);
     }
 
-    private static URL toUrl(Path path) {
-        try {
-            return path.toUri().toURL();
-        } catch (MalformedURLException e) {
-            throw new IllegalArgumentException("bad classpath entry " + path, e);
-        }
-    }
-
-    private static void closeQuietly(GroovyClassLoader loader) {
-        try {
-            loader.close();
-        } catch (IOException e) {
-            // nothing useful to do
-        }
-    }
 
     record Attempt(Map<String, ModuleNode> modules, Map<String, SourceUnit> units,
             Map<String, List<Diagnostic>> diagnostics, Set<String> brokenUris, int phaseReached, boolean failed,

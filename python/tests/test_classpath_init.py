@@ -12,6 +12,8 @@ import pytest
 from click.testing import CliRunner
 
 from groovyscope import classpath, cli, trust, workspace_init
+from groovyscope import classpath as classpath_export
+from groovyscope import daemon as daemon_lifecycle
 from groovyscope.kiro import text_diff
 
 
@@ -89,10 +91,10 @@ def test_classpath_command_requires_trust_and_feeds_the_engine(
     def fake_export(root: Path, environ: Mapping[str, str], **_kwargs: Any) -> classpath.Export:
         return {"tool": "gradle", "command": ["gradle", "x"], "paths": [str(jar)], "missing": ["/gone.jar"]}
 
-    monkeypatch.setattr(cli.classpath_export, "export", fake_export)
+    monkeypatch.setattr(classpath_export, "export", fake_export)
     stopped: list[Path] = []
-    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _t=5.0: {"engine": "x"})
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
+    monkeypatch.setattr(daemon_lifecycle, "probe", lambda _s, _t=5.0: {"engine": "x"})
+    monkeypatch.setattr(daemon_lifecycle, "stop", lambda s: stopped.append(s) or True)
     done = runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"])
     assert done.exit_code == 0, done.output
     assert "1 classpath entries from gradle written to .groovyscope/classpath.txt" in done.output
@@ -110,7 +112,7 @@ def test_classpath_command_requires_trust_and_feeds_the_engine(
         msg = "gradlew failed (exit 1)"
         raise ValueError(msg)
 
-    monkeypatch.setattr(cli.classpath_export, "export", failing)
+    monkeypatch.setattr(classpath_export, "export", failing)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "classpath"]).exit_code == 1
 
 
