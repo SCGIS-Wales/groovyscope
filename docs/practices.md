@@ -468,7 +468,7 @@ class PricingSpec extends spock.lang.Specification {
 - The rule index lists 406 rules and the by name index lists 405.\[19\]\[27\]
 
 ```groovy
-// config/codenarc/codenarc.groovy
+// config/codenarc/groovyscope.groovy (abridged; the bundled profile is the full version)
 ruleset {
     ruleset('rulesets/basic.xml')
     ruleset('rulesets/braces.xml')
@@ -517,18 +517,19 @@ ruleset {
 
 ```groovy
 plugins { id 'groovy'; id 'codenarc' }
+def codenarcVersion = '<the version groovyscope version prints>'
 codenarc {
-    toolVersion = '4.0.0'
-    config = resources.text.fromFile('config/codenarc/codenarc.groovy')
+    toolVersion = codenarcVersion
+    config = resources.text.fromFile('config/codenarc/groovyscope.groovy')
 }
 dependencies {
-    codenarc 'org.codenarc:CodeNarc:4.0.0'
+    codenarc "org.codenarc:CodeNarc:${codenarcVersion}"
     codenarc 'org.apache.groovy:groovy:5.1.3'
 }
 ```
 
 **Command line** (check the flags against `--help` before relying on them):
-`java -cp "<CodeNarc, groovy, gmetrics, slf4j jars>" org.codenarc.CodeNarc -basedir=src/main/groovy -rulesetfiles=file:config/codenarc/codenarc.groovy -report=sarif:build/codenarc.sarif.json`
+`java -cp "<CodeNarc, groovy, gmetrics, slf4j jars>" org.codenarc.CodeNarc -basedir=src/main/groovy -rulesetfiles=file:config/codenarc/groovyscope.groovy -report=sarif:build/codenarc.sarif.json`
 
 **Suppressing a finding:** use `@SuppressWarnings('RuleName')` or a `// codenarc-disable RuleName` comment.\[44\]
 
@@ -586,7 +587,7 @@ withConfig(configuration) {
 }
 ```
 
-Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.configurationScript = file('config/groovy/compiler-config.groovy') }`, and add `compileOnly 'org.apache.groovy:groovy-typecheckers:6.0.0'`.
+Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.configurationScript = file('config/groovyc/compile-static.groovy') }`, the path groovyscope's type check also reads (`typecheck.configScript`), and add `compileOnly 'org.apache.groovy:groovy-typecheckers:6.0.0'`.
 
 ---
 

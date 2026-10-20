@@ -177,7 +177,7 @@ The full list of checks, with Kiro CLI prompts and a report table: [kiro-checks.
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
 > /code logs -l ERROR   # empty is good
-> /mcp                  # expect: groovyscope running 29 tools, next to your other servers
+> /mcp                  # expect: groovyscope running, next to your other servers
 > /context show         # expect: steering/groovyscope.md among the context files
 > /tools                # the other servers' tools are listed too (available, prompting)
 ```
@@ -271,7 +271,7 @@ the file `groovyscope lsp` writes and passes with `--config` (private, under the
 ## What the MCP tools add
 
 The `code` tool stops at what LSP can express. The `groovyscope` MCP server (one process per Kiro session,
-sharing the workspace daemon with the LSP side) adds 29 tools; the README lists their arguments and
+sharing the workspace daemon with the LSP side) adds its tools; the README lists their arguments and
 [docs/prompts.md](prompts.md) the prompts. Typical turns in the `groovy` agent:
 
 - "Review this branch as a merge request reviewer" → `review_changes(base="main")`: verdict, blocking and

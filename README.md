@@ -35,7 +35,7 @@ Then open any Groovy project:
 cd your-groovy-project
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
-> /mcp                            # expect: groovyscope running 29 tools
+> /mcp                            # expect: groovyscope running, with its tools listed
 ```
 
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
@@ -72,7 +72,13 @@ rather than guesses when a call site can only be matched by name. Findings come 
   (test doubles that cannot take effect: a stub on a private method, a metaClass override `@CompileStatic` code
   bypasses or one on a Mockito double, and tests that assert nothing), GS020 to GS027
   (names that say what things are and do: booleans as questions, verbs on methods, no generic words,
-  abbreviations or type prefixes, names that match their types, one verb per idea), GS040 to GS043 (Spock
+  abbreviations or type prefixes, names that match their types, one verb per idea), GS017 to GS019 and GS028,
+  GS029, GS034 to GS037 (a `Closure` parameter the type checker cannot see into, a GString looked up among
+  Strings, hardcoded secrets, a number used as a condition, a long closure on `it`, a record that keeps a
+  mutable component, SQL text built from values, a connection never closed, `return` inside `each`), GS030 to
+  GS033 and GS038 (Jenkins pipeline code: a secret interpolated into a shell step, a step inside `@NonCPS`,
+  unserialisable state across a step, `@CompileStatic` or `java.io.File` in CPS code, and mutable static
+  state anywhere), GS040 to GS043 (Spock
   mistakes Spock would reject or silently ignore: interactions in `then:` without a cardinality, unused or
   duplicated data table columns, a redundant `@Unroll`, misplaced exception conditions), GS050 to GS052
   (Gradle build scripts: eager tasks, dynamic versions, `http://` repositories and `mavenLocal()`), and GS100, one warning

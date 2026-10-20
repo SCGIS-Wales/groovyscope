@@ -130,7 +130,7 @@ ok    jdk          JDK 21 (Corretto-21.0.12.12.1, 21.0.12.1) at ~/Library/Java/J
 
 ## Engine JAR without a wheel: `groovyscope fetch`
 
-The PyPI wheel bundles the engine JAR, built with the latest stable CodeNarc release at release time
+The PyPI wheel bundles the engine JAR, built with the CodeNarc release the engine pins
 (`groovyscope version` prints `codenarc <version>`). A package built elsewhere (a distribution package, a vendored copy)
 may not; `doctor` then says `no engine JAR bundled`. Fetch the release JAR into the cache instead:
 

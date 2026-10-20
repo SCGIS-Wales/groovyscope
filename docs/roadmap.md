@@ -1,8 +1,10 @@
 # Roadmap and progress tracker
 
-This file is the source of truth for where the build stands. Update it at the end of every stage and at any
-natural stopping point. On resume: read this file, then `git log --oneline -20` and `gh pr list --state all`.
-Never redo a stage whose box is ticked and whose PR is merged; an unmerged PR means continue on its branch.
+This file is the narrative of where the build stands: what each stage set out to do, what shipped and in which
+release, and what is still waiting. Update it at the end of every stage and at any natural stopping point. On
+resume: read this file, then `git log --oneline -20` and `gh pr list --state all`. A ticked box means the code
+shipped in a release; checks that only the owner can run on a Kiro install are listed apart, under "Owner checks
+still open", so they do not hold a stage open. Never redo a ticked stage.
 
 Research spec: [research/2026-10-17-groovy-code-intelligence-for-kiro.md](research/2026-10-17-groovy-code-intelligence-for-kiro.md).
 
@@ -89,7 +91,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   --global` merges into `~/.kiro`. The daemon re-reads files changed on disk before every CLI or MCP request.
   Done when: CI green on the PR, local Kiro CLI checks recorded, release published.
 
-- [ ] **Stage 9: hardening, Corretto, Kiro formats, diagnostics, MCP parity** — branch `feat/hardening`.
+- [x] **Stage 9: hardening, Corretto, Kiro formats, diagnostics, MCP parity** — branch `feat/hardening`,
+  released in 0.8.0 (PR #38).
   From a reliability, resilience, security and code audit of 0.7.1 (engine and Python), plus the owner's
   requests:
   - Security: user-level workspace trust (`groovyscope trust`); a repository's `.groovyscope.yaml` can no
@@ -112,7 +115,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
     annotations.
   Done when: CI green on the PR, local Kiro CLI checks recorded, release published.
 
-- [ ] **Stage 10: dependable assistant for every Kiro action on Groovy code** — code on branch
+- [x] **Stage 10: dependable assistant for every Kiro action on Groovy code** — released in 0.9.0; code on branch
   `feat/agent-capabilities`, PR #44 merged 2026-10-17; docs, steering and MCP instructions on branch
   `docs/stage-10-agent-capabilities`, PR #46; release PR #45 (0.9.0) open and waiting for #46.
   Plan: `/Users/ssddgreg/.claude/plans/humming-crunching-badger.md` (approved).
@@ -163,7 +166,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   5. After 0.9.0: `groovyscope kiro repair --global` on each machine (adds `tools: ["*"]`), and
      `groovyscope profile install` to bring the private profile to the second machine.
 
-- [ ] **Stage 11: proactive agent, readable findings, MR reviewer, understanding and naming** — branch
+- [x] **Stage 11: proactive agent, readable findings, MR reviewer, understanding and naming** — released in
+  0.10.0; branch
   `feat/proactive-agent` (0.10.0), then `feat/understanding-naming` (0.11.0). Approved 2026-10-17 from the
   owner's test of 0.9.0 on Kiro CLI 2.29.1: the setup after every install is tedious, findings such as
   `catch (Exception ignored)` do not say whether they are defects, and the agent should act as the merge
@@ -225,7 +229,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   tap to verify afterwards, and the owner's Kiro 2.29.1 checks to record in the log below. Prompt:
   "continue Stage 11 from docs/roadmap.md: verify the 0.10.0 release and record my Kiro checks".
 
-- [ ] **Stage 12: live configuration, classpath state and reliability** — branch `feat/live-config`,
+- [x] **Stage 12: live configuration, classpath state and reliability** — released in 0.11.0; branch
+  `feat/live-config`,
   2026-10-17, from the owner's concern that the classpath the engine resolves against goes stale while the
   agent changes code, and that nobody could tell. Done in this stage:
   - A. The engine takes a new configuration in place (`groovyscope/reloadConfig`): the workspace model swaps
@@ -270,7 +275,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   tools. Still open: the owner's Kiro checks (the `stale` round trip inside Kiro CLI and one review posted on
   a merge request), to be recorded in the log below when supplied.
 
-- [ ] **Stage 13: Kiro 3.0 readiness** — branch `feat/kiro3-readiness`, 2026-10-18, from the gap analysis
+- [x] **Stage 13: Kiro 3.0 readiness** — released in 0.13.0 (PR #58); branch `feat/kiro3-readiness`, 2026-10-18,
+  from the gap analysis
   [research/2026-10-18-kiro-gap-analysis.md](research/2026-10-18-kiro-gap-analysis.md) (approved 2026-10-18).
   Kiro CLI 3.0 makes the V3 engine the default at the end of October 2026. In this stage: the V3 permission
   rules written for the agent allow only the read-only tools, so `fix`, `rename`, `format` with `apply`,
@@ -282,7 +288,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   #6322, extension gate); the universal agent's `hooks.agentSpawn` runs under V3 (or needs `SessionStart`);
   `/tools` token cost of the 27 schemas and `/context show` cost of the steering file.
   Done when: CI green, merged, released; the owner's four checks recorded here with the numbers.
-- [ ] **Stage 14: edit loop performance** — not started. From the benchmark: edits on the CodeNarc corpus took
+- [x] **Stage 14: edit loop performance** — released in 0.13.0 (PR #60); the incremental single-file compile it
+  left as future work came in 0.24.0 (PR #104). From the benchmark: edits on the CodeNarc corpus took
   12 to 15 minutes with groovyscope against under 2 without, because each write recompiles 1,064 files and
   republishes diagnostics. Planned: a quiet window that coalesces bursts of writes and recompiles lazily
   (on the next request or when the window closes); push diagnostics off for agent sessions (Kiro pulls them);
@@ -305,7 +312,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   plus dependants stays future work (3.6 s per full recompile on the corpus is not the bottleneck); the
   quiet window exists as a setting rather than a new scheduler, because the next request already compiles
   lazily. Left for the owner: benchmark tasks 3 and 4 repeated with Kiro (about 5 credits) to close the stage.
-- [ ] **Stage 15: Kiro native integration** — not started. Planned: a `PostToolUse` hook on `write` that runs
+- [x] **Stage 15: Kiro native integration** — released in 0.13.0 (hooks, reviewer, CI recipe; PR #61) and
+  0.14.0 (skills and MCP prompts; PR #62); `inclusion: fileMatch` and the power packaging stayed open. Planned: a `PostToolUse` hook on `write` that runs
   `groovyscope check` on the written file and returns new errors to the model in the same turn; an opt-in
   `Stop` hook that refuses to end the turn while changed files do not compile; skills generated from the
   prompts cookbook (`.kiro/skills/<name>/SKILL.md`, each a slash command, body loaded on demand); the
@@ -338,7 +346,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   which ignores the front matter, so the switch waits for the Kiro 3 check) and the power packaging (plugin
   schema unconfirmed). Left for the owner: one skill run (`/groovy-impact <symbol>`) and whether the custom
   agent lists the skills without a `skill://` resource entry.
-- [ ] **Stage 16: tool surface and context cost** — branch `feat/tool-surface`, 2026-10-18, merged as PR #74,
+- [x] **Stage 16: tool surface and context cost** — released in 0.17.0; branch `feat/tool-surface`, 2026-10-18,
+  merged as PR #74,
   waiting for the owner's `/tools` and `/context show` numbers; started at the owner's "proceed with any open stages" ahead of the Kiro numbers, measured
   on the MCP SDK's own `tools/list` output instead. Planned: shorter
   tool descriptions (the explanations move to the skills), a combined `symbol_context` tool (definition,
@@ -372,13 +381,15 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   crash-loop guard with backoff and heap escalation up to `daemon.maxHeap` recorded in a state file (G11),
   bounded logs and a cache sweep (G13), stop gate and write fixes (G14). Done when: the specs and tests named
   in section 5.3 pass, CI green, merged, released.
-- [ ] **Stage 20: elicitation and progress** — branch `feat/elicitation-progress`, 2026-10-18, merged as PR #77,
+- [x] **Stage 20: elicitation and progress** — released in 0.18.0; branch `feat/elicitation-progress`,
+  2026-10-18, merged as PR #77,
   waiting for the owner's Kiro check; started at the owner's "proceed with any open stages" ahead of the Kiro 3 check. `rename`, `fix`,
   `format` with `apply`, `refresh_classpath` and draw.io writes ask the user through MCP elicitation when the
   client supports it; progress on `refresh_classpath` and the cold first request; `refresh_classpath` as a
   long-running task where negotiated; the practices catalogue as a knowledge base resource. Done when: CI
   green, merged, released; the owner's Kiro check of one elicitation prompt recorded here.
-- [ ] **Stage 21: fixes from the owner's first Kiro check** — 2026-10-18, approved by the owner. Three PRs,
+- [x] **Stage 21: fixes from the owner's first Kiro check** — released in 0.19.0; 2026-10-18, approved by the
+  owner. Three PRs,
   merged as #79 (A), #80 (B) and the `feat/kiro-checks-kit` PR (C), released together; waiting for the owner's
   retest. A (engine): an unknown type in one file is reported while another file has an
   unresolved import (Groovy stopped the first round at the first failing file and the errors of the completion
@@ -397,6 +408,32 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   `RELEASE_PLEASE_TOKEN` secret so the release PR's checks run unattended and it marks itself for auto-merge;
   the session that cut a release verifies the publish (tag, workflow, PyPI, tap). Recorded in `AGENTS.md`.
   Still the owner's: add the secret and tick "Allow auto-merge".
+- [x] **Improvement plan: the owner's audit, Phases 0 to 6** — `docs/improvement-plan.md`, worked phase by
+  phase from 2026-10-19: baseline and probes (PR #106), security and fix safety (0.24.2), concurrency and
+  resilience (0.24.3), release, build and supply chain (PR #111), analysis fidelity (0.24.4), new quality checks
+  (0.25.0), hygiene and deduplication (PR #116). Phase 7 (documentation, Kiro assets and polish) is under way on
+  `docs/phase-7`. Section 11 of the plan tracks the phases; section 13 holds the findings.
+
+## Owner checks still open
+
+These need a Kiro CLI install or the owner's account, so no session can close them; each stage above shipped
+without them.
+
+- Stage 10: the free Kiro CLI commands with a throwaway `KIRO_HOME` and the two budgeted prompts.
+- Stage 11: the hook output on a Kiro 2.29.1 start, one `review_changes`, one `explain_code`, one draw.io
+  export opened, one naming pass.
+- Stage 12: the `stale` classpath round trip inside Kiro CLI and one review posted on a merge request.
+- Stage 13: the four Kiro 3.0 checks (the `code` tool on `.groovy`, `.gradle` and `Jenkinsfile`; the agent
+  spawn hook under V3; the `/tools` and `/context show` costs).
+- Stage 14: benchmark tasks 3 and 4 repeated with Kiro (about 5 credits).
+- Stage 15: both hooks and one skill run (`/groovy-impact <symbol>`), and whether a custom agent lists skills
+  without a `skill://` resource.
+- Stage 16: the `/tools` and `/context show` numbers before and after.
+- Stage 20: one elicitation prompt.
+- Stage 21: the retest of the failed checks.
+- Repository settings: the `RELEASE_PLEASE_TOKEN` secret, "Allow auto-merge", and the decisions listed in
+  section 13 of the improvement plan (ruleset, `pypi` environment tag rule, GitHub App, Scorecard, lockfiles,
+  code owner review).
 
 ## Upstream watch: Apache Groovy's own language server (GROOVY-12411)
 

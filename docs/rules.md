@@ -37,8 +37,8 @@ profiles live in `config/codenarc/`.
 - `config/codenarc/gradle.groovy`: Gradle build scripts (`*.gradle`) are a dynamic DSL, so their profile leaves
   out `NoDef`, `CompileStatic` and the `*TypeRequired` rules. `lint.gradleRuleset` replaces it.
 
-The profiles load cleanly against the embedded CodeNarc (4.0.0 or newer: the build resolves the latest stable
-release, see [architecture.md](architecture.md); the engine's specs assert it). The `enhanced` rules are
+The profiles load cleanly against the embedded CodeNarc (`groovyscope version` names it; the engine pins it in
+its version catalogue, see [architecture.md](architecture.md), and its specs assert the profiles load). The `enhanced` rules are
 included; they need the compile classpath, which comes from `workspace.classpath` or from `groovyscope
 classpath` (the project's own Gradle or Maven build, in a trusted workspace). `lint.rules` in
 `.groovyscope.yaml` switches single rules off or changes their priority on top of any profile
@@ -56,15 +56,17 @@ reported once as `lint-config` and no header is required.
 
 ## Running the same checks in the build
 
-Gradle 9 still defaults to an older CodeNarc, so pin 4.0.0 explicitly and point it at groovyscope's profile:
+Gradle 9 still defaults to an older CodeNarc, so pin the release groovyscope embeds (`groovyscope version`
+prints it as `codenarc <version>`) and point the plugin at groovyscope's profile:
 
 ```groovy
+def codenarcVersion = '<the version groovyscope version prints>'
 codenarc {
-    toolVersion = '4.0.0'
+    toolVersion = codenarcVersion
     config = resources.text.fromFile('config/codenarc/groovyscope.groovy')
 }
 dependencies {
-    codenarc 'org.codenarc:CodeNarc:4.0.0'
+    codenarc "org.codenarc:CodeNarc:${codenarcVersion}"
     codenarc 'org.apache.groovy:groovy:5.1.3'
 }
 ```
