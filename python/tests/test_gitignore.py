@@ -87,3 +87,24 @@ def test_without_write_it_only_reports_and_git_failures_fall_back_to_the_file(tm
         raise OSError("git not installed")
 
     assert gitignore.ensure(root, write=True, run=broken)["state"] == "added"
+
+
+def test_the_entry_is_appended_without_touching_the_lines_already_there(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    team = b"# caf\xe9 build output\r\nbuild/\r\n*.class\r\n"  # CRLF endings and a Latin-1 comment
+    (root / ".gitignore").write_bytes(team)
+    assert gitignore.ensure(root, write=True, run=not_ignored)["state"] == "added"
+    written = (root / ".gitignore").read_bytes()
+    assert written.startswith(team)
+    assert written[len(team) :] == f"\r\n{gitignore.COMMENT}\r\n.groovyscope/\r\n".encode()
+    assert gitignore.ensure(root, write=True, run=not_ignored)["state"] == "present"
+
+
+def test_a_symlinked_gitignore_stays_a_link_and_its_target_gets_the_entry(tmp_path: Path) -> None:
+    root = repo(tmp_path / "repo")
+    shared = tmp_path / "shared.gitignore"
+    shared.write_text("build/\n", encoding="utf-8")
+    (root / ".gitignore").symlink_to(shared)
+    assert gitignore.ensure(root, write=True, run=not_ignored)["state"] == "added"
+    assert (root / ".gitignore").is_symlink()
+    assert shared.read_text(encoding="utf-8").splitlines()[-1] == ".groovyscope/"
