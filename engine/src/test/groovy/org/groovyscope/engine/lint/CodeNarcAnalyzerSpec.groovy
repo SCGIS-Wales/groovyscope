@@ -128,4 +128,26 @@ ruleset {
         analyzer.configProblems().size() == 1
         analyzer.configProblems()[0].contains('AnotherMissingRule, GoneRule, NoSuchRuleAnywhere')
     }
+
+    def 'lint.rules can switch on a rule the profile leaves out, and a misspelt name is reported (Q-27)'() {
+        given:
+        def analyzer = new CodeNarcAnalyzer()
+        Path file = temp.resolve('small.groovy')
+        Files.writeString(file, 'ruleset {\n    UnnecessarySemicolon\n}\n')
+        def overrides = [Println: org.groovyscope.engine.config.EngineConfig.Lint.RULE_ON, UnnecesarySemicolon: 3]
+
+        when:
+        def set = analyzer.ruleSet(file.toString(), null, CodeNarcAnalyzer.BUNDLED_DEFAULT, overrides)
+        def found = analyzer.analyze('file:///w/A.groovy', 'class A { void a() { println "x"; } }\n', set)
+
+        then:
+        found*.code().toSet() == ['UnnecessarySemicolon', 'Println'] as Set
+        analyzer.configProblems().any { it.startsWith('lint.rules') && it.contains('UnnecesarySemicolon') }
+    }
+
+    def 'lint.rules reads on, off and priorities'() {
+        expect:
+        org.groovyscope.engine.config.EngineConfig.Lint.parseRules(com.google.gson.JsonParser.parseString(
+                '{"A": "on", "B": "off", "C": {"priority": 2}}')) == [A: -1, B: 0, C: 2]
+    }
 }

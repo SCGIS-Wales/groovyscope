@@ -149,7 +149,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param failOnPriority {@code check} fails on violations with this priority or more severe (1 is worst)
      * @param publish whether lint findings are pushed as LSP diagnostics
      * @param rules per-rule overrides on top of the loaded rule sets ({@code lint.rules}): rule name to a priority
-     *     (1 to 3), or {@link #RULE_OFF} to remove the rule
+     *     (1 to 3, which also switches on a rule the profile leaves out), {@link #RULE_OFF} to remove the rule, or
+     *     {@link #RULE_ON} to switch on a left-out rule at CodeNarc's own priority
      * @param publishMaxPriority pushed diagnostics include CodeNarc findings only with this priority or more severe
      *     ({@code lint.publishMaxPriority}, 1 to 3); {@code check} and review requests are never filtered
      */
@@ -157,6 +158,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             Map<String, Integer> rules, int publishMaxPriority) {
         /** The value of a {@link #rules} entry that removes the rule. */
         public static final int RULE_OFF = 0;
+        /** The value of a {@link #rules} entry that switches on a rule the profile leaves out. */
+        public static final int RULE_ON = -1;
         /** Default of {@code lint.publishMaxPriority}. */
         public static final int DEFAULT_PUBLISH_MAX_PRIORITY = 2;
         public static final Lint DEFAULTS = new Lint(null, null, 2, true);
@@ -172,8 +175,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         }
 
         /**
-         * Parses {@code lint.rules}: each value is {@code "off"} or {@code {"priority": 1|2|3}}. Entries of any
-         * other shape are ignored with a warning.
+         * Parses {@code lint.rules}: each value is {@code "on"}, {@code "off"} or {@code {"priority": 1|2|3}}.
+         * Entries of any other shape are ignored with a warning.
          */
         static Map<String, Integer> parseRules(JsonElement element) {
             Map<String, Integer> rules = new java.util.TreeMap<>();
@@ -186,12 +189,16 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                     rules.put(entry.getKey(), RULE_OFF);
                     continue;
                 }
+                if (value.isJsonPrimitive() && "on".equalsIgnoreCase(value.getAsString())) {
+                    rules.put(entry.getKey(), RULE_ON);
+                    continue;
+                }
                 JsonElement priority = value.isJsonObject() ? value.getAsJsonObject().get("priority") : null;
                 if (priority != null && priority.isJsonPrimitive() && priority.getAsJsonPrimitive().isNumber()
                         && priority.getAsInt() >= 1 && priority.getAsInt() <= 3) {
                     rules.put(entry.getKey(), priority.getAsInt());
                 } else {
-                    org.groovyscope.engine.log.EngineLog.warn("lint.rules.%s: expected \"off\" or {\"priority\": 1|2|3}; ignored",
+                    org.groovyscope.engine.log.EngineLog.warn("lint.rules.%s: expected \"on\", \"off\" or {\"priority\": 1|2|3}; ignored",
                             entry.getKey());
                 }
             }

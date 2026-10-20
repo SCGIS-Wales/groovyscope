@@ -93,35 +93,69 @@ public final class CodeNarcAnalyzer {
         if (overrides == null || overrides.isEmpty()) {
             return ruleSet(path, root, fallback);
         }
+        java.util.Objects.requireNonNull(REGISTRY, "rule registry");
         String resolved = resolve(path, root, fallback);
         Map<String, Integer> sorted = new java.util.TreeMap<>(overrides);
         return ruleSets.computeIfAbsent(resolved + "#" + sorted, key -> withOverrides(resolved, load(resolved), sorted));
     }
 
-    static RuleSet withOverrides(String name, RuleSet loaded, Map<String, Integer> overrides) {
-        java.util.Set<String> unknown = new java.util.TreeSet<>(overrides.keySet());
+    RuleSet withOverrides(String name, RuleSet loaded, Map<String, Integer> overrides) {
+        java.util.Set<String> absent = new java.util.TreeSet<>(overrides.keySet());
         List<Rule> kept = new ArrayList<>();
         for (Object item : loaded.getRules()) {
             if (!(item instanceof Rule rule)) {
                 continue;
             }
             Integer override = overrides.get(rule.getName());
-            unknown.remove(rule.getName());
-            if (override == null) {
+            absent.remove(rule.getName());
+            if (override == null || override == org.groovyscope.engine.config.EngineConfig.Lint.RULE_ON) {
                 kept.add(rule);
             } else if (override != org.groovyscope.engine.config.EngineConfig.Lint.RULE_OFF) {
-                if (rule instanceof org.codenarc.rule.AbstractRule configurable) {
-                    configurable.setPriority(override);
-                }
+                prioritise(rule, override);
                 kept.add(rule);
             }
         }
-        if (!unknown.isEmpty() && WARNED.add(name + "#" + unknown)) {
-            org.groovyscope.engine.log.EngineLog.warn("lint.rules names rule(s) not in %s, ignored: %s", name,
-                    String.join(", ", unknown));
+        // A rule the profile leaves out is switched on by "on" or a priority; one CodeNarc does not know is reported.
+        java.util.Set<String> unknown = new java.util.TreeSet<>();
+        for (String ruleName : absent) {
+            int override = overrides.get(ruleName);
+            if (override == org.groovyscope.engine.config.EngineConfig.Lint.RULE_OFF) {
+                continue;
+            }
+            Class<?> type = org.codenarc.ruleregistry.RuleRegistryHolder.getRuleRegistry() == null ? null
+                    : org.codenarc.ruleregistry.RuleRegistryHolder.getRuleRegistry().getRuleClass(ruleName);
+            if (type == null) {
+                unknown.add(ruleName);
+                continue;
+            }
+            try {
+                Rule rule = (Rule) type.getDeclaredConstructor().newInstance();
+                if (override != org.groovyscope.engine.config.EngineConfig.Lint.RULE_ON) {
+                    prioritise(rule, override);
+                }
+                kept.add(rule);
+            } catch (ReflectiveOperationException | ClassCastException e) {
+                unknown.add(ruleName);
+            }
+        }
+        if (!unknown.isEmpty()) {
+            unknownRules.put(LINT_RULES, unknown);
+            if (WARNED.add(name + "#" + unknown)) {
+                org.groovyscope.engine.log.EngineLog.warn("lint.rules names rule(s) this CodeNarc does not know, "
+                        + "ignored: %s", String.join(", ", unknown));
+            }
         }
         return new org.codenarc.ruleset.ListRuleSet(kept);
     }
+
+    private static void prioritise(Rule rule, int priority) {
+        if (rule instanceof org.codenarc.rule.AbstractRule configurable) {
+            configurable.setPriority(priority);
+        }
+    }
+
+    /** The key under which unknown names in {@code lint.rules} are recorded. */
+    static final String LINT_RULES = "lint.rules";
 
     /** Rule names a loaded rule set used that this CodeNarc does not know, per rule set (Q-15). */
     private final Map<String, java.util.Set<String>> unknownRules = new ConcurrentHashMap<>();
@@ -132,8 +166,9 @@ public final class CodeNarcAnalyzer {
      */
     public List<String> configProblems() {
         List<String> problems = new ArrayList<>();
-        new java.util.TreeMap<>(unknownRules).forEach((name, rules) -> problems.add("the CodeNarc rule set " + name
-                + " names rule(s) this CodeNarc does not know, skipped: " + String.join(", ", rules)));
+        new java.util.TreeMap<>(unknownRules).forEach((name, rules) -> problems.add(
+                (LINT_RULES.equals(name) ? LINT_RULES : "the CodeNarc rule set " + name)
+                        + " names rule(s) this CodeNarc does not know, skipped: " + String.join(", ", rules)));
         return problems;
     }
 
