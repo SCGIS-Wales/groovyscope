@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from groovyscope import mcp_server
+from groovyscope import mcp_server, tools_catalog
 
 ROOT = Path("/ws")
 
@@ -574,6 +574,18 @@ def test_results_are_compact_and_annotated(engine: dict[str, Any]) -> None:
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     assert tools["check"].annotations.read_only_hint is True and tools["check"].annotations.open_world_hint is False
     assert tools["rename"].annotations.read_only_hint is False and tools["rename"].title == "Rename a symbol"
+    # Apply-capable tools overwrite files; rename cannot be repeated with the same arguments; the classpath export
+    # runs the build, which may reach the network. Everything else only reads this workspace.
+    for name in ("fix", "format", "rename"):
+        assert tools[name].annotations.destructive_hint is True
+    assert tools["rename"].annotations.idempotent_hint is False and tools["fix"].annotations.idempotent_hint is True
+    assert tools["refresh_classpath"].annotations.open_world_hint is True
+    assert tools["refresh_classpath"].annotations.destructive_hint is False
+    assert tools["relationship_graph"].annotations.destructive_hint is False
+    for name in tools_catalog.read_only_tools():
+        hints = tools[name].annotations
+        assert hints.read_only_hint and not hints.destructive_hint and hints.idempotent_hint
+        assert not hints.open_world_hint
     result = asyncio.run(server.call_tool("find_symbol", {"query": "gree"}))
     text = result.content[0].text
     assert "\n" not in text and json.loads(text)["items"][0]["name"] == "Greeter"
