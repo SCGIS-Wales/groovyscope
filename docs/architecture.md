@@ -214,9 +214,11 @@ Every reference and definition carries one of three confidences. `STATIC`: the c
 pins the target. `INFERRED`: a single candidate matched on an inferred receiver type (a `def` initialised
 with a constructor, a call to a method whose overloads of that arity declare one return type, a call to a
 closure property whose every return constructs one type, a chained call, a type matched by simple name when
-the compiler could not resolve it).
-`DYNAMIC_UNKNOWN`: matched by name only. Rename refuses when any reference is `DYNAMIC_UNKNOWN`; impact
-analysis (Stage 4) will report those sites for manual review.
+the compiler could not resolve it, an implicit `this` call inside a closure answered by its owner or its
+`@DelegatesTo` type, a workspace extension or `@Category` method, an overload picked by argument types).
+`DYNAMIC_UNKNOWN`: matched by name only, or several targets remain (overloads the argument types cannot tell
+apart, a closure whose owner and delegate both declare the method). Rename refuses when any reference is
+`DYNAMIC_UNKNOWN`; impact analysis reports those sites for manual review.
 
 ## Lint, type-check and format (Stage 3)
 

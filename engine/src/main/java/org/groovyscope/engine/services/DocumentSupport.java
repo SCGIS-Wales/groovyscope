@@ -50,6 +50,7 @@ import org.groovyscope.engine.model.Range;
 import org.groovyscope.engine.model.Symbol;
 import org.groovyscope.engine.practices.PracticeFinder;
 import org.groovyscope.engine.practices.PracticeFixes;
+import org.groovyscope.engine.semantics.Members;
 import org.groovyscope.engine.semantics.Resolution;
 
 /** Per-document editor features: implementations, highlights, folding ranges and inlay type hints. */
@@ -59,8 +60,8 @@ final class DocumentSupport {
     }
 
     /**
-     * For a method, the methods with the same name and arity declared in workspace subclasses and implementations of
-     * its class; for a class or interface, its workspace subclasses and implementors.
+     * For a method, the methods with the same name and erased parameter types declared in workspace subclasses and
+     * implementations of its class; for a class or interface, its workspace subclasses and implementors.
      */
     static List<Location> implementations(Snapshot current, String uri, Position position) {
         Optional<ASTNode> declaration = current.index().nodeAt(uri, position)
@@ -72,11 +73,10 @@ final class DocumentSupport {
         Set<ASTNode> found = new LinkedHashSet<>();
         if (declaration.get() instanceof MethodNode method && !(method instanceof ConstructorNode)) {
             ClassNode owner = method.getDeclaringClass();
-            int arity = method.getParameters().length;
             for (ClassNode classNode : current.index().classes()) {
                 if (classNode != owner && isSubtype(classNode, owner)) {
                     for (MethodNode candidate : declaredMethods(classNode, method.getName())) {
-                        if (candidate.getParameters().length == arity && !candidate.isSynthetic()) {
+                        if (Members.sameErasure(candidate, method) && !candidate.isSynthetic()) {
                             found.add(candidate);
                         }
                     }

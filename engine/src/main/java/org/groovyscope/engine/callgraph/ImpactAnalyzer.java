@@ -160,17 +160,16 @@ public final class ImpactAnalyzer {
         return null;
     }
 
-    /** Methods with the same name and arity in subclasses (overriding) and superclasses (overridden). */
+    /** Methods of the same name and erased parameter types in subclasses (overriding) and superclasses (overridden). */
     List<Symbol> overridesOf(MethodNode method) {
         Set<Symbol> found = new LinkedHashSet<>();
         ClassNode owner = method.getDeclaringClass();
-        int arity = method.getParameters().length;
         for (ClassNode superType : Members.hierarchy(owner)) {
             if (superType == owner) {
                 continue;
             }
             for (MethodNode candidate : Members.readable(() -> superType.getDeclaredMethods(method.getName()))) {
-                if (candidate.getParameters().length == arity && !candidate.isSynthetic()) {
+                if (Members.sameErasure(candidate, method) && !candidate.isSynthetic()) {
                     found.add(symbols.of(candidate));
                 }
             }
@@ -180,7 +179,7 @@ public final class ImpactAnalyzer {
                 continue;
             }
             for (MethodNode candidate : Members.readable(() -> classNode.getDeclaredMethods(method.getName()))) {
-                if (candidate.getParameters().length == arity && !candidate.isSynthetic()) {
+                if (Members.sameErasure(candidate, method) && !candidate.isSynthetic()) {
                     found.add(symbols.of(candidate));
                 }
             }

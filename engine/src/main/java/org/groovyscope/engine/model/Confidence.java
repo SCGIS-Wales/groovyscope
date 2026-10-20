@@ -24,6 +24,9 @@ public enum Confidence {
     STATIC,
     /** A single candidate matched on the receiver's known type and arity. */
     INFERRED,
-    /** Matched by name only; the receiver type is dynamic or unknown. */
+    /**
+     * Matched by name only, because the receiver type is dynamic or unknown, or several targets remain (overloads
+     * the argument types cannot tell apart); the call reaches one of the candidates.
+     */
     DYNAMIC_UNKNOWN
 }
