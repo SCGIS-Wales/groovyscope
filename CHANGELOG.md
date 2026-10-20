@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.4](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.3...v0.24.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* phase 4 analysis fidelity of the improvement plan ([#112](https://github.com/SCGIS-Wales/groovyscope/issues/112)) ([b3f4178](https://github.com/SCGIS-Wales/groovyscope/commit/b3f4178b5cf5d5df0868c53336df614d6fc36ae5))
+
 ## [0.24.3](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.2...v0.24.3) (2026-10-19)
 
 
