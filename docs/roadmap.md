@@ -714,3 +714,7 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   mutable static state; Spock interaction, data table and exception checks; eager Gradle tasks, dynamic versions
   and insecure repositories; an optional licence header. A sample of 20 findings on the CodeNarc corpus is 10%
   false positives, all informational.
+- 2026-10-20: Phase 6 of `docs/improvement-plan.md`: hygiene and deduplication, no behaviour change beyond the
+  MCP error contract and typed environment overrides. The language server, quality and language services and the
+  CLI are split by responsibility; atomic writes, subprocesses, paths, hashes and compile scaffolding live once;
+  every setting falls back to `defaults.yaml`; the templates are the only source of the profiles and the catalogue.
