@@ -85,6 +85,34 @@ public final class Members {
     }
 
     /**
+     * True when both methods take parameters of the same erased types, so one overrides the other; a generic type
+     * parameter matches any type, since a subclass overrides {@code put(T)} with {@code put(Order)}.
+     */
+    public static boolean sameErasure(MethodNode left, MethodNode right) {
+        Parameter[] ours = left.getParameters();
+        Parameter[] theirs = right.getParameters();
+        if (ours.length != theirs.length) {
+            return false;
+        }
+        for (int i = 0; i < ours.length; i++) {
+            if (!sameErasure(ours[i].getType(), theirs[i].getType())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameErasure(ClassNode left, ClassNode right) {
+        if (left.isGenericsPlaceHolder() || right.isGenericsPlaceHolder()) {
+            return true;
+        }
+        if (isKnown(left.redirect()) && isKnown(right.redirect())) {
+            return left.redirect().getName().equals(right.redirect().getName());
+        }
+        return left.getNameWithoutPackage().equals(right.getNameWithoutPackage());
+    }
+
+    /**
      * Members of a classpath type are decompiled lazily; when they mention a class missing from the configured
      * classpath, reading them fails with a {@link LinkageError}. Such a type is treated as having no readable
      * members, so the lookup moves on instead of failing.

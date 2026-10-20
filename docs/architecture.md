@@ -214,9 +214,11 @@ Every reference and definition carries one of three confidences. `STATIC`: the c
 pins the target. `INFERRED`: a single candidate matched on an inferred receiver type (a `def` initialised
 with a constructor, a call to a method whose overloads of that arity declare one return type, a call to a
 closure property whose every return constructs one type, a chained call, a type matched by simple name when
-the compiler could not resolve it).
-`DYNAMIC_UNKNOWN`: matched by name only. Rename refuses when any reference is `DYNAMIC_UNKNOWN`; impact
-analysis (Stage 4) will report those sites for manual review.
+the compiler could not resolve it, an implicit `this` call inside a closure answered by its owner or its
+`@DelegatesTo` type, a workspace extension or `@Category` method, an overload picked by argument types).
+`DYNAMIC_UNKNOWN`: matched by name only, or several targets remain (overloads the argument types cannot tell
+apart, a closure whose owner and delegate both declare the method). Rename refuses when any reference is
+`DYNAMIC_UNKNOWN`; impact analysis reports those sites for manual review.
 
 ## Lint, type-check and format (Stage 3)
 
@@ -281,10 +283,12 @@ modification time) with the one taken at the last compile and recompiles when it
 The call graph is derived from the index: every method-name, static-call and constructor-call entry is
 resolved and becomes an edge from its container to each candidate target with the resolver's confidence.
 Impact analysis walks that graph. Direct callers are the static and inferred edges into the declaration;
-transitive callers follow static and inferred edges only, up to five levels; `DYNAMIC_UNKNOWN` edges are
-listed separately as sites to review and never counted as resolved. Overrides are same-name, same-arity
-methods in subclasses and superclasses. Tests are callers living under `src/test` or in classes named
-`*Spec` / `*Test`. The risk score is a transparent heuristic (8 per direct caller, 2 per transitive, 10 per
+transitive callers follow static and inferred edges only, up to five levels, and list the `DYNAMIC_UNKNOWN`
+edges they meet without following them; direct `DYNAMIC_UNKNOWN` edges are listed separately as sites to
+review and never counted as resolved. Overrides are same-name methods with the same erased parameter types in
+subclasses and superclasses (a generic parameter matches any type). Tests are callers living under `src/test`
+or in classes named `*Spec` / `*Test`; a test reaching the symbol only through a `DYNAMIC_UNKNOWN` edge is a
+possible test, listed with that confidence, and it suppresses the "no test" advice. The risk score is a transparent heuristic (8 per direct caller, 2 per transitive, 10 per
 override, 15 per dynamic site, 10 for public, 10 for rename or delete) capped at 100 and mapped to low,
 medium or high. For classes, fields and properties, "callers" are the references that resolve to them.
 

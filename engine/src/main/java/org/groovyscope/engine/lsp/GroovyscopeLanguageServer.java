@@ -775,7 +775,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
             List<org.groovyscope.engine.search.CodeSearch.Match> matches;
             try {
                 matches = org.groovyscope.engine.search.CodeSearch.find(
-                        noneInside(params, uris) ? Map.of() : snapshot.result().modules(), snapshot.index()::lines, uris, query);
+                        noneInside(params, uris) ? Map.of() : snapshot.result().modules(), snapshot.index()::lines, uris, query,
+                        snapshot.resolver());
             } catch (IllegalArgumentException e) {
                 throw invalid(e.getMessage());
             }

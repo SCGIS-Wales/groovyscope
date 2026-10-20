@@ -15,11 +15,14 @@
  */
 package org.groovyscope.engine.semantics;
 
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassHelper;
 import org.codehaus.groovy.ast.ClassNode;
@@ -34,13 +37,16 @@ import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
 import org.codehaus.groovy.ast.expr.CastExpression;
 import org.codehaus.groovy.ast.expr.ClassExpression;
+import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.DeclarationExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.PropertyExpression;
+import org.codehaus.groovy.ast.expr.SpreadExpression;
 import org.codehaus.groovy.ast.expr.StaticMethodCallExpression;
+import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.groovyscope.engine.index.AstIndex;
 import org.groovyscope.engine.index.NodeEntry;
@@ -105,7 +111,7 @@ public final class Resolver {
             case METHOD_NAME -> entry.parent() instanceof MethodCallExpression call ? methodCall(call, entry) : null;
             case PROPERTY_NAME -> entry.parent() instanceof PropertyExpression property ? property(property, entry) : null;
             case CONSTRUCTOR_CALL -> node instanceof ConstructorCallExpression call ? constructorCall(call, entry) : null;
-            case STATIC_CALL -> node instanceof StaticMethodCallExpression call ? staticCall(call) : null;
+            case STATIC_CALL -> node instanceof StaticMethodCallExpression call ? staticCall(call, entry) : null;
             case OTHER -> null;
         };
     }
@@ -228,18 +234,23 @@ public final class Resolver {
             return null;
         }
         int count = Members.argumentCount(call.getArguments());
+        if (call.isImplicitThis() && entry.enclosingClosure() != null) {
+            return closureCall(name, count, entry);
+        }
         Receiver receiver = receiverOf(call.getObjectExpression(), call.isImplicitThis(), entry);
         if (receiver.type != null) {
             List<MethodNode> candidates = Members.accepting(Members.methodsNamed(receiver.type, name), count);
-            if (candidates.size() == 1) {
-                return Resolution.of(candidates.get(0), receiver.exact ? Confidence.STATIC : Confidence.INFERRED);
-            }
-            if (candidates.size() > 1) {
-                return new Resolution(new ArrayList<>(candidates), Confidence.INFERRED);
+            if (!candidates.isEmpty()) {
+                return overloads(candidates, call.getArguments(), entry,
+                        receiver.exact ? Confidence.STATIC : Confidence.INFERRED);
             }
             List<ASTNode> closures = Members.membersNamed(receiver.type, name);
             if (!closures.isEmpty()) {
                 return Resolution.of(canonical(closures.get(0)), Confidence.INFERRED);
+            }
+            Resolution extension = extensionCall(receiver.type, name, count);
+            if (extension != null) {
+                return extension;
             }
             if (receiver.exact && !receiver.type.isPrimaryClassNode()) {
                 // A known classpath type without such a method: probably a GDK extension or a typo.
@@ -248,6 +259,174 @@ public final class Resolver {
         }
         List<ASTNode> byName = workspaceMethodsNamed(name, count);
         return byName.isEmpty() ? null : new Resolution(byName, Confidence.DYNAMIC_UNKNOWN);
+    }
+
+    /**
+     * A call the receiver's type does not declare, answered by a workspace static method taking the receiver as its
+     * first parameter: an extension module method or a {@code @Category} method (static after canonicalisation).
+     * Whether it applies depends on registration or a {@code use} block at run time, so the answer is inferred at
+     * best; several candidates, or one whose first parameter is {@code Object}, are dynamic.
+     */
+    private Resolution extensionCall(ClassNode receiverType, String name, int count) {
+        int withSelf = count < 0 ? count : count + 1;
+        Set<String> receiverTypes = new HashSet<>();
+        for (ClassNode type : Members.hierarchy(receiverType)) {
+            receiverTypes.add(type.getName());
+        }
+        List<ASTNode> matches = new ArrayList<>();
+        boolean objectSelf = false;
+        for (NodeEntry declaration : index.declarations()) {
+            if (declaration.node() instanceof MethodNode method && !(method instanceof ConstructorNode)
+                    && method.isStatic() && method.getName().equals(name) && method.getParameters().length > 0
+                    && Members.accepts(method, withSelf)) {
+                ClassNode self = method.getParameters()[0].getType();
+                if (ClassHelper.isObjectType(self) || ClassHelper.isDynamicTyped(self)) {
+                    objectSelf = true;
+                    matches.add(method);
+                } else if (receiverTypes.contains(self.getName())) {
+                    matches.add(method);
+                }
+            }
+        }
+        if (matches.isEmpty()) {
+            return null;
+        }
+        boolean single = matches.size() == 1 && !objectSelf;
+        return new Resolution(matches, single ? Confidence.INFERRED : Confidence.DYNAMIC_UNKNOWN);
+    }
+
+    /**
+     * An implicit-this call inside a closure goes to the closure's owner (the enclosing class) unless its delegate
+     * answers first: a delegate known from a {@code @DelegatesTo} on the parameter that receives the closure is
+     * looked up as well. One of them declaring the method gives an inferred answer; both declaring it is ambiguous
+     * (the resolve strategy decides at run time), so the answer is dynamic and a rename refuses.
+     */
+    private Resolution closureCall(String name, int count, NodeEntry entry) {
+        List<ASTNode> owner = new ArrayList<>();
+        ClassNode enclosing = entry.enclosingClass();
+        if (enclosing != null) {
+            owner.addAll(Members.accepting(Members.methodsNamed(enclosing, name), count));
+            if (owner.isEmpty()) {
+                Members.membersNamed(enclosing, name).forEach(member -> owner.add(canonical(member)));
+            }
+        }
+        List<ASTNode> delegated = new ArrayList<>();
+        for (ClassNode delegate : delegateTypes(entry.enclosingClosure())) {
+            for (MethodNode method : Members.accepting(Members.methodsNamed(delegate, name), count)) {
+                if (!delegated.contains(method)) {
+                    delegated.add(method);
+                }
+            }
+        }
+        if (!owner.isEmpty() && !delegated.isEmpty()) {
+            List<ASTNode> both = new ArrayList<>(owner);
+            both.addAll(delegated);
+            return new Resolution(both, Confidence.DYNAMIC_UNKNOWN);
+        }
+        List<ASTNode> chosen = delegated.isEmpty() ? owner : delegated;
+        if (!chosen.isEmpty()) {
+            return new Resolution(chosen, Confidence.INFERRED);
+        }
+        List<ASTNode> byName = workspaceMethodsNamed(name, count);
+        return byName.isEmpty() ? null : new Resolution(byName, Confidence.DYNAMIC_UNKNOWN);
+    }
+
+    /** The {@code @DelegatesTo} types of a closure and of the closures around it, innermost first. */
+    private List<ClassNode> delegateTypes(ClosureExpression innermost) {
+        List<ClassNode> types = new ArrayList<>();
+        ClosureExpression closure = innermost;
+        while (closure != null) {
+            NodeEntry closureEntry = closureEntries().get(closure);
+            if (closureEntry == null) {
+                break;
+            }
+            for (ClassNode delegate : delegatesOf(closure, closureEntry.parent())) {
+                if (!types.contains(delegate)) {
+                    types.add(delegate);
+                }
+            }
+            closure = closureEntry.enclosingClosure();
+        }
+        return types;
+    }
+
+    /** The types the {@code @DelegatesTo} of the parameter receiving {@code closure} in {@code call} names. */
+    private List<ClassNode> delegatesOf(ClosureExpression closure, ASTNode call) {
+        Expression arguments;
+        List<ASTNode> targets;
+        if (call instanceof MethodCallExpression methodCall) {
+            NodeEntry name = methodNameEntries().get(methodCall);
+            Resolution resolution = name == null ? null : resolve(name).orElse(null);
+            targets = resolution == null ? List.of() : resolution.candidates();
+            arguments = methodCall.getArguments();
+        } else if (call instanceof StaticMethodCallExpression staticCall) {
+            Resolution resolution = staticCall(staticCall, closureEntries().get(closure));
+            targets = resolution == null ? List.of() : resolution.candidates();
+            arguments = staticCall.getArguments();
+        } else {
+            return List.of();
+        }
+        int position = -1;
+        if (arguments instanceof TupleExpression tuple) {
+            for (int i = 0; i < tuple.getExpressions().size(); i++) {
+                if (tuple.getExpression(i) == closure) {
+                    position = i;
+                }
+            }
+        }
+        List<ClassNode> types = new ArrayList<>();
+        for (ASTNode target : targets) {
+            if (!(target instanceof MethodNode method) || method.getParameters().length == 0 || position < 0) {
+                continue;
+            }
+            Parameter[] parameters = method.getParameters();
+            Parameter receiving = parameters[Math.min(position, parameters.length - 1)];
+            for (org.codehaus.groovy.ast.AnnotationNode annotation : receiving.getAnnotations()) {
+                if (DELEGATES_TO.equals(annotation.getClassNode().getName())
+                        && annotation.getMember("value") instanceof ClassExpression value) {
+                    ClassNode delegate = usable(value.getType());
+                    if (delegate != null && !types.contains(delegate)) {
+                        types.add(delegate);
+                    }
+                }
+            }
+        }
+        return types;
+    }
+
+    private static final String DELEGATES_TO = "groovy.lang.DelegatesTo";
+
+    private volatile Map<ClosureExpression, NodeEntry> closures;
+    private volatile Map<MethodCallExpression, NodeEntry> methodNames;
+
+    /** Every closure's own entry (its parent is the call that receives it), built on first use. */
+    private Map<ClosureExpression, NodeEntry> closureEntries() {
+        Map<ClosureExpression, NodeEntry> built = closures;
+        if (built == null) {
+            built = new IdentityHashMap<>();
+            for (NodeEntry candidate : index.allEntries()) {
+                if (candidate.node() instanceof ClosureExpression closure) {
+                    built.put(closure, candidate);
+                }
+            }
+            closures = built;
+        }
+        return built;
+    }
+
+    /** The method name entry of every call, so a call's target can be resolved from the call, built on first use. */
+    private Map<MethodCallExpression, NodeEntry> methodNameEntries() {
+        Map<MethodCallExpression, NodeEntry> built = methodNames;
+        if (built == null) {
+            built = new IdentityHashMap<>();
+            for (NodeEntry candidate : index.allEntries()) {
+                if (candidate.role() == NodeEntry.Role.METHOD_NAME && candidate.parent() instanceof MethodCallExpression call) {
+                    built.put(call, candidate);
+                }
+            }
+            methodNames = built;
+        }
+        return built;
     }
 
     private Resolution property(PropertyExpression expression, NodeEntry entry) {
@@ -284,25 +463,156 @@ public final class Resolver {
                 constructors.add(constructor);
             }
         }
-        if (constructors.size() == 1) {
-            return Resolution.of(constructors.get(0), Confidence.STATIC);
-        }
-        if (constructors.size() > 1) {
-            return new Resolution(new ArrayList<>(constructors), Confidence.INFERRED);
+        if (!constructors.isEmpty()) {
+            return overloads(constructors, call.getArguments(), entry, Confidence.STATIC);
         }
         return classDeclaration(target);
     }
 
-    private Resolution staticCall(StaticMethodCallExpression call) {
+    private Resolution staticCall(StaticMethodCallExpression call, NodeEntry entry) {
         List<MethodNode> candidates = Members.accepting(Members.methodsNamed(call.getOwnerType(), call.getMethod()),
                 Members.argumentCount(call.getArguments()));
-        if (candidates.size() == 1) {
-            return Resolution.of(candidates.get(0), Confidence.STATIC);
-        }
         if (candidates.isEmpty()) {
             return null;
         }
-        return new Resolution(new ArrayList<>(candidates), Confidence.INFERRED);
+        return overloads(candidates, call.getArguments(), entry, Confidence.STATIC);
+    }
+
+    /**
+     * Overloads of one arity told apart by the static types of the arguments. Groovy dispatches on the run-time
+     * types, so an overload stays a candidate unless its parameter type is unrelated to the argument's; a single
+     * survivor, or one more specific than every other survivor, is inferred. Several left is dynamic: the call
+     * reaches one of them, so it must neither count as a caller of each nor let a rename through.
+     */
+    private Resolution overloads(List<MethodNode> candidates, Expression arguments, NodeEntry entry, Confidence single) {
+        if (candidates.size() == 1) {
+            return Resolution.of(candidates.get(0), single);
+        }
+        List<ClassNode> argumentTypes = argumentTypes(arguments, entry);
+        List<MethodNode> applicable = new ArrayList<>();
+        if (argumentTypes != null) {
+            for (MethodNode candidate : candidates) {
+                if (applicable(candidate, argumentTypes, false)) {
+                    applicable.add(candidate);
+                }
+            }
+        }
+        if (applicable.size() == 1) {
+            return Resolution.of(applicable.get(0), Confidence.INFERRED);
+        }
+        MethodNode specific = argumentTypes == null ? null : mostSpecific(applicable, argumentTypes);
+        if (specific != null) {
+            return Resolution.of(specific, Confidence.INFERRED);
+        }
+        return new Resolution(new ArrayList<>(applicable.isEmpty() ? candidates : applicable),
+                Confidence.DYNAMIC_UNKNOWN);
+    }
+
+    /** The static type of each argument, {@code null} for one the engine cannot tell; null for a spread call. */
+    private List<ClassNode> argumentTypes(Expression arguments, NodeEntry entry) {
+        if (!(arguments instanceof TupleExpression tuple)) {
+            return null;
+        }
+        List<ClassNode> types = new ArrayList<>();
+        for (Expression argument : tuple.getExpressions()) {
+            if (argument instanceof SpreadExpression) {
+                return null;
+            }
+            types.add(receiverOf(argument, false, entry).type());
+        }
+        return types;
+    }
+
+    /**
+     * Whether a call with these argument types can reach {@code method}. {@code strict} asks that every argument be
+     * known and assignable to its parameter; otherwise a parameter only has to be related to its argument.
+     */
+    private static boolean applicable(MethodNode method, List<ClassNode> argumentTypes, boolean strict) {
+        Parameter[] parameters = method.getParameters();
+        boolean varargs = parameters.length > 0 && parameters[parameters.length - 1].getType().isArray();
+        int fixed = varargs ? parameters.length - 1 : parameters.length;
+        for (int i = 0; i < Math.min(fixed, argumentTypes.size()); i++) {
+            ClassNode argument = argumentTypes.get(i);
+            ClassNode parameter = parameters[i].getType();
+            boolean fits = argument != null && assignable(argument, parameter);
+            if (strict ? !fits : argument != null && !fits && !related(argument, parameter)) {
+                return false;
+            }
+        }
+        return !strict || argumentTypes.size() == fixed;
+    }
+
+    /** The applicable overload whose every parameter is assignable to the others' and takes its argument as is. */
+    private static MethodNode mostSpecific(List<MethodNode> applicable, List<ClassNode> argumentTypes) {
+        MethodNode found = null;
+        for (MethodNode candidate : applicable) {
+            if (!applicable(candidate, argumentTypes, true)) {
+                continue;
+            }
+            boolean narrowest = true;
+            for (MethodNode other : applicable) {
+                if (other != candidate && !narrower(candidate, other)) {
+                    narrowest = false;
+                    break;
+                }
+            }
+            if (narrowest) {
+                if (found != null) {
+                    return null;
+                }
+                found = candidate;
+            }
+        }
+        return found;
+    }
+
+    private static boolean narrower(MethodNode method, MethodNode other) {
+        Parameter[] ours = method.getParameters();
+        Parameter[] theirs = other.getParameters();
+        if (ours.length != theirs.length) {
+            return false;
+        }
+        for (int i = 0; i < ours.length; i++) {
+            if (!assignable(ours[i].getType(), theirs[i].getType())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** True when a value of static type {@code argument} is always accepted by a {@code parameter}. */
+    private static boolean assignable(ClassNode argument, ClassNode parameter) {
+        ClassNode target = ClassHelper.getWrapper(parameter.redirect());
+        if (parameter.isGenericsPlaceHolder() || ClassHelper.isObjectType(target) || ClassHelper.isDynamicTyped(target)
+                || !Members.isKnown(target)) {
+            return true;
+        }
+        ClassNode value = ClassHelper.getWrapper(argument.redirect());
+        if (!Members.isKnown(value)) {
+            return true;
+        }
+        for (ClassNode type : Members.hierarchy(value)) {
+            if (type.getName().equals(target.getName())) {
+                return true;
+            }
+        }
+        boolean numbers = value.isDerivedFrom(ClassHelper.Number_TYPE) && target.isDerivedFrom(ClassHelper.Number_TYPE);
+        boolean text = ClassHelper.isStringType(target) && value.isDerivedFrom(ClassHelper.GSTRING_TYPE);
+        boolean closure = value.isDerivedFrom(ClassHelper.CLOSURE_TYPE)
+                && (target.isInterface() || target.isAbstract());
+        return numbers || text || closure;
+    }
+
+    /** True when a run-time value of the argument's static type could still be a {@code parameter}. */
+    private static boolean related(ClassNode argument, ClassNode parameter) {
+        ClassNode value = ClassHelper.getWrapper(argument.redirect());
+        ClassNode target = ClassHelper.getWrapper(parameter.redirect());
+        for (ClassNode type : Members.hierarchy(target)) {
+            if (type.getName().equals(value.getName())) {
+                return true;
+            }
+        }
+        return target.isInterface() && !Modifier.isFinal(value.getModifiers());
     }
 
     /** The static type of an expression, when the engine can tell, with whether it is exact. */

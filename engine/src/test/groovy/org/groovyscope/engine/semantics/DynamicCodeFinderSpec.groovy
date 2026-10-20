@@ -85,6 +85,26 @@ class DynamicCodeFinderSpec extends Specification {
         services.markDirty()
     }
 
+    def 'dynamic method names, categories, expandos, mixins, delegates, interceptors and reflection are found'() {
+        given:
+        def services = Fixtures.services('dynamic-constructs')
+
+        when:
+        def findings = services.dynamicCode([])
+        def byKind = findings.groupBy { it.kind() }
+
+        then:
+        byKind.keySet() == ['dynamic-method-name', 'category-use', 'expando', 'mixin', 'delegate', 'interceptable',
+                            'metaclass-mutation', 'reflection'] as Set
+        byKind.values().every { it.size() == 1 }
+        byKind['dynamic-method-name'][0].symbol() == 'demo.Constructs#run'
+        byKind['mixin'][0].symbol() == 'demo.Mixed'
+        byKind['delegate'][0].symbol() == 'demo.Wrapper#items'
+        byKind['interceptable'][0].symbol() == 'demo.Intercepted'
+        byKind['metaclass-mutation'][0].detail().contains('enableGlobally')
+        findings.every { it.location() != null && !it.detail().isBlank() }
+    }
+
     def 'execute() on a runner is not a process; on strings, lists and untyped values it is'() {
         given:
         def services = Fixtures.services('basic-app')

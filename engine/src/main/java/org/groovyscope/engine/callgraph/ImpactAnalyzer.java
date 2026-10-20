@@ -79,14 +79,11 @@ public final class ImpactAnalyzer {
                 ? overridesOf(method)
                 : List.of();
         List<CallSite> tests = new ArrayList<>();
-        for (CallSite site : direct) {
-            if (isTest(site)) {
-                tests.add(site);
-            }
-        }
-        for (CallSite site : transitive) {
-            if (isTest(site)) {
-                tests.add(site);
+        for (List<CallSite> sites : List.of(direct, transitive, dynamic)) {
+            for (CallSite site : sites) {
+                if (isTest(site)) {
+                    tests.add(site);
+                }
             }
         }
         int score = score(declaration, change, direct, transitive, overrides, dynamic);
@@ -130,10 +127,10 @@ public final class ImpactAnalyzer {
             Deque<ASTNode> next = new ArrayDeque<>();
             for (ASTNode caller : frontier) {
                 for (CallSite site : graph.incoming(caller)) {
-                    if (site.confidence() == Confidence.DYNAMIC_UNKNOWN) {
-                        continue;
-                    }
                     result.add(site);
+                    if (site.confidence() == Confidence.DYNAMIC_UNKNOWN) {
+                        continue; // reported, so a test reaching it is a possible test, but not followed further
+                    }
                     ASTNode upstream = callerNode(site);
                     if (upstream != null && visited.add(upstream)) {
                         next.add(upstream);
@@ -160,17 +157,16 @@ public final class ImpactAnalyzer {
         return null;
     }
 
-    /** Methods with the same name and arity in subclasses (overriding) and superclasses (overridden). */
+    /** Methods of the same name and erased parameter types in subclasses (overriding) and superclasses (overridden). */
     List<Symbol> overridesOf(MethodNode method) {
         Set<Symbol> found = new LinkedHashSet<>();
         ClassNode owner = method.getDeclaringClass();
-        int arity = method.getParameters().length;
         for (ClassNode superType : Members.hierarchy(owner)) {
             if (superType == owner) {
                 continue;
             }
             for (MethodNode candidate : Members.readable(() -> superType.getDeclaredMethods(method.getName()))) {
-                if (candidate.getParameters().length == arity && !candidate.isSynthetic()) {
+                if (Members.sameErasure(candidate, method) && !candidate.isSynthetic()) {
                     found.add(symbols.of(candidate));
                 }
             }
@@ -180,7 +176,7 @@ public final class ImpactAnalyzer {
                 continue;
             }
             for (MethodNode candidate : Members.readable(() -> classNode.getDeclaredMethods(method.getName()))) {
-                if (candidate.getParameters().length == arity && !candidate.isSynthetic()) {
+                if (Members.sameErasure(candidate, method) && !candidate.isSynthetic()) {
                     found.add(symbols.of(candidate));
                 }
             }
@@ -233,10 +229,20 @@ public final class ImpactAnalyzer {
         }
         if (!tests.isEmpty()) {
             Set<String> files = new LinkedHashSet<>();
+            Set<String> possible = new LinkedHashSet<>();
             for (CallSite test : tests) {
                 files.add(test.caller().location().uri());
+                if (test.confidence() == Confidence.DYNAMIC_UNKNOWN) {
+                    possible.add(test.caller().location().uri());
+                }
             }
-            suggestions.add("run the " + files.size() + " test file(s) that reach this symbol");
+            for (CallSite test : tests) {
+                if (test.confidence() != Confidence.DYNAMIC_UNKNOWN) {
+                    possible.remove(test.caller().location().uri());
+                }
+            }
+            suggestions.add("run the " + files.size() + " test file(s) that reach this symbol"
+                    + (possible.isEmpty() ? "" : " (" + possible.size() + " possibly, through calls matched by name only)"));
         } else if (!direct.isEmpty()) {
             suggestions.add("no test reaches this symbol; add one before changing it");
         }
