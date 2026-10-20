@@ -175,3 +175,16 @@ def test_render_and_agent_block(tmp_path: Path, isolated_home: Path, clean_env: 
 def test_profile_guidance_is_empty_on_bad_config(tmp_path: Path, isolated_home: Path) -> None:
     write(tmp_path / ".groovyscope.yaml", "profiles: {discover: maybe}\n")
     assert checkup.profile_guidance(tmp_path, None, {}, isolated_home, global_scope=True) == ""
+
+
+def test_cache_fix_prunes_surplus_backups_in_the_kiro_home(tmp_path: Path) -> None:
+    kiro_global = tmp_path / "kiro"
+    steering = kiro_global / "steering"
+    steering.mkdir(parents=True)
+    for name in ("groovy.md.bak", "groovy.md.bak.1", "groovy.md.bak.2"):
+        (steering / name).write_text("x")
+    environ = {"GROOVYSCOPE_CACHE_DIR": str(tmp_path / "cache")}
+    report, _ = checkup.cache_item(environ, 3, fix=False, kiro_global=kiro_global)
+    assert report["level"] == "info" and "1 file(s)" in report["message"]
+    checkup.cache_item(environ, 3, fix=True, kiro_global=kiro_global)
+    assert sorted(path.name for path in steering.iterdir()) == ["groovy.md.bak", "groovy.md.bak.2"]

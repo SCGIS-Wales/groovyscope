@@ -356,9 +356,9 @@ deliberately loose so shared runners do not fail the build.
 | `mcp_server.py` | the MCP server: one module-level function per tool, bound to the session with `functools.partial`, over one engine session; compact output through `render.py`; reloads the engine configuration in place when it changes; the CLI reuses the same functions |
 | `mcp_search.py` | `read_symbol`, `find_code`, `find_duplicates` and `workspace_overview` |
 | `paths.py` | workspace paths and file URIs, the guard that refuses a `path` or `paths` outside the workspace before any tool runs, and the helpers the tool modules share (clipping, the call and paging signatures) |
-| `tools_catalog.py` | the MCP tool catalogue: which tools exist, what each is for and which change the workspace; Kiro's approval rules and the reviewer agent are generated from it |
+| `tools_catalog.py` | the MCP tool catalogue: which tools exist, what each is for and which change the workspace; Kiro's approval rules, the read only reviewer agent and each tool's MCP annotations (read only, destructive, idempotent, open world) are generated from it |
 | `interaction.py` | MCP elicitation (a confirmation before a write) and progress notes from inside a running tool |
-| `skills.py` | the Kiro skills shipped as templates, and the same recipes served as MCP prompts |
+| `skills.py` | the Kiro skills shipped as templates, and the same recipes served as MCP prompts; the `groovy-fix` checklist is generated from the practices catalogue and the posting stance is shared by the fix and review skills |
 | `edits.py` | LSP text edits applied to documents and written back inside the workspace only, atomically, keeping line endings; `write_if_unchanged` |
 | `atomic.py` | whole-file writes through a unique temporary file and a rename, with an optional mode and fsync |
 | `process.py` | child processes read as UTF-8 text, with bytes that are not UTF-8 kept as surrogate escapes |

@@ -178,8 +178,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
     command to run (`groovyscope benchmark path [DIR]` only prints or moves it).
   - B. Zero post-install steps: `groovyscope checkup` (Kiro files older than the package via a version
     stamp, project LSP entry, trust, classpath and GS100 count, hidden servers, agent format, daemon) with
-    exact fixes; the agent's `hooks.agentSpawn` runs `checkup --agent`, applies the safe repairs itself (Kiro
-    files, corpus) and injects the rest; steering opens with a status line, offers `trust` and `classpath`,
+    exact fixes; the agent's `hooks.agentSpawn` runs `checkup --agent`, which reports and offers the repairs
+    (since Phase 7 only `checkup --fix`, after the user's yes, writes files); steering opens with a status line, offers `trust` and `classpath`,
     and shows the quality menu; the welcome message lists it. Never fails the agent start.
   - C. Catch findings that explain themselves: `handling` (swallowed, logged, returns-default, rethrows),
     the variable name shown apart, the matching code so `explain` applies; steering requires defect, gap or
@@ -342,8 +342,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   by `kiro init` in both scopes and refreshed by `repair`; the same twelve served as MCP prompts (`prompts/list`,
   one optional `arguments` string, `$ARGUMENTS` in the body); the steering cut from 137 to 55 lines, keeping
   the session rules, the after-write block, navigation and the every-change rules, and pointing at the
-  skills for the recipes. Not done: `inclusion: fileMatch` (custom agents load steering through `resources`,
-  which ignores the front matter, so the switch waits for the Kiro 3 check) and the power packaging (plugin
+  skills for the recipes. `inclusion: fileMatch` shipped in Phase 7 of the improvement plan (the `groovy`
+  agent still loads the steering through `resources`, which ignores the front matter); not done: the power packaging (plugin
   schema unconfirmed). Left for the owner: one skill run (`/groovy-impact <symbol>`) and whether the custom
   agent lists the skills without a `skill://` resource entry.
 - [x] **Stage 16: tool surface and context cost** — released in 0.17.0; branch `feat/tool-surface`, 2026-10-18,
@@ -755,3 +755,7 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   MCP error contract and typed environment overrides. The language server, quality and language services and the
   CLI are split by responsibility; atomic writes, subprocesses, paths, hashes and compile scaffolding live once;
   every setting falls back to `defaults.yaml`; the templates are the only source of the profiles and the catalogue.
+- 2026-10-20: Phase 7 of `docs/improvement-plan.md`: docs, Kiro assets and polish, the last phase. The reviewer
+  agent loads only read only tools; MCP tools carry their annotations; steering loads by `fileMatch`; the agent's
+  start hook only reports, and `groovy-fix` asks before applying; the architecture doc is kept complete by a test;
+  `SECURITY.md`, `CONTRIBUTING.md` and a bug form; the sweep clears what deleted roots leave behind.
