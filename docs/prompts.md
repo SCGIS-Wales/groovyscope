@@ -34,9 +34,11 @@ classes then resolve and the GS100 warnings go away.
 | Draw the class relationships around `<Class>` | `relationship_graph` with `drawio_path` | 0.2 to 0.4 |
 | Are the names in `<folder>` right | `check_naming`, then `rename` | 0.4 to 0.8 |
 | Can I use `<construct>` in this plugin | `profile_status` | 0.2 |
+| Resolve the merge conflicts | `merge_conflicts`, `resolve_conflicts`, `merge_review` | 0.3 per file |
 
 "Run all" runs the first six and gives one combined summary. Every row is also a skill, `/groovy-<name>`
-(review, fix, quality, duplicates, catch-audit, dynamic, coverage, impact, rename, explain, naming, profile),
+(review, fix, quality, duplicates, catch-audit, dynamic, coverage, impact, rename, explain, naming, profile,
+merge),
 and an MCP prompt of the same name; the skill body is this page's recipe, loaded only when it runs.
 
 ## 1. Review this branch as a merge request reviewer
@@ -245,6 +247,27 @@ Can I use Set.of in this plugin?
 
 Calls `profile_status(path)`: the Groovy version and service the file really runs on, and whether the
 construct is proven there. RP001 and RP002 findings are blocking.
+
+## 13. Merge conflicts
+
+```text
+Resolve the merge conflicts.
+```
+
+Bringing a GitLab merge request up to date locally (`git fetch origin && git merge origin/main`) stops on
+conflicts. `merge_conflicts` lists the unmerged files and any changed file that still holds markers (from git,
+so licence underlines under `.terraform/` and binaries never match). `merge_conflicts PATH` numbers each hunk's
+lines and suggests a choice where one side left the lines unchanged, both added imports, or both added code
+where the base had none; the base comes from git's index when the markers lack it. `resolve_conflicts` then
+resolves a whole file in one call, so Kiro asks for approval once, not once per marker: a dry run shows each
+join, and the Groovy result is parsed (syntax only, unresolved imports do not matter) before `apply` writes it.
+Keeping both sides repeats the line git moved out of the hunk, typically the `}` two added test methods share,
+which is the edit that most often goes wrong by hand. `merge_review` closes the loop: tests or methods the
+result lost, deletions it undid, changes it dropped. It cannot see a test that merged cleanly and now asserts
+the other side's behaviour, so the recipe ends with the affected tests. While a file still holds markers, the
+after-write hook says so in one line instead of checking it, and `groovyscope merge status | show | resolve |
+review` gives the same answers in a terminal. Set `git config merge.conflictStyle zdiff3` once so every hunk
+shows its base.
 
 ## Glossary
 

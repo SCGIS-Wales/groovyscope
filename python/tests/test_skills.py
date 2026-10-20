@@ -16,6 +16,7 @@ EXPECTED = (
     "groovy-explain",
     "groovy-fix",
     "groovy-impact",
+    "groovy-merge",
     "groovy-naming",
     "groovy-profile",
     "groovy-quality",

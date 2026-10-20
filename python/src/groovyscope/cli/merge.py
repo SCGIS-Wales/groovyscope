@@ -11,7 +11,6 @@ from typing import Any
 
 import click
 
-from groovyscope import interaction, mcp_merge
 from groovyscope.cli import common
 from groovyscope.config import load_config
 from groovyscope.render import compact_json
@@ -39,9 +38,11 @@ def merge_tools(obj: dict[str, Any], *, engine: bool) -> dict[str, Callable[...,
         except (ValueError, OSError) as exc:
             common.LOG.error(str(exc))
             sys.exit(1)
+    from groovyscope import mcp_merge  # noqa: PLC0415 - the MCP SDK loads only for the commands that use it
+
     cap = int(effective["output"]["maxResults"])
     settings = common.tool_settings(effective)
-    return mcp_merge.merge_tools(obj["root"], call, cap, settings, confirm_policy=interaction.POLICY_NEVER)
+    return mcp_merge.merge_tools(obj["root"], call, cap, settings, confirm_policy="never")
 
 
 def fail_on_error(result: Mapping[str, Any]) -> None:
@@ -93,13 +94,12 @@ def _incoming(result: Mapping[str, Any]) -> str:
 @merge_group.command("show")
 @click.argument("path", type=click.Path(path_type=Path))
 @click.option("--hunk", type=int, default=None, help="Only this hunk, with more lines per side.")
-@click.option("--max-lines", type=int, default=None, help="Lines shown per side before the middle is elided.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_obj
-def show_command(obj: dict[str, Any], path: Path, *, hunk: int | None, max_lines: int | None, as_json: bool) -> None:
+def show_command(obj: dict[str, Any], path: Path, *, hunk: int | None, as_json: bool) -> None:
     """The conflict hunks of PATH as numbered lines, each with a suggestion where one side left it unchanged."""
     relative = common.shown_path((obj["root"] / path).resolve(), obj["root"].resolve())
-    result = merge_tools(obj, engine=False)["merge_conflicts"](relative, hunk=hunk, max_lines=max_lines)
+    result = merge_tools(obj, engine=False)["merge_conflicts"](relative, hunk=hunk)
     if as_json:
         click.echo(compact_json(result))
         return

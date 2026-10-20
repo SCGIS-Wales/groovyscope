@@ -28,7 +28,9 @@
     "@groovyscope/explain_code",
     "@groovyscope/check_naming",
     "@groovyscope/symbol_context",
-    "@groovyscope/test_results"
+    "@groovyscope/test_results",
+    "@groovyscope/merge_conflicts",
+    "@groovyscope/merge_review"
   ],
   "allowedTools": [
     "read",
@@ -56,7 +58,9 @@
     "@groovyscope/explain_code",
     "@groovyscope/check_naming",
     "@groovyscope/symbol_context",
-    "@groovyscope/test_results"
+    "@groovyscope/test_results",
+    "@groovyscope/merge_conflicts",
+    "@groovyscope/merge_review"
   ],
   "includeMcpJson": true,
   "resources": [

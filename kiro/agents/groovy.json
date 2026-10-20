@@ -32,7 +32,9 @@
     "@groovyscope/explain_code",
     "@groovyscope/check_naming",
     "@groovyscope/symbol_context",
-    "@groovyscope/test_results"
+    "@groovyscope/test_results",
+    "@groovyscope/merge_conflicts",
+    "@groovyscope/merge_review"
   ],
   "toolsSettings": {
     "shell": {
@@ -50,6 +52,9 @@
         "groovyscope fix(?: (?:--code [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--changed|--base [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
         "groovyscope format(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
         "groovyscope checkup(?: (?:--agent|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope merge status(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope merge show(?: (?:--hunk [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
+        "groovyscope merge review(?: (?:--json|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
         "groovyscope logs(?: (?:-n [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|--lines [A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*|-f|--follow|--kiro|[A-Za-z0-9_@#%+=:,./][A-Za-z0-9_@#%+=:,./-]*))*",
         "groovyscope version",
         "groovyscope doctor",

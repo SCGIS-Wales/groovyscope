@@ -9,7 +9,6 @@ never stage, commit or run the build.
 
 from __future__ import annotations
 
-import inspect
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -37,14 +36,6 @@ NEXT_STEPS = (
     "resolve_conflicts PATH applies a choice per hunk in one write and checks that the file still parses; "
     "merge_review then lists declarations the merge lost or changes it dropped. Stage with `git add` yourself."
 )
-
-
-class HunkResolution(TypedDict, total=False):
-    """A hunk number with a take or a text."""
-
-    hunk: int
-    take: conflicts.Choice
-    text: str
 
 
 class MergeSettings(TypedDict):
@@ -214,7 +205,6 @@ def file_view(
     limits: MergeSettings,
     *,
     hunk: int | None,
-    max_lines: int | None,
 ) -> dict[str, Any]:
     """The hunks of one file (or the one numbered ``hunk``) with their lines and suggestions."""
     path = workspace_file(root, relative)
@@ -226,7 +216,7 @@ def file_view(
     parsed = {**parsed, "hunks": hunks}
     if hunk is not None and hunk not in {h["number"] for h in hunks}:
         return {"error": f"{relative} has no hunk {hunk}; it has {len(hunks)}"}
-    side_limit = max_lines or (limits["sideLines"] if hunk is not None else max(4, limits["sideLines"] // 4))
+    side_limit = limits["sideLines"] if hunk is not None else max(4, limits["sideLines"] // 4)
     shown = [h for h in hunks if hunk is None or h["number"] == hunk]
     answer: dict[str, Any] = {"path": relative, "hunks": len(hunks)}
     answer["detail"] = [hunk_view(h, parsed, limits, side_limit) for h in shown]
@@ -658,24 +648,22 @@ def merge_tools(
     """The tools, bound to one workspace and engine session."""
     limits = merge_settings(settings)
 
-    def merge_conflicts(
-        path: str | None = None, hunk: int | None = None, max_lines: int | None = None
-    ) -> dict[str, Any]:
+    def merge_conflicts(path: str | None = None, hunk: int | None = None) -> dict[str, Any]:
         """Without PATH: the merge, rebase or cherry-pick in progress, each unmerged file with its hunk count, and
         changed files that still hold markers (from git, not a grep of the tree). With PATH: its hunks as numbered
         lines (ours, base when known, theirs, context), each with a suggestion where one side left the lines
         unchanged and, when keeping both sides needs the lines git moved out of the hunk repeated, which ones.
-        HUNK shows one hunk with up to MAX_LINES lines per side."""
+        HUNK shows that hunk alone, with merge.sideLines lines per side."""
         if path is None:
             return status(root, run, limits, cap)
         try:
-            return file_view(root, run, path, limits, hunk=hunk, max_lines=max_lines)
+            return file_view(root, run, path, limits, hunk=hunk)
         except ValueError as exc:
             return {"error": str(exc)}
 
     def resolve_conflicts(
         path: str,
-        resolutions: list[HunkResolution] | None = None,
+        resolutions: list[dict[str, Any]] | None = None,
         suggested: bool = False,
         apply: bool = False,
         force: bool = False,
@@ -691,7 +679,7 @@ def merge_tools(
                 run,
                 call,
                 path,
-                cast("list[Mapping[str, Any]]", resolutions or []),
+                resolutions or [],
                 limits=limits,
                 suggested=suggested,
                 apply=apply,
@@ -712,8 +700,4 @@ def merge_tools(
         "resolve_conflicts": resolve_conflicts,
         "merge_review": merge_review,
     }
-    for tool in tools.values():
-        # Resolved here, where HunkResolution is defined: the MCP SDK reads the signature through the server's
-        # wrappers, whose module does not know the name.
-        tool.__signature__ = inspect.signature(tool, eval_str=True)  # type: ignore[attr-defined]
     return tools

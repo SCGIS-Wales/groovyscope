@@ -90,14 +90,12 @@ DESCRIPTIONS: dict[str, str] = {
     "symbol_context": "Definition, hover and reference count of the symbol at PATH:LINE:COL in one call.",
     "test_results": "Failing tests from TEST-*.xml at any depth under SOURCES (folders or .zip archives; default "
     "the workspace): message and the first frames in the code and the test.",
-    "merge_conflicts": (
-        "Conflicted files of the merge in progress; with PATH its hunks as numbered lines with a suggestion per hunk."
-    ),
+    "merge_conflicts": "Conflicted files of the merge in progress; with PATH its hunks, numbered, with suggestions.",
     "resolve_conflicts": (
-        "Resolve hunks of PATH in one write: RESOLUTIONS [{hunk, take: ours|theirs|both|base|neither}] or "
-        "[{hunk, text}], SUGGESTED for the rest; parsed first; APPLY writes."
+        "Resolve PATH's hunks in one write: RESOLUTIONS [{hunk, take: ours|theirs|both|theirs-then-ours|base|neither}] "
+        "or [{hunk, text}]; SUGGESTED for the rest; parsed first; APPLY writes."
     ),
-    "merge_review": "Declarations a merge lost or changes it dropped in Groovy files both sides changed (or PATHS).",
+    "merge_review": "Declarations a merge lost or changes it dropped, in Groovy files both sides changed (or PATHS).",
 }
 
 

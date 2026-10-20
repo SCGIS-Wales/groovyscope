@@ -101,7 +101,7 @@ def test_mcp_tools_end_to_end(tmp_path: Path, short_dir: Path, monkeypatch: pyte
 
         send(process, {"jsonrpc": "2.0", "id": 3, "method": "prompts/list", "params": {}})
         prompts = {prompt["name"] for prompt in receive(process, 3)["prompts"]}
-        assert "groovy-review" in prompts and len(prompts) == 12
+        assert "groovy-review" in prompts and len(prompts) == 13
         send(
             process,
             {
