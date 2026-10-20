@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.25.1...v0.25.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* phase 7 docs, Kiro assets and polish of the improvement plan ([#118](https://github.com/SCGIS-Wales/groovyscope/issues/118)) ([2be6073](https://github.com/SCGIS-Wales/groovyscope/commit/2be60734c4cbe3bd7a9642ba33e192c5c4935bf8))
+
 ## [0.25.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.25.0...v0.25.1) (2026-10-20)
 
 
