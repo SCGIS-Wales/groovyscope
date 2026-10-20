@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from groovyscope import conflicts, interaction, mcp_merge
+from tests.test_conflicts import BOTH_ADDED_TESTS
 
 FILE = "src/test/groovy/T.groovy"
 BASE = "import org.junit.Test\n\nclass T {\n    @Test\n    void a() {\n        x()\n    }\n}\n"
@@ -278,3 +279,38 @@ def test_hand_merged_files_and_settings_are_read(tmp_path: Path) -> None:
     latin = tmp_path / "l.txt"
     latin.write_bytes("caf\xe9".encode("latin-1"))
     assert mcp_merge.read_text(latin, 0) is None
+
+
+def test_when_the_likely_join_does_not_parse_the_next_one_that_does_is_kept() -> None:
+    parsed = conflicts.parse(BOTH_ADDED_TESTS)
+    plan = mcp_merge.plan_resolutions(parsed, [{"hunk": 1, "take": "both"}], suggested=False, boundary=3)
+    first = mcp_merge.provisional(parsed, plan["replacements"])
+    answers = iter([[False], [False, False, True] + [False] * 9])
+
+    def picky(_method: str, params: dict[str, Any]) -> Any:
+        verdicts = next(answers)
+        assert len(verdicts) == len(params["texts"])
+        return {
+            "results": [
+                {"ok": ok, "errors": [] if ok else [{"line": 2, "column": 1, "message": "x"}]} for ok in verdicts
+            ]
+        }
+
+    assert mcp_merge.verify_plan(picky, Path("/w"), "T.groovy", parsed, plan, boundary=3) == {"parses": True}
+    assert mcp_merge.provisional(parsed, plan["replacements"]) != first
+    assert plan["notes"][1].startswith("repeats 2 line(s) after the hunk")
+
+
+def test_when_no_join_parses_the_errors_are_reported() -> None:
+    parsed = conflicts.parse(BOTH_ADDED_TESTS)
+    plan = mcp_merge.plan_resolutions(parsed, [{"hunk": 1, "take": "theirs-then-ours"}], suggested=False, boundary=1)
+
+    def never(_method: str, params: dict[str, Any]) -> Any:
+        return {
+            "results": [{"ok": False, "errors": [{"line": 3, "column": 4, "message": "no"}]}] * len(params["texts"])
+        }
+
+    assert mcp_merge.verify_plan(never, Path("/w"), "T.groovy", parsed, plan, boundary=1) == {
+        "parses": False,
+        "errors": ["3:4 no"],
+    }
