@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from groovyscope import __version__, kiro_agent, tools_catalog
+from groovyscope import __version__, kiro, kiro_agent, tools_catalog
 from groovyscope.kiro import (
     GLOBAL_FILES,
     KIRO_FILES,
@@ -35,7 +35,12 @@ def test_templates_are_well_formed() -> None:
         elif name.startswith("skills/"):
             assert text.startswith("---\nname: ") and "\ndescription: " in text
         else:
-            assert text.startswith("---\ninclusion: always")
+            # Loaded only when Groovy, Gradle or Jenkins files are in play; the groovy agent reads it through its
+            # resources, which ignore the front matter, so it always has it.
+            assert text.startswith(kiro.STEERING_HEADER)
+            assert "inclusion: fileMatch" in kiro.STEERING_HEADER
+            for pattern in ("**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"):
+                assert f'"{pattern}"' in kiro.STEERING_HEADER
 
 
 def test_fresh_init_creates_all_files(tmp_path: Path) -> None:
@@ -174,7 +179,7 @@ def test_profile_guidance_gets_its_own_steering_file(tmp_path: Path) -> None:
     changes = plan_changes(tmp_path, profile_guidance="# Runtime profiles\n\nRule.\n")
     extra = changes[-1]
     assert extra["path"] == ".kiro/steering/groovyscope-profiles.md"
-    assert extra["after"] == "---\ninclusion: always\n---\n# Runtime profiles\n\nRule.\n"
+    assert extra["after"] == kiro.STEERING_HEADER + "# Runtime profiles\n\nRule.\n"
     assert plan_changes(tmp_path / "kh", global_scope=True, profile_guidance="x")[-1]["path"] == (
         "steering/groovyscope-profiles.md"
     )
@@ -358,6 +363,11 @@ def test_approval_rules_follow_the_tool_catalogue() -> None:
     assert set(tools_catalog.read_only_tools()) | set(tools_catalog.mutating_tools()) == set(tools_catalog.TOOL_INFO)
     template = json.loads(load_template("agents/groovy.json"))
     assert template["allowedTools"] == ["read", "grep", "glob", "code", *tools_catalog.v2_allowed_entries()]
+    # The reviewer is read only in what it can load as well as in what runs unasked: no bare server entry, which
+    # would hand it fix, format, rename and the classpath export.
+    reviewer = json.loads(load_template("agents/groovy-reviewer.json"))
+    expected = ["read", "code", *tools_catalog.v2_allowed_entries()]
+    assert reviewer["tools"] == expected and reviewer["allowedTools"] == expected
     assert kiro_agent.major_version("3.0.1") == 3 and kiro_agent.major_version("2.32.0") == 2
     assert kiro_agent.major_version(None) is None and kiro_agent.major_version("beta") is None
 

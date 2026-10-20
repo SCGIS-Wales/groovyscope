@@ -234,10 +234,10 @@ def daemon_item(root: Path, environ: Mapping[str, str], config_hash: str | None)
         return {
             "level": "info",
             "name": "daemon",
-            "message": f"running (engine {status.get('engineVersion', '?')}) with a {grown} heap, grown after an "
+            "message": f"running (engine {status.get('engine', '?')}) with a {grown} heap, grown after an "
             "out-of-memory exit; raise daemon.heap to keep it",
         }
-    return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engineVersion', '?')})"}
+    return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engine', '?')})"}
 
 
 def cache_item(environ: Mapping[str, str], logs_kept: int, *, fix: bool) -> tuple[Item, list[str]]:
@@ -344,9 +344,14 @@ def render(report: Report) -> list[str]:
     return lines
 
 
+# What the agent offers to run for the safe repairs; the start hook itself never writes files.
+SAFE_REPAIR_COMMAND = "groovyscope checkup --fix"
+
+
 def render_agent(report: Report, limit: int = 3800) -> str:
-    """The compact block the agent start hook injects: a header, what was repaired, what needs a decision, and
-    what is fine, within ``limit`` characters so Kiro never truncates it mid-sentence."""
+    """The compact block the agent start hook injects: a header, what was repaired (only with ``--fix``), what needs
+    a decision with the command that settles it, and what is fine, within ``limit`` characters so Kiro never
+    truncates it mid-sentence."""
     counts = {level: sum(1 for item in report["items"] if item["level"] == level) for level in ("ok", "warn", "fail")}
     header = (
         f"groovyscope {report['version']} checkup for {report['root']}: {counts['ok']} ok, {len(report['repaired'])} "
@@ -357,6 +362,8 @@ def render_agent(report: Report, limit: int = 3800) -> str:
         lines.append(f"repaired: {done}")
     for todo in report["todo"]:
         lines.append(f"todo: {todo}")
+    if any(item.get("fix") and item.get("safe") for item in report["items"]):
+        lines.append(f"offer: `{SAFE_REPAIR_COMMAND}` applies the safe repairs above; it writes files, so ask first")
     fine = [f"{item['name']} ({item['message']})" for item in report["items"] if item["level"] == "ok"]
     if fine:
         lines.append("ok: " + "; ".join(fine))

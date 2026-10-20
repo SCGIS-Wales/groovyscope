@@ -29,7 +29,11 @@ GLOBAL_FILES: tuple[tuple[str, str], ...] = tuple(
 )
 LSP_ONLY_FILES: tuple[tuple[str, str], ...] = tuple((name, path) for name, path in KIRO_FILES if name == "lsp.json")
 PROFILE_STEERING = "steering/groovyscope-profiles.md"
-STEERING_HEADER = "---\ninclusion: always\n---\n"
+# Steering loads only where Groovy, Gradle or Jenkins files are in play, so other sessions do not pay for it. The
+# groovy agent lists the steering folder in its resources, which ignore the front matter, so it always has it.
+STEERING_HEADER = (
+    '---\ninclusion: fileMatch\nfileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]\n---\n'
+)
 # The steering template carries this token; the written file carries the package version instead, so `checkup`
 # can tell Kiro files written by an older groovyscope from current ones.
 STAMP_PLACEHOLDER = "{{version}}"
