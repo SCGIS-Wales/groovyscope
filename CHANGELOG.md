@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.4...v0.25.0) (2026-10-20)
+
+
+### Features
+
+* phase 5 new quality checks of the improvement plan ([#114](https://github.com/SCGIS-Wales/groovyscope/issues/114)) ([5211ea8](https://github.com/SCGIS-Wales/groovyscope/commit/5211ea8c6fae3ff1531eb7e07f093977f37c45e3))
+
 ## [0.24.4](https://github.com/SCGIS-Wales/groovyscope/compare/v0.24.3...v0.24.4) (2026-10-20)
 
 
