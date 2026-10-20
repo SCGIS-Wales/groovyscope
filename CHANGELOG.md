@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.25.2...v0.26.0) (2026-10-20)
+
+
+### Features
+
+* **checkup:** the groovy agent keeps .groovyscope/ out of git ([#120](https://github.com/SCGIS-Wales/groovyscope/issues/120)) ([72833f3](https://github.com/SCGIS-Wales/groovyscope/commit/72833f3206234c89f3146224c2edf2d62b1f55eb))
+
 ## [0.25.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.25.1...v0.25.2) (2026-10-20)
 
 
