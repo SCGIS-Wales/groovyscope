@@ -383,6 +383,10 @@ sql.rows('SELECT * FROM users WHERE name = ?', [name])
   - Groovy 6 says GPars users "will find much of its functionality" in `groovy.concurrent`, which is incubating.
   - **Recommendation:** do not adopt GPars. Use `java.util.concurrent` with virtual threads, and evaluate `groovy.concurrent` behind an interface.
 - **Groovy 6 `CombinerChecker`** checks that the combiner passed to `injectParallel` is associative.
+- **No mutable static state (GS038).** A static field that is not final, or a static final one holding a list, map,
+  builder or date built in place, is shared by every caller and every thread. Keep state in an instance that is
+  passed in, or make the value immutable (`List.of`, `asImmutable()`). A thread safe collection is reported as
+  information; in Jenkins code every finding is an error (section 19).
 
 ---
 
@@ -647,6 +651,8 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Tests that check nothing | JUnitTestMethodWithoutAssert (junit rule set) | none | GS016: a JUnit test with no assert, verify or expected exception, helpers followed |
 | Version gating | none | none | GS010: Groovy 6 construct under a 5.x target |
 | Closures | ImplicitClosureParameter (excluded) | `@DelegatesTo`, `@ClosureParams` | GS017: a public Closure parameter without either; GS029: a multi-line closure on `it`; GS037: `return` inside `each` acts as continue |
+| Mutable static state | NonFinalPublicField, StaticCalendarField and the other Static* rules | none | GS038: an instance, or an immutable value |
+| Jenkins pipeline code | jenkins rule set | none | GS030 to GS033: secrets in shell GStrings, steps in `@NonCPS`, unserialisable state across a step, `@CompileStatic` or `java.io.File` in CPS code |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
 GS codes are groovyscope's own diagnostics (see the table in the README and `explain`); they are not an external standard.
@@ -691,6 +697,27 @@ Test classes (`*Spec`, `*Test`, files under `src/test`) are checked for contradi
 feature names are free text. Loop indexes, closure parameters, catch parameters and `it` are never reported.
 Renames go through `rename` (a dry run first, static references only, a recompile after the write), never
 through text replacement.
+
+## 19. Jenkins pipeline code
+
+Jenkinsfiles, a shared library's `vars/` scripts and its `src/` classes run on Jenkins' CPS interpreter, not on
+plain Groovy 5 or 6, and are checked with the Jenkins profile (`config/codenarc/jenkins.groovy`) and these codes.
+Without the Jenkins classpath, pipeline steps are recognised by name; a method the class declares itself is never
+taken for a step.
+
+- **No secrets in interpolated shell scripts (GS030).** In `sh "...${TOKEN}..."` Groovy builds the text, so the
+  secret reaches the command line, the process list and possibly the log. Write `sh '... $TOKEN ...'` and let the
+  shell read the variable `withCredentials` exported. A variable `withCredentials` binds is an error; an `env` or
+  `params` name that only looks secret is information.
+- **No pipeline steps in `@NonCPS` methods (GS031).** They run outside the CPS interpreter and cannot pause the
+  build; call the step from CPS code and pass its result in.
+- **Nothing unserialisable across a step (GS032).** The pipeline is saved at every step. A `Matcher` (from `=~`), an
+  `Iterator`, a `Scanner` or JsonSlurper's `LazyMap` still in use after a step fails the build with
+  NotSerializableException. Finish with it first, set it to null, or move the work into an `@NonCPS` method.
+- **No `@CompileStatic` and no `java.io.File` (GS033).** Static code is not transformed for CPS, and `new File`
+  reads the controller's disk rather than the agent's workspace; use `readFile`, `writeFile`, `fileExists`.
+- **No mutable static state (GS038, an error here).** One controller JVM shares it between every build until the
+  library is reloaded.
 
 ## Caveats
 - **Release notes not fully retrieved:**

@@ -91,6 +91,12 @@
       "title": "Naming",
       "check": "Names say what things are and do: booleans as questions, verbs on methods, nouns on classes, no generic words, abbreviations or type prefixes, one verb per idea",
       "section": "18-naming"
+    },
+    {
+      "id": "jenkins",
+      "title": "Jenkins pipeline code",
+      "check": "No secrets interpolated into shell steps, no steps in @NonCPS methods, no unserialisable state across steps, no @CompileStatic or java.io.File in CPS code",
+      "section": "19-jenkins-pipeline-code"
     }
   ],
   "entries": [
@@ -545,6 +551,66 @@
       "severity": "info"
     },
     {
+      "code": "GS030",
+      "kind": "groovyscope",
+      "group": "jenkins",
+      "title": "Secret interpolated into a shell step",
+      "why": "In a double quoted `sh`, `bat` or `powershell` script Groovy builds the text before the shell runs, so a credential bound by `withCredentials` (or a secret parameter) reaches the command line, the process list and possibly the build log, and Jenkins warns about insecure interpolation. A variable bound by `withCredentials` is reported as an error; a name that only looks secret is information.",
+      "bad": "withCredentials([string(credentialsId: 'api', variable: 'TOKEN')]) {\n    sh \"curl -H 'Authorization: Bearer ${TOKEN}' https://example.com\"\n}",
+      "good": "withCredentials([string(credentialsId: 'api', variable: 'TOKEN')]) {\n    sh 'curl -H \"Authorization: Bearer $TOKEN\" https://example.com'\n}",
+      "fix": "Use single quotes and let the shell read the variable from the environment ('$TOKEN'); pass other values with `withEnv`.",
+      "safety": "none",
+      "groovy": "both",
+      "enforcedBy": [],
+      "section": "19-jenkins-pipeline-code",
+      "severity": "error"
+    },
+    {
+      "code": "GS031",
+      "kind": "groovyscope",
+      "group": "jenkins",
+      "title": "Pipeline step in an @NonCPS method",
+      "why": "An `@NonCPS` method runs as plain Groovy outside the CPS interpreter. A pipeline step called from it cannot pause the build: it fails, runs only its first step, or loses its result. Steps are recognised by name when the Jenkins classpath is not available; a method the class declares itself is never taken for a step.",
+      "bad": "@NonCPS\ndef versions(String text) {\n    echo 'parsing'\n    text.readLines()\n}",
+      "good": "def versions(String text) {\n    echo 'parsing'\n    parse(text)\n}\n\n@NonCPS\ndef parse(String text) { text.readLines() }",
+      "fix": "Call the step from CPS code and pass its result into the @NonCPS method, which only computes.",
+      "safety": "none",
+      "groovy": "both",
+      "enforcedBy": [],
+      "section": "19-jenkins-pipeline-code",
+      "severity": "warning"
+    },
+    {
+      "code": "GS032",
+      "kind": "groovyscope",
+      "group": "jenkins",
+      "title": "Unserialisable local live across a step",
+      "why": "A CPS pipeline saves its whole state at every step so it can resume after a restart. A local holding a `Matcher` (from `=~`), an `Iterator`, a `Scanner` or the `LazyMap` JsonSlurper returns cannot be saved, so the build fails with NotSerializableException at the first step it is still in use after (read after the step, or read in a loop that repeats it).",
+      "bad": "def matcher = text =~ /v(\\d+)/\nsh 'git fetch --tags'\nreturn matcher[0][1]",
+      "good": "String tag = (text =~ /v(\\d+)/)[0][1]\nsh 'git fetch --tags'\nreturn tag",
+      "fix": "Finish with the value before the step (keep only a String or a List), set it to null, or move the work into an @NonCPS method; use readJSON instead of JsonSlurper.",
+      "safety": "none",
+      "groovy": "both",
+      "enforcedBy": [],
+      "section": "19-jenkins-pipeline-code",
+      "severity": "warning"
+    },
+    {
+      "code": "GS033",
+      "kind": "groovyscope",
+      "group": "jenkins",
+      "title": "@CompileStatic or java.io.File in pipeline code",
+      "why": "Pipeline code, a shared library's `src/` included, runs on the CPS interpreter. `@CompileStatic` code is not transformed, so the pipeline steps it calls fail and it cannot be paused; `new File(...)` reads the Jenkins controller's disk, not the agent's workspace where the build's files are.",
+      "bad": "@CompileStatic\nclass Checksums { }\n\nString manifest(String path) { new File(path).text }",
+      "good": "class Checksums { }\n\nString manifest(String path) { steps.readFile(path) }",
+      "fix": "Leave pipeline code dynamic (keep pure computation in @NonCPS methods); use readFile, writeFile, fileExists or findFiles for workspace files.",
+      "safety": "none",
+      "groovy": "both",
+      "enforcedBy": [],
+      "section": "19-jenkins-pipeline-code",
+      "severity": "warning"
+    },
+    {
       "code": "GS034",
       "kind": "groovyscope",
       "group": "immutability",
@@ -602,6 +668,21 @@
       "groovy": "both",
       "enforcedBy": [],
       "section": "25-groovy-truth-elvis-and-safe-navigation",
+      "severity": "warning"
+    },
+    {
+      "code": "GS038",
+      "kind": "groovyscope",
+      "group": "concurrency",
+      "title": "Mutable static state",
+      "why": "A static field that is not final, or a static final one holding a list, map, builder or date built in place, is state every caller and every thread shares: a hidden coupling and a data race. In Jenkins code one controller JVM shares it between every build until the library reloads, so there it is an error. A thread safe collection outside Jenkins code is information; test sources are not checked.",
+      "bad": "class Registry {\n    static Map<String, String> byName = [:]\n    static final List<String> SEEN = []\n}",
+      "good": "class Registry {\n    private final Map<String, String> byName = [:]\n    static final List<String> DEFAULTS = List.of('a')\n}",
+      "fix": "Keep the state in an instance that is passed in, or make the value immutable (`List.of`, `asImmutable()`, `Collections.unmodifiableList`).",
+      "safety": "none",
+      "groovy": "both",
+      "enforcedBy": [],
+      "section": "9-concurrency",
       "severity": "warning"
     },
     {

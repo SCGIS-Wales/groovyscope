@@ -176,6 +176,7 @@ public final class PracticeFinder {
         SqlFinder.find(context);
         SecretFinder.find(context);
         PitfallFinder.find(context);
+        JenkinsFinder.find(context);
         return out;
     }
 
