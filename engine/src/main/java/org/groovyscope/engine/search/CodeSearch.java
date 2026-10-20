@@ -162,8 +162,8 @@ public final class CodeSearch {
     /** The rule code of an empty catch block, which outranks the type-based codes. */
     static final String EMPTY_CATCH_CODE = "EmptyCatchBlock";
 
-    private static final Set<String> LOG_METHODS = Set.of("trace", "debug", "info", "warn", "warning", "error",
-            "fatal", "severe", "log");
+    private static final Set<String> LOG_METHODS = org.groovyscope.engine.semantics.Logging.union(
+            org.groovyscope.engine.semantics.Logging.ALL_LEVELS, Set.of("log"));
     private static final Set<String> PRINT_METHODS = Set.of("println", "print", "printf", "printStackTrace");
     private static final Set<String> LOG_RECEIVERS = Set.of("log", "logger", "LOG", "LOGGER", "System.err",
             "System.out");

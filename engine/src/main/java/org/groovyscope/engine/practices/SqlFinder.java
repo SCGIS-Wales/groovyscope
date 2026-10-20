@@ -163,7 +163,7 @@ final class SqlFinder {
         @Override
         public void visitMethodCallExpression(MethodCallExpression call) {
             String name = call.getMethodAsString();
-            if (name != null && PracticeFinder.SQL_METHODS.contains(name)
+            if (name != null && SecurityChecks.SQL_METHODS.contains(name)
                     && call.getArguments() instanceof TupleExpression args && !args.getExpressions().isEmpty()) {
                 Boolean sql = sqlReceiver(call.getObjectExpression());
                 String how = sql == null ? null : unsafe(args.getExpression(0));

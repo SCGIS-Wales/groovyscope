@@ -65,8 +65,8 @@ public final class ProfileFinder {
     public static final String SOURCE = "groovyscope-profile";
     static final Pattern ARROW_CASE = Pattern.compile("^\\s*(case\\b.*|default\\s*)->");
     static final Pattern MULTI_CATCH = Pattern.compile("\\bcatch\\s*\\(\\s*[\\w.]+\\s*\\|");
-    static final java.util.Set<String> LOG_METHODS = java.util.Set.of("trace", "debug", "info", "warn", "error",
-            "println", "print", "printf");
+    static final java.util.Set<String> LOG_METHODS = org.groovyscope.engine.semantics.Logging.union(
+            org.groovyscope.engine.semantics.Logging.LEVELS, org.groovyscope.engine.semantics.Logging.CONSOLE);
 
     private ProfileFinder() {
     }

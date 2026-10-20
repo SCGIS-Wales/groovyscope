@@ -47,12 +47,8 @@ import org.codehaus.groovy.control.SourceUnit;
 import org.codehaus.groovy.syntax.Types;
 import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.explain.CodeFacts;
-import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.model.Diagnostic;
-import org.groovyscope.engine.model.Range;
-import org.groovyscope.engine.model.TextEdit;
 import org.groovyscope.engine.semantics.TypeNames;
-import org.groovyscope.engine.workspace.TestSources;
 
 /**
  * Naming checks, GS020 to GS027: whether names say what the things they name are and do. Each check reports only
@@ -170,16 +166,24 @@ public final class NamingFinder {
     /** Naming findings for one Groovy document. */
     public static List<PracticeFinder.Practice> find(String uri, ModuleNode module, EngineConfig config) {
         List<PracticeFinder.Practice> out = new ArrayList<>();
-        if (module == null || uri.endsWith(".java") || !config.practices().naming().enabled()) {
-            return out;
+        if (module != null) {
+            find(PracticeContext.of(uri, module, "", config, null, out));
         }
-        Visitor visitor = new Visitor(uri, config, out);
+        return out;
+    }
+
+    /** The naming findings of a document, added to {@code context.out()}. */
+    static void find(PracticeContext context) {
+        ModuleNode module = context.module();
+        if (module == null || context.uri().endsWith(".java") || !context.config().practices().naming().enabled()) {
+            return;
+        }
+        Visitor visitor = new Visitor(context);
         for (ClassNode classNode : module.getClasses()) {
             if (classNode.getLineNumber() > 0 && !classNode.getName().contains("$_")) {
                 visitor.visitClassNode(classNode);
             }
         }
-        return out;
     }
 
     /** Words of an identifier, lower-cased: {@code resolveApiAssignments} gives resolve, api, assignments. */
@@ -224,18 +228,16 @@ public final class NamingFinder {
 
     /** The visitor over one document's classes. */
     private static final class Visitor extends ClassCodeVisitorSupport {
-        private final String uri;
+        private final PracticeContext context;
         private final EngineConfig config;
-        private final List<PracticeFinder.Practice> out;
         private final Set<String> allowedAbbreviations;
         private final Map<String, String> vocabulary;
         private ClassNode currentClass;
         private boolean testClass;
 
-        Visitor(String uri, EngineConfig config, List<PracticeFinder.Practice> out) {
-            this.uri = uri;
-            this.config = config;
-            this.out = out;
+        Visitor(PracticeContext context) {
+            this.context = context;
+            this.config = context.config();
             this.allowedAbbreviations = new TreeSet<>(ALLOWED_ABBREVIATIONS);
             for (String word : config.practices().naming().allowedAbbreviations()) {
                 allowedAbbreviations.add(word.toLowerCase(Locale.ROOT));
@@ -256,7 +258,7 @@ public final class NamingFinder {
             String simple = classNode.getNameWithoutPackage();
             int dollar = simple.lastIndexOf('$');
             String name = dollar >= 0 ? simple.substring(dollar + 1) : simple;
-            testClass = TestSources.isTest(uri, name) || uri.contains("/src/test/");
+            testClass = context.isTestClass(name);
             if (!classNode.isScript()) {
                 checkClassName(classNode, name);
             }
@@ -516,21 +518,12 @@ public final class NamingFinder {
         }
 
         void report(String code, ASTNode node, String message) {
-            reportAtMost(null, code, node, message);
+            context.report(code, node, message);
         }
 
-        /** {@link #report} with the configured severity lowered to at most {@code ceiling} (null: no ceiling). */
+        /** {@link #report} with the configured severity lowered to at most {@code ceiling}. */
         void reportAtMost(Diagnostic.Severity ceiling, String code, ASTNode node, String message) {
-            Diagnostic.Severity configured = PracticeFinder.severity(code, config);
-            Diagnostic.Severity severity = configured == null || ceiling == null
-                    || configured.ordinal() >= ceiling.ordinal() ? configured : ceiling;
-            Range range = AstRanges.rangeOf(node);
-            if (severity == null || range == null) {
-                return;
-            }
-            String title = PracticeCatalog.bundled().find(code).map(PracticeCatalog.Entry::title).orElse(code);
-            out.add(new PracticeFinder.Practice(new Diagnostic(uri, range, severity, PracticeFinder.SOURCE, code,
-                    title + ": " + message), null, List.<TextEdit>of()));
+            context.reportAtMost(ceiling, code, node, message);
         }
 
         static String capitalise(String name) {
