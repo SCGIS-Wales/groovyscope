@@ -2,7 +2,7 @@
 
 This is the knowledge base groovyscope enforces. Every diagnostic groovyscope reports links to a section here,
 `groovyscope explain <code>` and the MCP `explain` tool answer from the matching catalogue entry
-(`config/practices/practices.yaml`), and `review` groups findings by the checklist in section 15.
+(`config/practices/practices.json`), and `review` groups findings by the checklist in section 15.
 
 groovyscope's own diagnostics use `GS` codes. The original research proposed them as `GS001`-`GS010`; the
 numbers are kept (`GS001` is `GS001`), and `GS011`/`GS012` were added for Spock `.with {}` and quoted SQL
