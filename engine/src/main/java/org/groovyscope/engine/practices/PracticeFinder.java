@@ -171,6 +171,7 @@ public final class PracticeFinder {
         visitor.visitModule();
         out.addAll(NamingFinder.find(uri, module, config));
         out.addAll(TestDoubleFinder.find(uri, module, config));
+        JenkinsFinder.find(context);
         return out;
     }
 
