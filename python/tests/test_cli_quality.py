@@ -653,6 +653,29 @@ def test_hook_command_checks_written_files_and_gates_stop(
     assert unavailable.exit_code == 0 and "daemon is not running" in unavailable.output
 
 
+def test_hook_reports_conflict_markers_at_once_and_the_stop_gate_holds_them(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "src" / "test" / "groovy"
+    src.mkdir(parents=True)
+    target = src / "T.groovy"
+    target.write_text("class T {\n<<<<<<< HEAD\n  a()\n=======\n  b()\n>>>>>>> feat\n}\n")
+    monkeypatch.setattr(cli_common, "_PROBE", lambda _socket: pytest.fail("a file with markers is not checked"))
+    payload = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "write", "tool_input": {"path": str(target)}})
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert result.exit_code == 0, result.output
+    assert "src/test/groovy/T.groovy still has 1 conflict hunk(s) (at lines 2)" in result.output
+    assert "resolve_conflicts" in result.output
+    target.write_text("class T {\n  a()\n=======\n  b()\n>>>>>>> feat\n}\n")  # half resolved by hand
+    half = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert "0 conflict hunk(s) and stray markers at lines 3, 5" in half.output
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  stopGate: true\n")
+    monkeypatch.setattr(changes, "default_runner", lambda _c, _d: (0, " M src/test/groovy/T.groovy\0"))
+    stop = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=json.dumps({"hook_event_name": "Stop"}))
+    decision = json.loads(stop.output)
+    assert decision["decision"] == "block" and "Resolve them before finishing" in decision["reason"]
+
+
 def test_testing_lines_show_seams_and_tests() -> None:
     testing = {
         "direct": "private: call it directly",

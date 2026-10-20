@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from groovyscope import __version__, checkup, kiro
+from groovyscope import __version__, checkup, gitignore, kiro
 
 
 def write(path: Path, text: str) -> None:
@@ -231,3 +231,11 @@ def test_the_agent_checkup_writes_the_gitignore_entry_and_nothing_else(tmp_path:
     assert ".groovyscope/" in (root / ".gitignore").read_text(encoding="utf-8")
     assert not (root / ".kiro").exists() and not (home / ".kiro").exists()
     assert "repaired: " in checkup.render_agent(report)
+
+
+def test_gitignore_item_says_the_entry_waits_for_the_merge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "build.gradle").write_text("apply plugin: 'groovy'\n")
+    deferred: gitignore.Outcome = {"state": "deferred", "path": str(tmp_path / ".gitignore")}
+    monkeypatch.setattr(gitignore, "ensure", lambda *_a, **_k: deferred)
+    item, done = checkup.gitignore_item(tmp_path, None, {}, write=True)
+    assert item["level"] == "info" and "merge or rebase in progress ends" in item["message"] and done == []

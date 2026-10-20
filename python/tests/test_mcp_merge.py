@@ -67,7 +67,9 @@ def fake_parse(text: str) -> dict[str, Any]:
             owner = found.group(1)
             declarations.append({"name": owner, "kind": "class", "line": index + 1, "endLine": end})
         else:
-            declarations.append({"name": f"{owner}.{found.group(2)}", "kind": "method", "line": index + 1, "endLine": end})
+            declarations.append(
+                {"name": f"{owner}.{found.group(2)}", "kind": "method", "line": index + 1, "endLine": end}
+            )
     errors = [] if ok else [{"line": 1, "column": 1, "message": "unexpected input"}]
     return {"ok": ok, "errors": errors, "declarations": declarations}
 
@@ -154,7 +156,7 @@ def test_resolving_both_added_tests_keeps_both_with_their_braces_in_one_write(tm
 def test_a_result_that_does_not_parse_is_not_written_unless_forced(tmp_path: Path) -> None:
     root = repository(tmp_path, with_test("ca"), with_test("venafi"))
     before = (root / FILE).read_text(encoding="utf-8")
-    text = [{"hunk": 1, "text": "    @Test\n    void broken() {\n"}]
+    text = [{"hunk": 1, "text": "    void broken() {\n    {\n"}]
     refused = tools(root)["resolve_conflicts"](FILE, text, apply=True)
     assert refused["parses"] is False and refused["written"] is False and refused["errors"]
     assert (root / FILE).read_text(encoding="utf-8") == before
