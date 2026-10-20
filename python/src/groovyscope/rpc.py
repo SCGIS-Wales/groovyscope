@@ -253,14 +253,20 @@ def channel_alive(channel: Channel) -> bool:
     return not channel["closed"].is_set()
 
 
+def _closed_error(channel: Channel) -> OSError:
+    failure = channel["failure"][0] if channel["failure"] else ConnectionError("engine connection closed")
+    return failure if isinstance(failure, OSError) else ConnectionError(str(failure))
+
+
 def channel_submit(channel: Channel, method: str, params: Any = None) -> tuple[int, Future[Any]]:
     """Send a request and return its id with the future its reply completes. Raises ``OSError`` when the
     connection is gone."""
-    if channel["closed"].is_set():
-        failure = channel["failure"][0] if channel["failure"] else ConnectionError("engine connection closed")
-        raise failure if isinstance(failure, OSError) else ConnectionError(str(failure))
     future: Future[Any] = Future()
     with channel["pending_lock"]:
+        # Checked under the lock: the reader fails the pending futures under it too, so a future registered after
+        # that would never complete and its caller would wait out its whole timeout.
+        if channel["closed"].is_set():
+            raise _closed_error(channel)
         request_id = channel["next_id"]
         channel["next_id"] = request_id + 1
         channel["pending"][request_id] = future

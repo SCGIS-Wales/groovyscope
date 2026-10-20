@@ -348,3 +348,59 @@ def test_the_reader_completes_a_reply_while_a_long_write_holds_the_write_lock() 
     finally:
         left.close()
         right.close()
+
+
+class _ReaderStopsFirst:
+    """A ``pending_lock`` that lets the reader fail and tear the channel down just before the first request takes
+    the lock: the moment between ``channel_submit``'s closed check and its registration of the future."""
+
+    def __init__(self, channel: rpc.Channel, peer: socket.socket) -> None:
+        self.lock = threading.Lock()
+        self.channel = channel
+        self.peer = peer
+        self.armed = True
+
+    def __enter__(self) -> None:
+        if self.armed and threading.current_thread().name == "submitter":
+            self.armed = False
+            self.peer.sendall(b"Content-Length: x\r\n\r\n")  # out of frame: the reader stops, the socket stays open
+            self.channel["reader"].start()
+            self.channel["reader"].join(5)
+        self.lock.acquire()
+
+    def __exit__(self, *_: object) -> None:
+        self.lock.release()
+
+
+def test_a_request_racing_the_reader_shutdown_fails_at_once_instead_of_waiting_out_its_timeout() -> None:
+    left, right = socket.socketpair()
+    channel: rpc.Channel = {
+        "sock": left,
+        "lock": threading.Lock(),
+        "pending_lock": threading.Lock(),
+        "pending": {},
+        "next_id": 1,
+        "reader": threading.Thread(),
+        "closed": threading.Event(),
+        "failure": [],
+    }
+    channel["reader"] = threading.Thread(target=rpc._read_loop, args=(channel,), daemon=True)
+    channel["pending_lock"] = _ReaderStopsFirst(channel, right)  # type: ignore[typeddict-item]
+    outcome: list[object] = []
+
+    def submit() -> None:
+        try:
+            outcome.append(rpc.channel_call(channel, "groovyscope/status", {}, timeout=2))
+        except Exception as exc:  # the test inspects whatever came out
+            outcome.append(exc)
+
+    try:
+        submitter = threading.Thread(target=submit, name="submitter")
+        submitter.start()
+        submitter.join(5)
+        assert len(outcome) == 1
+        assert isinstance(outcome[0], ConnectionError), outcome[0]  # not TimeoutError: the caller reconnects at once
+        assert channel["pending"] == {}
+    finally:
+        left.close()
+        right.close()
