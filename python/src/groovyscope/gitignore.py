@@ -39,8 +39,9 @@ def repository_root(start: Path) -> Path | None:
 
 def _lines(path: Path) -> list[str]:
     try:
-        return [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
-    except (OSError, UnicodeDecodeError):
+        # The lines that matter are ASCII; a comment in another encoding must not hide them (and duplicate the entry).
+        return [line.strip() for line in path.read_bytes().decode("utf-8", "replace").splitlines()]
+    except OSError:
         return []
 
 
@@ -93,11 +94,16 @@ def ensure(start: Path, *, write: bool, run: Runner = process.run_text) -> Outco
         return {"state": "present", "path": str(path)}
     if not write:
         return {"state": "missing", "path": str(path)}
+    # Bytes in, bytes out: the team's lines stay exactly as written (any encoding, CRLF endings kept), and a
+    # symlinked .gitignore stays a link, its target getting the entry.
     try:
-        current = path.read_text(encoding="utf-8")
+        current = path.read_bytes()
     except FileNotFoundError:
-        current = ""
-    separator = "" if not current or current.endswith("\n") else "\n"
-    gap = "\n" if current.strip() else ""
-    atomic.write_text(path, f"{current}{separator}{gap}{COMMENT}\n{ENTRY}\n")
+        current = b""
+    newline = b"\r\n" if b"\r\n" in current else b"\n"
+    separator = b"" if not current or current.endswith(b"\n") else newline
+    gap = newline if current.strip() else b""
+    atomic.write_bytes(
+        path.resolve(), current + separator + gap + newline.join([COMMENT.encode(), ENTRY.encode(), b""])
+    )
     return {"state": "added", "path": str(path)}

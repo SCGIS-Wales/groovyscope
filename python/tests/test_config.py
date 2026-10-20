@@ -181,6 +181,12 @@ def test_read_yaml_file_edge_cases(tmp_path: Path) -> None:
         read_yaml_file(listing)
 
 
+def test_a_configuration_file_that_is_not_utf8_is_named_in_the_error(tmp_path: Path) -> None:
+    (tmp_path / CONFIG_FILENAME).write_bytes(b"\xff\xfe jdk: {}\n")  # saved as UTF-16 by an editor
+    with pytest.raises(ValueError, match=r"\.groovyscope\.yaml is not UTF-8"):
+        load_config(tmp_path, None, {})
+
+
 def test_find_config_file(tmp_path: Path) -> None:
     assert find_config_file(tmp_path, None) is None
     target = tmp_path / CONFIG_FILENAME

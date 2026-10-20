@@ -211,11 +211,15 @@ def find_config_file(root: Path, explicit: Path | None) -> Path | None:
 
 
 def read_config_file(path: Path) -> Config:
-    """A YAML mapping, with YAML syntax errors reported as ``ValueError``."""
+    """A YAML mapping, with YAML syntax errors and text that is not UTF-8 reported as ``ValueError`` naming the
+    file."""
     try:
         return read_yaml_file(path)
     except yaml.YAMLError as exc:
         msg = f"{path} is not valid YAML: {exc}"
+        raise ValueError(msg) from exc
+    except UnicodeDecodeError as exc:
+        msg = f"{path} is not UTF-8 text ({exc.reason} at byte {exc.start}); save it as UTF-8"
         raise ValueError(msg) from exc
 
 
