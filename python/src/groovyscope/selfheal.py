@@ -76,6 +76,14 @@ class RestartPlan(TypedDict):
     reason: str  # why a start is refused, or a note on what changed
 
 
+def _default(key: str) -> Any:
+    """``config.default("daemon", key)``. Imported here, not at the top: config imports trust, which imports this
+    module."""
+    from groovyscope import config  # noqa: PLC0415 - see above
+
+    return config.default("daemon", key)
+
+
 def empty_state() -> DaemonState:
     return {"heap": None, "configured": None, "restarts": [], "lastExit": EXIT_NONE, "logSize": 0}
 
@@ -212,7 +220,7 @@ def plan_restart(
     to ``daemon.maxHeap``; a heap grown earlier is kept while ``daemon.heap`` is still the one it grew from and
     only when it is larger than ``daemon.heap``."""
     recent = [t for t in state["restarts"] if 0 <= now - t < WINDOW_SECONDS]
-    budget = max(1, int(settings.get("maxRestartsPerTenMinutes", 3)))
+    budget = max(1, int(settings.get("maxRestartsPerTenMinutes", _default("maxRestartsPerTenMinutes"))))
     previous = kept_heap(state, configured_heap)
     current = previous or configured_heap
     if len(recent) >= budget:
@@ -228,8 +236,8 @@ def plan_restart(
     heap: str | None = previous
     reason = ""
     if cause == EXIT_OOM:
-        factor = max(1.0, float(settings.get("heapGrowthFactor", 1.5)))
-        ceiling = max_heap_bytes(str(settings.get("maxHeap", AUTO)), physical)
+        factor = max(1.0, float(settings.get("heapGrowthFactor", _default("heapGrowthFactor"))))
+        ceiling = max_heap_bytes(str(settings.get("maxHeap", _default("maxHeap"))), physical)
         now_bytes = parse_heap(current)
         grown = min(ceiling, int(now_bytes * factor))
         if grown > now_bytes:

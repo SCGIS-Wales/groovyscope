@@ -16,6 +16,7 @@ from typing import Any, TypedDict
 import yaml
 from jsonschema import Draft202012Validator
 
+from groovyscope import config
 from groovyscope.config import format_error, package_text
 
 PROFILE_SUFFIXES = (".yaml", ".yml", ".json")
@@ -69,7 +70,7 @@ def search_path(root: Path, settings: Mapping[str, Any], home: Path) -> list[tup
     """Where profiles are looked for, in priority order, each with whether it was configured explicitly."""
     explicit = [Path(str(p)).expanduser() for p in settings.get("paths", [])]
     entries = [(p if p.is_absolute() else root / p, True) for p in explicit]
-    if settings.get("discover", True):
+    if settings.get("discover", config.default("profiles", "discover")):
         entries += [(root / WORKSPACE_DIR, False), (home / USER_DIR, False)]
     return entries
 

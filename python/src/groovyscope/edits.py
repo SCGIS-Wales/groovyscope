@@ -4,16 +4,16 @@ inside the workspace, atomically, keeping the file's line endings."""
 from __future__ import annotations
 
 import difflib
-import urllib.parse
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
 from groovyscope import atomic
+from groovyscope.paths import GROOVY_SUFFIXES, uri_to_path
 
 # Files the engine may hand back edits for; anything else is refused.
 BMP_MAX = 0xFFFF  # characters above this take two UTF-16 code units
-EDITABLE_SUFFIXES = frozenset({".groovy", ".gvy", ".gy", ".gsh", ".gradle"})
+EDITABLE_SUFFIXES = frozenset(GROOVY_SUFFIXES)
 
 
 class FileEdit(TypedDict):
@@ -86,8 +86,7 @@ def counts_by_path(raw: Mapping[str, Any]) -> dict[Path, dict[str, int]]:
     return {uri_path(uri): {str(k): int(v) for k, v in counts.items()} for uri, counts in raw.items()}
 
 
-def uri_path(uri: str) -> Path:
-    return Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+uri_path = uri_to_path
 
 
 def is_editable(path: Path, root: Path) -> bool:
@@ -153,3 +152,61 @@ def file_edits(edits_by_uri: dict[str, Any], root: Path) -> tuple[list[FileEdit]
         before = read_document(path)
         changed.append({"path": path, "before": before, "after": apply_edits(before, edits)})
     return (changed, refused)
+
+
+def write_if_unchanged(edit: FileEdit, refused: list[str]) -> bool:
+    """Writes the edit unless the file changed on disk since it was read, in which case the file joins ``refused``
+    with the reason and nothing is written. True when written."""
+    try:
+        write_document(edit["path"], edit["after"], expected=edit["before"])
+    except FileChangedError as exc:
+        refused.append(f"{edit['path'].as_uri()} ({exc})")
+        return False
+    return True
+
+
+REFUSED_REASON = "not a Groovy source inside the workspace"
+
+
+class SettledEdit(TypedDict):
+    """One file of a fix or format answer: the edit, the lines it changes and whether it was written."""
+
+    edit: FileEdit
+    lines: int
+    applied: bool
+
+
+def settle(changed: Sequence[FileEdit], refused: list[str], *, apply: bool) -> list[SettledEdit]:
+    """The edits that stand. With ``apply`` each is written unless its file changed on disk since it was read (that
+    file joins ``refused`` and drops out); without, they are listed."""
+    settled: list[SettledEdit] = []
+    for edit in changed:
+        if apply and not write_if_unchanged(edit, refused):
+            continue
+        settled.append({"edit": edit, "lines": changed_line_count(edit["before"], edit["after"]), "applied": apply})
+    return settled
+
+
+class FixOutcome(TypedDict):
+    """What an engine fix reply means per file: the codes applied and how often, what was left without a safe fix,
+    what needs review (the fix changes behaviour) and what was rejected, with why."""
+
+    codes: dict[Path, list[str]]
+    fixed: dict[Path, dict[str, int]]
+    left: dict[Path, dict[str, int]]
+    needsReview: dict[Path, dict[str, int]]
+    rejected: dict[Path, str]
+
+
+def fix_outcome(raw: Mapping[str, Any], refused: Sequence[str]) -> FixOutcome:
+    """The per-file reading of an engine ``groovyscope/fix`` reply; ``refused`` are the URIs ``file_edits`` turned
+    down or a write gave up on."""
+    rejected = {uri_path(uri): str(why) for uri, why in raw.get("rejected", {}).items()}
+    rejected.update({uri_path(uri.split(" (", 1)[0]): REFUSED_REASON for uri in refused})
+    return {
+        "codes": {uri_path(uri): list(codes) for uri, codes in raw.get("applied", {}).items()},
+        "fixed": counts_by_path(raw.get("appliedCounts", {})),
+        "left": counts_by_path(raw.get("left", {})),
+        "needsReview": counts_by_path(raw.get("needsReview", {})),
+        "rejected": rejected,
+    }

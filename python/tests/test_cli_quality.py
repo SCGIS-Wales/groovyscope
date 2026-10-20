@@ -11,7 +11,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import cli, process
+from groovyscope import changes, cli, hooks, process
+from groovyscope import daemon as daemon_lifecycle
+from groovyscope.cli import common as cli_common
+from groovyscope.config import load_config
 
 
 @pytest.fixture
@@ -26,13 +29,13 @@ def engine(
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
     calls: dict[str, Any] = {"requests": []}
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
 
     def fake_rpc(socket_file: Path, method: str, params: dict[str, Any], timeout: float) -> Any:
         calls["requests"].append((method, params))
         return calls["response"]
 
-    monkeypatch.setattr(cli, "_RPC", fake_rpc)
+    monkeypatch.setattr(cli_common, "_RPC", fake_rpc)
     return calls
 
 
@@ -94,7 +97,7 @@ def test_check_reports_rpc_failures(
         msg = "socket gone"
         raise OSError(msg)
 
-    monkeypatch.setattr(cli, "_RPC", broken)
+    monkeypatch.setattr(cli_common, "_RPC", broken)
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "check"])
     assert result.exit_code == 1
     assert "groovyscope/check failed: socket gone" in result.output
@@ -142,7 +145,7 @@ def test_daemon_socket_failure_exits_1(
         msg = "cannot start"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", failing)
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", failing)
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "check"])
     assert result.exit_code == 1
     assert "cannot start" in result.output
@@ -224,7 +227,7 @@ def test_fix_changed_limits_the_engine_to_the_changed_lines(
             {"path": "src/it/java/B.java", "status": "modified", "ranges": [[1, 2]]},
         ],
     }
-    monkeypatch.setattr(cli.changes, "changed_files", lambda _root, _base: change)
+    monkeypatch.setattr(changes, "changed_files", lambda _root, _base: change)
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "--changed", "--code", "GS002"])
     assert result.exit_code == 0, result.output
     uri = (tmp_path / "src" / "A.groovy").resolve().as_uri()
@@ -239,7 +242,7 @@ def test_fix_changed_limits_the_engine_to_the_changed_lines(
         msg = "not inside a git repository"
         raise ValueError(msg)
 
-    monkeypatch.setattr(cli.changes, "changed_files", no_git)
+    monkeypatch.setattr(changes, "changed_files", no_git)
     failed = runner.invoke(cli.main, ["--root", str(tmp_path), "fix", "--changed"])
     assert failed.exit_code == 1 and "not inside a git repository" in failed.output
 
@@ -331,9 +334,9 @@ def test_review_changed_renders_a_merge_request_review(
         calls.append(method)
         return responses.get(method, {})
 
-    monkeypatch.setattr(cli, "_RPC", fake_rpc)
+    monkeypatch.setattr(cli_common, "_RPC", fake_rpc)
     monkeypatch.setattr(
-        cli.changes,
+        changes,
         "changed_files",
         lambda _root, base, staged=False: {
             "base": base,
@@ -363,7 +366,7 @@ def test_review_changed_renders_a_merge_request_review(
     payload = json.loads(as_json.output)
     assert payload["mode"] == "staged" and payload["counts"] == {"blocking": 1, "shouldFix": 0, "nits": 0}
     assert [i["symbol"] for i in payload["impact"]] == ["A", "A.run"] and payload["riskyCount"] == 3
-    monkeypatch.setattr(cli.changes, "changed_files", lambda *_a, **_k: (_ for _ in ()).throw(ValueError("no git")))
+    monkeypatch.setattr(changes, "changed_files", lambda *_a, **_k: (_ for _ in ()).throw(ValueError("no git")))
     failed = runner.invoke(cli.main, ["--root", str(tmp_path), "review", "--changed"])
     assert failed.exit_code == 1 and "groovyscope: no git" in failed.output
 
@@ -528,7 +531,7 @@ def test_explain_code_graph_and_naming_commands(
             "summary": {},
         },
     }
-    monkeypatch.setattr(cli, "_RPC", lambda _s, method, _p, _t: responses.get(method, {}))
+    monkeypatch.setattr(cli_common, "_RPC", lambda _s, method, _p, _t: responses.get(method, {}))
     explained = runner.invoke(cli.main, ["--root", str(tmp_path), "explain-code", "app.A"])
     assert explained.exit_code == 0, explained.output
     assert explained.output.startswith("class app.A (src/A.groovy, lines 1-10)")
@@ -572,14 +575,14 @@ def test_the_session_start_records_the_stop_gate_baseline(
     runner: CliRunner, tmp_path: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / "Old.groovy").write_text("class Old { broken")
-    monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, "?? Old.groovy\0"))
+    monkeypatch.setattr(changes, "default_runner", lambda _c, _d: (0, "?? Old.groovy\0"))
     off = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--event", "agentSpawn"], input="{}")
     assert off.exit_code == 0 and not cli.session_baseline_file(tmp_path).exists()  # stopGate is off by default
     (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  stopGate: true\n")
     on = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--event", "agentSpawn"], input="{}")
     assert on.exit_code == 0
     assert json.loads(cli.session_baseline_file(tmp_path).read_text())  # Old.groovy recorded
-    settings = cli.hooks.settings(cli.load_config(tmp_path, None, {}))
+    settings = hooks.settings(load_config(tmp_path, None, {}))
     assert cli.hook_targets(tmp_path, "stop", {}, settings) == []  # the agent changed nothing yet
 
 
@@ -612,10 +615,10 @@ def test_hook_command_checks_written_files_and_gates_stop(
         seen.append({"method": method, "params": params, "timeout": timeout})
         return {"diagnostics": {uri: [finding]}, "summary": {}}
 
-    monkeypatch.setattr(cli, "_RPC", fake_rpc)
+    monkeypatch.setattr(cli_common, "_RPC", fake_rpc)
     probes: list[Path] = []
-    monkeypatch.setattr(cli, "_PROBE", lambda socket_file: probes.append(socket_file) or {"engine": "x"})
-    monkeypatch.setattr(cli, "daemon_socket_for", lambda _obj: pytest.fail("a hook must never start the engine"))
+    monkeypatch.setattr(cli_common, "_PROBE", lambda socket_file: probes.append(socket_file) or {"engine": "x"})
+    monkeypatch.setattr(cli_common, "daemon_socket_for", lambda _obj: pytest.fail("a hook must never start the engine"))
     (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  timeoutSeconds: 9\n")
     payload = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "write", "tool_input": {"path": str(target)}})
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
@@ -634,18 +637,18 @@ def test_hook_command_checks_written_files_and_gates_stop(
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop).output == ""  # gate off
     assert len(probes) == 1  # none of those three events touched the engine
     (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  stopGate: true\n")
-    monkeypatch.setattr(cli.changes, "default_runner", lambda _c, _d: (0, " M src/main/groovy/A.groovy\0"))
+    monkeypatch.setattr(changes, "default_runner", lambda _c, _d: (0, " M src/main/groovy/A.groovy\0"))
     blocked = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop)
     assert json.loads(blocked.output)["decision"] == "block" and seen[-1]["params"]["include"] == ["compile"]
 
     def slow(_socket: Path, _method: str, _params: dict[str, Any], _timeout: float) -> dict[str, Any]:
         raise RuntimeError("timed out")
 
-    monkeypatch.setattr(cli, "_RPC", slow)
+    monkeypatch.setattr(cli_common, "_RPC", slow)
     skipped = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
     assert skipped.exit_code == 0 and "hook check skipped" in skipped.output
 
-    monkeypatch.setattr(cli, "_PROBE", lambda _socket_file: None)
+    monkeypatch.setattr(cli_common, "_PROBE", lambda _socket_file: None)
     unavailable = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
     assert unavailable.exit_code == 0 and "daemon is not running" in unavailable.output
 

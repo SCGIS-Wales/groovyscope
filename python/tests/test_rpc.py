@@ -189,33 +189,19 @@ def _wait_for(server: _SessionServer, count: int) -> None:
         deadline -= 1
 
 
-def test_session_answers_many_requests_on_one_connection(session_server: _SessionServer, short_dir: Path) -> None:
-    session = rpc.open_session(short_dir / "e.sock", timeout=5)
+def test_a_channel_answers_many_requests_and_refuses_engine_requests(
+    session_server: _SessionServer, short_dir: Path
+) -> None:
+    channel = rpc.open_channel(short_dir / "e.sock", timeout=5)
     try:
-        assert rpc.call(session, "initialize", {"a": 1}) == {"echo": {"a": 1}}
-        assert rpc.call(session, "groovyscope/symbols", {"query": "g"}, timeout=5) == {"echo": {"query": "g"}}
-        rpc.notify_session(session, "initialized")
-        _wait_for(session_server, 5)
-        assert session["notifications"] == 2  # counted, never stored
+        assert rpc.channel_call(channel, "initialize", {"a": 1}, timeout=5) == {"echo": {"a": 1}}
+        assert rpc.channel_call(channel, "groovyscope/symbols", {"query": "g"}, timeout=5) == {"echo": {"query": "g"}}
+        _wait_for(session_server, 4)
     finally:
-        rpc.close_session(session)
-        rpc.close_session(session)  # closing twice is harmless
-    ids = [m.get("id") for m in session_server.received if m.get("method") in {"initialize", "groovyscope/symbols"}]
-    assert ids == [1, 2]
+        rpc.close_channel(channel)
+        rpc.close_channel(channel)  # closing twice is harmless
     answers = [m for m in session_server.received if m.get("id") == "engine-1"]
     assert [a["error"]["code"] for a in answers] == [-32601, -32601]
-    assert {"jsonrpc": "2.0", "method": "initialized", "params": {}} in session_server.received
-
-
-def test_session_errors(session_server: _SessionServer, short_dir: Path) -> None:
-    session = rpc.open_session(short_dir / "e.sock", timeout=5)
-    try:
-        with pytest.raises(RuntimeError, match="fail failed: nope"):
-            rpc.call(session, "fail")
-        with pytest.raises(ConnectionError, match="engine closed the session"):
-            rpc.call(session, "hangup")
-    finally:
-        rpc.close_session(session)
 
 
 def test_oversized_frames_are_refused() -> None:
@@ -306,12 +292,6 @@ def test_a_daemon_that_is_exiting_is_a_connection_error(session_server: _Session
         assert issubclass(rpc.DaemonExitingError, ConnectionError)
     finally:
         rpc.close_channel(channel)
-    session = rpc.open_session(short_dir / "e.sock", timeout=5)
-    try:
-        with pytest.raises(rpc.DaemonExitingError):
-            rpc.call(session, "exiting", {}, timeout=5)
-    finally:
-        rpc.close_session(session)
 
 
 def test_a_write_that_cannot_finish_breaks_the_channel_instead_of_leaving_half_a_frame(

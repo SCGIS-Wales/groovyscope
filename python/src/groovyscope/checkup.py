@@ -15,6 +15,7 @@ from typing import Any, NotRequired, TypedDict
 
 from groovyscope import __version__, benchmark, daemon, doctor, kiro, kiro_agent, profiles, sweep
 from groovyscope import classpath as classpath_state
+from groovyscope import config as config_module
 from groovyscope.classpath import DEFAULT_FILE
 from groovyscope.config import load_config
 
@@ -304,7 +305,7 @@ def logs_kept(root: Path, config_path: Path | None, environ: Mapping[str, str]) 
         effective = load_config(root, config_path, environ)
     except Exception:
         return 3
-    return int((effective.get("daemon") or {}).get("logsKept", 3))
+    return int((effective.get("daemon") or {}).get("logsKept", config_module.default("daemon", "logsKept")))
 
 
 def agent_item(root: Path, environ: Mapping[str, str], home: Path, run: kiro_agent.KiroRunner | None) -> Item:

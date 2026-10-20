@@ -581,6 +581,8 @@ def test_results_are_compact_and_annotated(engine: dict[str, Any]) -> None:
     structured = mcp_server.build_server(ROOT, call, {"maxResults": 50, "structured": True}, {})
     again = asyncio.run(structured.call_tool("find_symbol", {"query": "gree"}))
     assert again.structured_content["items"][0]["name"] == "Greeter"
+    assert result.is_error is False and again.is_error is False
+    assert mcp_server.is_refusal({"error": "no"}) and not mcp_server.is_refusal({"error": None, "items": []})
     assert mcp_server.clip("x" * 10, 4) == "xxx…" and mcp_server.clip(5, 1) == 5
 
 
@@ -955,6 +957,7 @@ def test_paths_the_workspace_does_not_have_are_refused_before_any_tool_runs(tmp_
     server = mcp_server.build_server(tmp_path, call, {"maxResults": 50, "maxBytes": 16000}, {})
     asked = asyncio.run(server.call_tool("review", {"paths": ["src/A.groovy", "src/Gone.groovy", "../other/B.groovy"]}))
     answer = json.loads(asked.content[0].text)
+    assert asked.is_error is True  # a refusal is a tool error, never a clean answer
     assert answer["missing"] == ["src/Gone.groovy", "../other/B.groovy"] and answer["workspace"] == str(tmp_path)
     assert (
         answer["error"].startswith(f"not found in the workspace {tmp_path}")

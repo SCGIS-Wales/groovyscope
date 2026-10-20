@@ -10,6 +10,8 @@ import pytest
 from click.testing import CliRunner
 
 from groovyscope import cli
+from groovyscope import daemon as daemon_lifecycle
+from groovyscope.cli import common as cli_common
 
 
 @pytest.fixture
@@ -24,13 +26,13 @@ def engine(
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
     calls: dict[str, Any] = {"requests": []}
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
 
     def fake_rpc(socket_file: Path, method: str, params: dict[str, Any], timeout: float) -> Any:
         calls["requests"].append((method, params))
         return calls["response"]
 
-    monkeypatch.setattr(cli, "_RPC", fake_rpc)
+    monkeypatch.setattr(cli_common, "_RPC", fake_rpc)
     return calls
 
 
@@ -104,7 +106,7 @@ def test_impact_rpc_failure(
         msg = "gone"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli, "_RPC", broken)
+    monkeypatch.setattr(cli_common, "_RPC", broken)
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "impact", "a.B"])
     assert result.exit_code == 1 and "groovyscope/impact failed: gone" in result.output
 

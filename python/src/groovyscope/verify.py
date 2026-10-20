@@ -14,6 +14,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
+from groovyscope import config
+
 SOURCE_SET = re.compile(r"(?:^|/)src/(?P<set>[^/]+)/(?P<language>groovy|java)/(?P<rest>.+)$")
 BUILD_FILES = ("build.gradle", "build.gradle.kts")
 # `task integrationTest(type: Test)`, `tasks.register('integrationTest', Test)`, `tasks.register<Test>("it")`
@@ -26,8 +28,8 @@ TASK_WINDOW = 1500  # characters of a task's body searched for the source set it
 MAX_DECLARATIONS = 50  # changed declarations whose impact is asked for, to find the tests a change reaches
 TEST_SOURCE_PATH = re.compile(r"(?:^|/)src/(?!main/)[^/]+/(?:groovy|java)/")
 TEST_NAME_SUFFIXES = ("Test", "Tests", "Spec", "IT", "ITCase", "IntegrationTest")
-DEFAULT_RUN = ("test",)
-DEFAULT_COVERAGE_TASK = "jacocoTestReport"
+DEFAULT_RUN = tuple(config.default("verify", "runTasks"))
+DEFAULT_COVERAGE_TASK = str(config.default("verify", "coverageTask"))
 # Passed with --init-script when the command filters tests: a filter that matches no test in one project or task of
 # the build (a multi-project build runs `test` everywhere) is not a failure; the JUnit XML count says what ran.
 INIT_SCRIPT = """\

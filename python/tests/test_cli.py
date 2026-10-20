@@ -11,24 +11,28 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import __version__, cli, selfheal
+from groovyscope import __version__, checkup, cli, selfheal
+from groovyscope import daemon as daemon_lifecycle
+from groovyscope.cli import common as cli_common
+from groovyscope.cli import workspace as cli_workspace
+from groovyscope.config import load_config
 from groovyscope.jar import locate_jar
 from groovyscope.kiro import GLOBAL_FILES, KIRO_FILES
 from groovyscope.launch import OOM_FLAG, SAFETY_FLAGS
 
 
 def test_version_without_bundle(runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "read_manifest", lambda: None)
+    monkeypatch.setattr(cli_workspace, "read_manifest", lambda: None)
     result = runner.invoke(cli.main, ["version"])
     assert result.exit_code == 0
     assert result.output == f"groovyscope {__version__}\nengine not bundled\n"
 
 
 def test_version_with_bundle(runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "read_manifest", lambda: {"version": "9.9.9", "codenarc": "4.0.0"})
+    monkeypatch.setattr(cli_workspace, "read_manifest", lambda: {"version": "9.9.9", "codenarc": "4.0.0"})
     output = runner.invoke(cli.main, ["version"]).output
     assert "engine 9.9.9" in output and "codenarc 4.0.0" in output
-    monkeypatch.setattr(cli, "read_manifest", lambda: {"version": "9.9.9"})
+    monkeypatch.setattr(cli_workspace, "read_manifest", lambda: {"version": "9.9.9"})
     assert "codenarc unknown" in runner.invoke(cli.main, ["version"]).output
 
 
@@ -139,7 +143,7 @@ def test_lsp_execs_the_engine(
     monkeypatch.setenv("GROOVYSCOPE_DAEMON__CDS", "false")
     monkeypatch.setenv(cli.CONFIG_ENV, "")
     captured: list[tuple[str, Sequence[str]]] = []
-    monkeypatch.setattr(cli, "_EXEC", lambda path, argv: captured.append((path, argv)))
+    monkeypatch.setattr(cli_common, "_EXEC", lambda path, argv: captured.append((path, argv)))
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
     handed_over = json.loads(os.environ[cli.CONFIG_ENV])
@@ -165,14 +169,16 @@ def test_lsp_execs_the_engine(
 def test_lsp_fails_cleanly_without_jdk_or_jar(
     runner: CliRunner, tmp_path: Path, fake_jdk: Path, clean_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(cli, "_EXEC", lambda _path, _argv: pytest.fail("must not exec"))
+    monkeypatch.setattr(cli_common, "_EXEC", lambda _path, _argv: pytest.fail("must not exec"))
     with pytest.MonkeyPatch.context() as inner:
-        inner.setattr(cli, "discover", lambda *_a, **_k: {"jdk": None, "notes": ["JAVA_HOME (/x) is not a JDK home"]})
+        inner.setattr(
+            cli_common, "discover", lambda *_a, **_k: {"jdk": None, "notes": ["JAVA_HOME (/x) is not a JDK home"]}
+        )
         no_jdk = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert no_jdk.exit_code == 1 and "no suitable JDK" in no_jdk.output
     assert "JAVA_HOME (/x) is not a JDK home" in no_jdk.output
     monkeypatch.setenv("JAVA_HOME", str(fake_jdk))
-    monkeypatch.setattr(cli, "locate_jar", lambda env: locate_jar(env, tmp_path / "no-bundle"))
+    monkeypatch.setattr(cli_common, "locate_jar", lambda env: locate_jar(env, tmp_path / "no-bundle"))
     no_jar = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert no_jar.exit_code == 1 and "no engine JAR" in no_jar.output
     (tmp_path / ".groovyscope.yaml").write_text("daemon: {heap: huge}\n", encoding="utf-8")
@@ -190,10 +196,10 @@ def test_mcp_command_serves_over_the_daemon(
     monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "x"})
     served: list[tuple[Path, Path, dict[str, Any], dict[str, str], Any]] = []
     monkeypatch.setattr(
-        cli,
+        cli_common,
         "_MCP_SERVE",
         lambda root, socket_file, output, environ, reconnect, configuration=None: (
             served.append((root, socket_file, output, environ, reconnect, configuration)) or 0
@@ -210,7 +216,7 @@ def test_mcp_command_serves_over_the_daemon(
         msg = "no JVM"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", failing)
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", failing)
     with pytest.raises(ConnectionError, match="could not be restarted"):
         served[0][4]()
 
@@ -222,7 +228,7 @@ def test_configure_logging_levels() -> None:
 
 def test_exec_process_replaces_the_process(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, list[str]]] = []
-    monkeypatch.setattr(cli.os, "execv", lambda path, argv: calls.append((path, argv)))
+    monkeypatch.setattr(os, "execv", lambda path, argv: calls.append((path, argv)))
     cli.exec_process("/bin/true", ("/bin/true", "x"))
     assert calls == [("/bin/true", ["/bin/true", "x"])]
 
@@ -246,11 +252,11 @@ def test_a_classpath_too_long_for_the_environment_reaches_the_daemon_through_its
     )
     started: list[tuple[list[str], dict[str, str]]] = []
     monkeypatch.setattr(
-        cli.daemon_lifecycle,
+        daemon_lifecycle,
         "ensure_running",
         lambda cmd, _s, _l, env, **_k: started.append((cmd, dict(env))) or {"engine": "x"},
     )
-    monkeypatch.setattr(cli, "_RELAY", lambda _socket: 0)
+    monkeypatch.setattr(cli_common, "_RELAY", lambda _socket: 0)
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
     command, env = started[0]
@@ -276,10 +282,10 @@ def test_a_crash_loop_refusal_starts_no_engine_and_says_why(
     reason = "the daemon was started 3 times in the last ten minutes and keeps exiting"
 
     def refuse(*_a: Any, **_k: Any) -> dict[str, Any]:
-        raise cli.daemon_lifecycle.CrashLoopRefusedError(reason)
+        raise daemon_lifecycle.CrashLoopRefusedError(reason)
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", refuse)
-    monkeypatch.setattr(cli, "_EXEC", lambda _p, _a: pytest.fail("no JVM after a crash loop refusal"))
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", refuse)
+    monkeypatch.setattr(cli_common, "_EXEC", lambda _p, _a: pytest.fail("no JVM after a crash loop refusal"))
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 1 and reason in result.output
     served: list[str] = []
@@ -291,9 +297,9 @@ def test_a_crash_loop_refusal_starts_no_engine_and_says_why(
             served.append(str(exc))
         return 0
 
-    monkeypatch.setattr(cli, "_MCP_SERVE", serve)
+    monkeypatch.setattr(cli_common, "_MCP_SERVE", serve)
     monkeypatch.setattr(
-        cli, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", cli.load_config(tmp_path, None, {}))
+        cli_common, "daemon_socket_for", lambda _obj: (tmp_path / "s.sock", load_config(tmp_path, None, {}))
     )
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "mcp"]).exit_code == 0
     assert served and reason in served[0]  # the agent reads the refusal's own reason
@@ -311,9 +317,9 @@ def test_an_engine_started_without_the_daemon_keeps_the_grown_heap(
         msg = "daemon on x did not answer within 30s"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", unavailable)
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", unavailable)
     captured: list[Sequence[str]] = []
-    monkeypatch.setattr(cli, "_EXEC", lambda _p, argv: captured.append(argv))
+    monkeypatch.setattr(cli_common, "_EXEC", lambda _p, argv: captured.append(argv))
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
     assert "-Xmx1536m" in captured[0] and "-Xmx1g" not in captured[0]
@@ -332,13 +338,13 @@ def test_lsp_relays_through_the_daemon(
     ensured: list[list[str]] = []
     relayed: list[Path] = []
     monkeypatch.setattr(
-        cli.daemon_lifecycle, "ensure_running", lambda cmd, _s, _l, _e, **_k: ensured.append(cmd) or {"engine": "x"}
+        daemon_lifecycle, "ensure_running", lambda cmd, _s, _l, _e, **_k: ensured.append(cmd) or {"engine": "x"}
     )
-    monkeypatch.setattr(cli, "_RELAY", lambda socket_file: relayed.append(socket_file) or 0)
-    monkeypatch.setattr(cli, "_EXEC", lambda _p, _a: pytest.fail("must not exec when the daemon works"))
+    monkeypatch.setattr(cli_common, "_RELAY", lambda socket_file: relayed.append(socket_file) or 0)
+    monkeypatch.setattr(cli_common, "_EXEC", lambda _p, _a: pytest.fail("must not exec when the daemon works"))
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
-    assert relayed == [cli.daemon_lifecycle.socket_path(tmp_path, dict(os.environ))]
+    assert relayed == [daemon_lifecycle.socket_path(tmp_path, dict(os.environ))]
     assert ensured[0][-11:-7] == ["daemon", "--socket", str(relayed[0]), "--idle-seconds"]
     assert ensured[0][-6] == "--cache-dir"
     assert ensured[0][-4:-2] == ["--root", str(tmp_path.resolve())]
@@ -357,7 +363,7 @@ def test_lsp_starts_the_daemon_once_more_when_it_vanished_before_the_relay_conne
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
     ensured: list[int] = []
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: ensured.append(1) or {"engine": "x"})
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: ensured.append(1) or {"engine": "x"})
     outcomes = iter([ConnectionRefusedError("gone"), 0])
 
     def relay_once(_socket_file: Path) -> int:
@@ -366,15 +372,15 @@ def test_lsp_starts_the_daemon_once_more_when_it_vanished_before_the_relay_conne
             raise outcome
         return outcome
 
-    monkeypatch.setattr(cli, "_RELAY", relay_once)
-    monkeypatch.setattr(cli, "_EXEC", lambda _p, _a: pytest.fail("the second start must not fall back"))
+    monkeypatch.setattr(cli_common, "_RELAY", relay_once)
+    monkeypatch.setattr(cli_common, "_EXEC", lambda _p, _a: pytest.fail("the second start must not fall back"))
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
     assert len(ensured) == 2 and "starting it again" in result.output
 
-    monkeypatch.setattr(cli, "_RELAY", lambda _s: (_ for _ in ()).throw(ConnectionRefusedError("still gone")))
+    monkeypatch.setattr(cli_common, "_RELAY", lambda _s: (_ for _ in ()).throw(ConnectionRefusedError("still gone")))
     captured: list[Sequence[str]] = []
-    monkeypatch.setattr(cli, "_EXEC", lambda _p, argv: captured.append(argv))
+    monkeypatch.setattr(cli_common, "_EXEC", lambda _p, argv: captured.append(argv))
     again = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert again.exit_code == 0 and "running the engine directly" in again.output and captured
 
@@ -394,9 +400,9 @@ def test_lsp_falls_back_to_direct_exec_when_the_daemon_fails(
         msg = "no JVM today"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", broken)
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", broken)
     captured: list[Sequence[str]] = []
-    monkeypatch.setattr(cli, "_EXEC", lambda _p, argv: captured.append(argv))
+    monkeypatch.setattr(cli_common, "_EXEC", lambda _p, argv: captured.append(argv))
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "lsp", "--stdio"])
     assert result.exit_code == 0, result.output
     assert "daemon unavailable (no JVM today)" in result.output
@@ -413,16 +419,16 @@ def test_daemon_commands(
     monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9"})
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: True)
-    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9", "files": 3})
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9"})
+    monkeypatch.setattr(daemon_lifecycle, "stop", lambda _s: True)
+    monkeypatch.setattr(daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9", "files": 3})
     assert "engine 9.9" in runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "start"]).output
     assert "daemon stopped" in runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "stop"]).output
     status = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"])
     assert status.exit_code == 0 and "files    3" in status.output
 
     monkeypatch.setattr(
-        cli.daemon_lifecycle,
+        daemon_lifecycle,
         "probe",
         lambda _s, _timeout=5.0: {"engine": "9.9", "memory": {"usedMb": 900, "maxMb": 1000}},
     )
@@ -430,22 +436,20 @@ def test_daemon_commands(
     assert "memory   900 of 1000 MB (90%)" in hot.output
     assert "warning: heap" in hot.output and "daemon.heap" in hot.output
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: None)
+    monkeypatch.setattr(daemon_lifecycle, "probe", lambda _s, _timeout=5.0: None)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"]).exit_code == 3
-    log_file = Path(cli.daemon_lifecycle.log_path(tmp_path, dict(os.environ)))
+    log_file = Path(daemon_lifecycle.log_path(tmp_path, dict(os.environ)))
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log_file.write_text("Terminating due to java.lang.OutOfMemoryError: Java heap space\n")
     dead = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "status"])
     assert dead.exit_code == 3 and "exited with OutOfMemoryError" in dead.output and "daemon.heap" in dead.output
     log_file.unlink()
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: False)
+    monkeypatch.setattr(daemon_lifecycle, "stop", lambda _s: False)
     assert "was not running" in runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "stop"]).output
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: True)
-    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9"})
-    monkeypatch.setattr(
-        cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9", "configHash": "older"}
-    )
+    monkeypatch.setattr(daemon_lifecycle, "stop", lambda _s: True)
+    monkeypatch.setattr(daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9"})
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9", "configHash": "older"})
     restarted = runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"])
     assert restarted.exit_code == 0 and "daemon restarted" in restarted.output
     assert "could not reload it" in restarted.output and "daemon restart" in restarted.output
@@ -454,16 +458,16 @@ def test_daemon_commands(
         msg = "did not stop"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", stop_fails)
+    monkeypatch.setattr(daemon_lifecycle, "stop", stop_fails)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "restart"]).exit_code == 1
 
     def failing(*_a: object, **_k: object) -> dict[str, object]:
         msg = "cannot spawn"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", failing)
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", failing)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "start"]).exit_code == 1
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", failing)
+    monkeypatch.setattr(daemon_lifecycle, "stop", failing)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "daemon", "stop"]).exit_code == 1
 
 
@@ -477,10 +481,10 @@ def test_asking_for_a_start_or_a_stop_clears_the_crash_loop_guard(
     monkeypatch.setenv("GROOVYSCOPE_SOCKET_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.CONFIG_ENV, "")
-    monkeypatch.setattr(cli.daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9"})
-    monkeypatch.setattr(cli.daemon_lifecycle, "stop", lambda _s: True)
-    monkeypatch.setattr(cli.daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9"})
-    log_file = Path(cli.daemon_lifecycle.log_path(tmp_path, dict(os.environ)))
+    monkeypatch.setattr(daemon_lifecycle, "ensure_running", lambda *_a, **_k: {"engine": "9.9"})
+    monkeypatch.setattr(daemon_lifecycle, "stop", lambda _s: True)
+    monkeypatch.setattr(daemon_lifecycle, "probe", lambda _s, _timeout=5.0: {"engine": "9.9"})
+    log_file = Path(daemon_lifecycle.log_path(tmp_path, dict(os.environ)))
     log_file.parent.mkdir(parents=True, exist_ok=True)
     state_file = selfheal.state_path(log_file)
     looping = selfheal.empty_state()
@@ -577,7 +581,7 @@ def test_checkup_agent_mode_never_fails(runner: CliRunner, tmp_path: Path, monke
         msg = "no"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(cli.checkup, "build", boom)
+    monkeypatch.setattr(checkup, "build", boom)
     (tmp_path / "build.gradle").write_text("", encoding="utf-8")  # a Groovy project: the checkup runs there
     result = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--agent"])
     assert result.exit_code == 0 and result.output.strip() == "groovyscope checkup could not run: no"

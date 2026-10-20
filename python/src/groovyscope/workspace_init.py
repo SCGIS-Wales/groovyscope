@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from groovyscope import config
 from groovyscope.config import CONFIG_FILENAME, deep_merge
 
 ROOT_CANDIDATES = (
@@ -65,7 +66,7 @@ def source_sets(root: Path) -> list[str]:
 
 def with_source_sets(root: Path, workspace: dict[str, Any]) -> dict[str, Any]:
     """``workspace`` with the discovered source sets added to ``sourceRoots`` when ``sourceSets`` is on."""
-    if not workspace.get("sourceSets", True):
+    if not workspace.get("sourceSets", config.default("workspace", "sourceSets")):
         return workspace
     roots = [str(r) for r in workspace.get("sourceRoots") or []]
     return {**workspace, "sourceRoots": list(dict.fromkeys([*roots, *source_sets(root)]))}

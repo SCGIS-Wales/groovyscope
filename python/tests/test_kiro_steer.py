@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from groovyscope import checkup, cli, kiro_steer
+from groovyscope.cli import common as cli_common
 from groovyscope.doctor import steering_check
 
 
@@ -64,9 +65,9 @@ def kiro_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pat
     (root / ".kiro" / "settings" / "mcp.json").write_text(
         json.dumps({"mcpServers": {"groovyscope": {"command": "groovyscope"}}}), encoding="utf-8"
     )
-    monkeypatch.setattr(cli.Path, "home", lambda: home)
+    monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.delenv("KIRO_HOME", raising=False)
-    monkeypatch.setattr(cli, "_KIRO", lambda: None)
+    monkeypatch.setattr(cli_common, "_KIRO", lambda: None)
     return {"root": root, "kiro_home": kiro_home}
 
 
@@ -133,6 +134,6 @@ def test_a_named_agent_gets_the_server_and_a_v3_agent_only_mcp_rules(kiro_setup:
 
 def test_the_start_hook_stays_idle_outside_groovy_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     called: list[str] = []
-    monkeypatch.setattr(cli.checkup, "build", lambda *_a, **_k: called.append("build"))
+    monkeypatch.setattr(checkup, "build", lambda *_a, **_k: called.append("build"))
     result = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "checkup", "--agent"])
     assert result.exit_code == 0 and result.output.strip() == checkup.IDLE_NOTE and called == []

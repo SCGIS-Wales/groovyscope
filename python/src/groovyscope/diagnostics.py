@@ -21,6 +21,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from groovyscope import config
+
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
 ROOT_LOGGER = "groovyscope"
@@ -136,7 +138,7 @@ def safe_environment(environ: Mapping[str, str]) -> dict[str, str]:
     """The environment variables that matter for diagnosis, without anything that looks secret."""
     selected = {key: environ[key] for key in ENV_KEYS if key in environ}
     for key, value in environ.items():
-        if key.startswith("GROOVYSCOPE_") and key != "GROOVYSCOPE_CONFIG_JSON":
+        if key.startswith(config.ENV_PREFIX) and key != config.CONFIG_JSON_ENV:
             selected[key] = "<redacted>" if any(hint in key for hint in SECRET_HINTS) else value
     return dict(sorted(selected.items()))
 

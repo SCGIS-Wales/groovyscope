@@ -45,6 +45,22 @@ def test_the_tool_budget_stays_under_the_clients_own() -> None:
         assert (errors == ()) is valid, budget
 
 
+def test_heap_sizes_must_be_positive_and_the_retired_classpath_key_is_refused() -> None:
+    defaults = load_defaults()
+    for key, value, valid in (
+        ("heap", "512m", True),
+        ("heap", "0g", False),
+        ("heap", "01g", False),
+        ("maxHeap", "auto", True),
+        ("maxHeap", "0m", False),
+        ("untrustedHeapCeiling", "4g", True),
+    ):
+        errors = validate_config({**defaults, "daemon": {**defaults["daemon"], key: value}})
+        assert (errors == ()) is valid, (key, value)
+    retired = {**defaults["workspace"], "classpathFrom": {"gradleTask": "printClasspath"}}
+    assert validate_config({**defaults, "workspace": retired})
+
+
 @given(mappings)
 def test_deep_merge_identity(base: dict[str, object]) -> None:
     assert deep_merge(base, {}) == base
@@ -83,6 +99,24 @@ def test_deep_merge_does_not_mutate_inputs() -> None:
 )
 def test_parse_scalar(raw: str, expected: object) -> None:
     assert parse_scalar(raw) == expected
+
+
+def test_env_values_follow_the_schema_type_of_their_setting() -> None:
+    env = {
+        "GROOVYSCOPE_GROOVY__VERSION": "6.0",
+        "GROOVYSCOPE_DAEMON__IDLETIMEOUTMINUTES": "45",
+        "GROOVYSCOPE_LINT__RULESET": "null",
+        "GROOVYSCOPE_PRACTICES__SEVERITY__GS001": "off",
+        "GROOVYSCOPE_MCP__REQUESTTIMEOUTSECONDS": "90",
+        "GROOVYSCOPE_DAEMON__NOSUCHKEY": "12",
+    }
+    overrides = env_overrides(env, load_defaults())
+    assert overrides["groovy"]["version"] == "6.0"
+    assert overrides["daemon"]["idleTimeoutMinutes"] == 45
+    assert overrides["lint"]["ruleset"] is None
+    assert list(overrides["practices"]["severity"].values()) == ["off"]  # a string map: values stay strings
+    assert overrides["mcp"]["requestTimeoutSeconds"] == 90
+    assert overrides["daemon"]["nosuchkey"] == 12  # unknown to the schema: YAML rules, and validation reports it
 
 
 def test_match_key_recovers_camel_case() -> None:

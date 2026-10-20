@@ -14,6 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from groovyscope import mcp_server
+from groovyscope.cli import common as cli_common
 from groovyscope.jar import sha256_of, write_manifest
 
 MCP_ROOT = Path("/ws")
@@ -30,9 +31,8 @@ echo "fake java: $@"
 @pytest.fixture(autouse=True)
 def no_real_kiro(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests never run the developer's kiro-cli; tests that need one inject a fake."""
-    from groovyscope import cli  # noqa: PLC0415 - fixture-local import keeps conftest light
 
-    monkeypatch.setattr(cli, "_KIRO", lambda: None)
+    monkeypatch.setattr(cli_common, "_KIRO", lambda: None)
 
 
 @pytest.fixture(autouse=True)
