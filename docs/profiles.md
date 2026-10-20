@@ -76,6 +76,7 @@ explain RP010` prints the why and the fix for any code.
 
 ```bash
 groovyscope baseline save     # writes .groovyscope/contract-baseline.json; commit it
+git add -f .groovyscope/contract-baseline.json   # -f once: .groovyscope/ is git-ignored, a tracked file stays tracked
 groovyscope baseline check    # exit 1 when something recorded changed or disappeared
 ```
 

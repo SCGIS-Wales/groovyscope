@@ -28,9 +28,9 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The practice catalogue ({@code config/practices/practices.json}, bundled as a resource): for every GS code,
- * Groovy 6 checker and the CodeNarc rules worth explaining, what it means, why it matters and how to fix it,
- * with a link into {@code docs/practices.md}.
+ * The practice catalogue ({@code practices.json}, bundled as a resource from the Python package's templates): for
+ * every GS code, Groovy 6 checker and the CodeNarc rules worth explaining, what it means, why it matters and how to
+ * fix it, with a link into {@code docs/practices.md}.
  */
 public final class PracticeCatalog {
 

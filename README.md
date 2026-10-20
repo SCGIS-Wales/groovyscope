@@ -41,8 +41,9 @@ kiro-cli --agent groovy
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
 reports what needs doing (Kiro files older than the package, the project's LSP entry, the benchmark corpus,
 trusting the repository and exporting its classpath). The one thing it writes, in a Groovy project inside a git
-repository, is `.groovyscope/` in the repository's `.gitignore`, once, so this machine's classpath export and
-baseline never reach a commit (`workspace.gitignore: false` turns that off). The agent opens with that status and
+repository, is `.groovyscope/` in the repository's `.gitignore`, once, so this machine's classpath export never
+reaches a commit (`workspace.gitignore: false` turns that off; `baseline save` says how to commit a contract
+baseline anyway). The agent opens with that status and
 a menu of the most useful prompts, and asks before it runs `groovyscope checkup --fix`, `groovyscope trust` or
 `groovyscope classpath` for you. The steering loads only for Groovy, Gradle and Jenkinsfile work
 (`inclusion: fileMatch`), so other sessions do not pay for it. `groovyscope checkup` prints the same report in a

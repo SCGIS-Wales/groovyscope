@@ -87,3 +87,24 @@ def test_without_write_it_only_reports_and_git_failures_fall_back_to_the_file(tm
         raise OSError("git not installed")
 
     assert gitignore.ensure(root, write=True, run=broken)["state"] == "added"
+
+
+def test_hidden_says_when_a_commit_would_leave_a_file_out(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    baseline = root / ".groovyscope" / "contract-baseline.json"
+    calls: list[Sequence[str]] = []
+
+    def record(command: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert kwargs["cwd"] == root.resolve()
+        return ignored(command)
+
+    assert gitignore.hidden(baseline, run=record)
+    assert calls == [["git", "check-ignore", "-q", str(baseline)]]  # no --no-index: a tracked file is not hidden
+    assert not gitignore.hidden(baseline, run=not_ignored)
+    assert not gitignore.hidden(tmp_path.parent / "elsewhere" / "file.json", run=ignored)  # outside any repository
+
+    def broken(command: Sequence[str], **_: object) -> subprocess.CompletedProcess[str]:
+        raise OSError("git is not installed")
+
+    assert not gitignore.hidden(baseline, run=broken)

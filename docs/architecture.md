@@ -266,9 +266,14 @@ apart, a closure whose owner and delegate both declare the method). Rename refus
 
 ## Practices and runtime profiles (Stage 8)
 
-`practices/` holds the catalogue (`practices.json`, mirrored from `config/practices/`), `PracticeFinder`
-(GS001-GS012, a visitor over the snapshot's trees that uses the resolver for static types), `TestDoubleFinder`
-(GS013-GS016 in test sources),
+`practices/` holds the catalogue (`practices.json`, which Gradle's `processResources` copies from
+`python/src/groovyscope/_templates/practices/`) and `PracticeFinder`, the entry point. It builds one
+`PracticeContext` per document (tree, text, configuration, and whether the document is a test source, Jenkins
+code, a Gradle script or a Spock specification) and runs every group on it: `CoreScan` (GS001 to GS012, one walk
+in source order that hands each node to `NumberChecks`, `TruthChecks`, `LoggingChecks`, `SecurityChecks`,
+`VersionChecks` and `SpockWithCheck`, using the resolver for static types), `TestDoubleFinder` (GS013 to GS016 in
+test sources), `NamingFinder` (GS020 to GS027), `SecretFinder` (GS019), `PitfallFinder`, `SqlFinder`,
+`JenkinsFinder`, `SpockFinder` and `GradleFinder`. Next to them sit
 `PracticeFixes` (AST-aware edits, applied with earlier edits winning on overlap) and `Explanations` (the
 `groovyscope/explain` request, hover notes and `codeDescription` links). Findings are cached per snapshot
 version. `QualityServices.fix` applies every safe fix, re-parses the result and rejects a document that no
@@ -375,7 +380,7 @@ deliberately loose so shared runners do not fail the build.
 | `kiro.py` | idempotent merge/backup/diff writers for the Kiro files |
 | `kiro_agent.py` | agent format detection (V2, universal, out of sync, V3) and format-preserving merges; the servers an agent's `tools` hides |
 | `kiro_steer.py` | groovyscope in any Kiro agent: the parts an agent lacks (server, steering, hooks) for `doctor`, and merging only those into it in its own format (`kiro attach`) |
-| `checkup.py` | `groovyscope checkup`: the post-install report with the fix per item and the safe repairs the agent start hook applies |
+| `checkup.py` | `groovyscope checkup`: the post-install report with the fix per item; `--fix` applies the safe repairs, and `--agent` (the start hook) only reports and adds the `.gitignore` entry |
 | `benchmark.py` | the bundled CodeNarc corpus (`_benchmark/`), unpacked into the user's home with a version stamp |
 | `changes.py` | changed files and line ranges from git, the pure review rules (split, bucket, touched declarations, verdict) and the merge request comment drafts |
 | `reports.py` | SARIF logs as findings and JaCoCo XML as coverage gaps, read as data |

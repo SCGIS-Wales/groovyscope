@@ -17,6 +17,7 @@ import click
 
 from groovyscope import (
     changes,
+    gitignore,
     hooks,
     practices,
     process,
@@ -734,9 +735,10 @@ def baseline_save(obj: dict[str, Any]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"files": current}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     items = sum(len(v) for v in current.values())
-    click.echo(
-        f"{items} contract item(s) in {len(current)} file(s) recorded in {common.shown_path(target, obj['root'])}"
-    )
+    shown = common.shown_path(target, obj["root"])
+    click.echo(f"{items} contract item(s) in {len(current)} file(s) recorded in {shown}")
+    if gitignore.hidden(target):
+        click.echo(f"git ignores .groovyscope/; commit the baseline with `git add -f {shown}`")
 
 
 @baseline.command("check")

@@ -15,7 +15,7 @@ from groovyscope import atomic, process
 
 ENTRY = ".groovyscope/"
 FOLDER = ".groovyscope"
-COMMENT = "# groovyscope: classpath export, contract baseline and workspace profiles of this machine"
+COMMENT = "# groovyscope: this machine's classpath export; share a contract baseline with git add -f"
 # Lines that ignore the folder at the repository root, whatever their spelling.
 EQUIVALENT = frozenset(f"{prefix}{FOLDER}{suffix}" for prefix in ("", "/", "**/") for suffix in ("", "/", "/**", "/*"))
 CHECK_TIMEOUT_SECONDS = 5.0
@@ -62,6 +62,19 @@ def ignored_by_git(repository: Path, run: Runner) -> bool:
             cwd=repository,
             timeout=CHECK_TIMEOUT_SECONDS,
         )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def hidden(path: Path, run: Runner = process.run_text) -> bool:
+    """Whether a commit would leave ``path`` out: git ignores it and does not track it yet. ``False`` outside a
+    repository or when git cannot say, so a caller only ever adds a hint."""
+    repository = repository_root(path.parent)
+    if repository is None:
+        return False
+    try:
+        result = run(["git", "check-ignore", "-q", str(path)], cwd=repository, timeout=CHECK_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
