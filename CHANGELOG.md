@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.26.1...v0.27.0) (2026-10-20)
+
+
+### Features
+
+* merge conflict tools (merge_conflicts, resolve_conflicts, merge_review) ([#124](https://github.com/SCGIS-Wales/groovyscope/issues/124)) ([d9b0128](https://github.com/SCGIS-Wales/groovyscope/commit/d9b012808ef0246ebd3ea7f6e666981d086c36c2))
+
 ## [0.26.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.26.0...v0.26.1) (2026-10-20)
 
 
