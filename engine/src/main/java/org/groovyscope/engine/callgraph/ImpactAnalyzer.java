@@ -79,14 +79,11 @@ public final class ImpactAnalyzer {
                 ? overridesOf(method)
                 : List.of();
         List<CallSite> tests = new ArrayList<>();
-        for (CallSite site : direct) {
-            if (isTest(site)) {
-                tests.add(site);
-            }
-        }
-        for (CallSite site : transitive) {
-            if (isTest(site)) {
-                tests.add(site);
+        for (List<CallSite> sites : List.of(direct, transitive, dynamic)) {
+            for (CallSite site : sites) {
+                if (isTest(site)) {
+                    tests.add(site);
+                }
             }
         }
         int score = score(declaration, change, direct, transitive, overrides, dynamic);
@@ -130,10 +127,10 @@ public final class ImpactAnalyzer {
             Deque<ASTNode> next = new ArrayDeque<>();
             for (ASTNode caller : frontier) {
                 for (CallSite site : graph.incoming(caller)) {
-                    if (site.confidence() == Confidence.DYNAMIC_UNKNOWN) {
-                        continue;
-                    }
                     result.add(site);
+                    if (site.confidence() == Confidence.DYNAMIC_UNKNOWN) {
+                        continue; // reported, so a test reaching it is a possible test, but not followed further
+                    }
                     ASTNode upstream = callerNode(site);
                     if (upstream != null && visited.add(upstream)) {
                         next.add(upstream);
@@ -232,10 +229,20 @@ public final class ImpactAnalyzer {
         }
         if (!tests.isEmpty()) {
             Set<String> files = new LinkedHashSet<>();
+            Set<String> possible = new LinkedHashSet<>();
             for (CallSite test : tests) {
                 files.add(test.caller().location().uri());
+                if (test.confidence() == Confidence.DYNAMIC_UNKNOWN) {
+                    possible.add(test.caller().location().uri());
+                }
             }
-            suggestions.add("run the " + files.size() + " test file(s) that reach this symbol");
+            for (CallSite test : tests) {
+                if (test.confidence() != Confidence.DYNAMIC_UNKNOWN) {
+                    possible.remove(test.caller().location().uri());
+                }
+            }
+            suggestions.add("run the " + files.size() + " test file(s) that reach this symbol"
+                    + (possible.isEmpty() ? "" : " (" + possible.size() + " possibly, through calls matched by name only)"));
         } else if (!direct.isEmpty()) {
             suggestions.add("no test reaches this symbol; add one before changing it");
         }

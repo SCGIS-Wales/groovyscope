@@ -23,9 +23,11 @@ import java.util.List;
  * @param symbol the declaration under consideration
  * @param change the kind of change
  * @param directCallers call sites that target the declaration with static or inferred confidence
- * @param transitiveCallers callers of the direct callers, and so on, up to the analyzer's depth
+ * @param transitiveCallers callers of the direct callers, and so on, up to the analyzer's depth; those matched by
+ *        name only carry {@code DYNAMIC_UNKNOWN} and are not followed further
  * @param overrides methods that override, or are overridden by, the declaration
- * @param tests call sites that live in test sources
+ * @param tests call sites that live in test sources; those matched by name only ({@code DYNAMIC_UNKNOWN}) are
+ *        possible tests
  * @param dynamicUnknowns call sites matched by name only; they must be reviewed by hand
  * @param riskScore 0 to 100
  * @param riskLevel {@code low}, {@code medium} or {@code high}
