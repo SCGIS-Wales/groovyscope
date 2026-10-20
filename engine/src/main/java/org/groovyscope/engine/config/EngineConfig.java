@@ -211,6 +211,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             boolean formatString, boolean combiner) {
         public static final TypeCheck DEFAULTS = new TypeCheck("strict", true, false, true, true, true);
 
+        public TypeCheck {
+            if (!java.util.Set.of("off", "lenient", "strict").contains(nullChecker)) {
+                throw new IllegalArgumentException("typecheck.nullChecker must be off, lenient or strict, not '"
+                        + nullChecker + "'");
+            }
+        }
+
         /** The original three settings; the regex, format-string and combiner checkers stay on. */
         public TypeCheck(String nullChecker, boolean sqlInjection, boolean purity) {
             this(nullChecker, sqlInjection, purity, true, true, true);

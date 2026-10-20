@@ -91,4 +91,16 @@ class EngineConfigSpec extends Specification {
         'README.md'           | false
         'groovy'              | false
     }
+
+    def 'the NullChecker mode is off, lenient or strict, nothing else (Q-17)'() {
+        when:
+        EngineConfig.fromJson('{"typecheck":{"nullChecker":"Strict "}}')
+
+        then:
+        def refused = thrown(IllegalArgumentException)
+        refused.message.contains('typecheck.nullChecker')
+
+        expect:
+        ['off', 'lenient', 'strict'].every { EngineConfig.fromJson("{\"typecheck\":{\"nullChecker\":\"${it}\"}}").typecheck().nullChecker() == it }
+    }
 }
