@@ -154,9 +154,11 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      *     {@link #RULE_ON} to switch on a left-out rule at CodeNarc's own priority
      * @param publishMaxPriority pushed diagnostics include CodeNarc findings only with this priority or more severe
      *     ({@code lint.publishMaxPriority}, 1 to 3); {@code check} and review requests are never filtered
+     * @param licenceHeader a regular expression every file linted with the default profile must contain (CodeNarc's
+     *     RequiredRegex, reported as {@code LicenceHeader}); {@code null} requires nothing
      */
     public record Lint(String ruleset, String jenkinsRuleset, String gradleRuleset, int failOnPriority,
-            boolean publish, Map<String, Integer> rules, int publishMaxPriority) {
+            boolean publish, Map<String, Integer> rules, int publishMaxPriority, String licenceHeader) {
         /** The value of a {@link #rules} entry that removes the rule. */
         public static final int RULE_OFF = 0;
         /** The value of a {@link #rules} entry that switches on a rule the profile leaves out. */
@@ -168,11 +170,12 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         public Lint {
             rules = Map.copyOf(rules == null ? Map.of() : rules);
             publishMaxPriority = Math.max(1, Math.min(3, publishMaxPriority));
+            licenceHeader = licenceHeader == null || licenceHeader.isBlank() ? null : licenceHeader;
         }
 
         /** The original four settings: the bundled Gradle profile, no rule overrides, the default publish threshold. */
         public Lint(String ruleset, String jenkinsRuleset, int failOnPriority, boolean publish) {
-            this(ruleset, jenkinsRuleset, null, failOnPriority, publish, Map.of(), DEFAULT_PUBLISH_MAX_PRIORITY);
+            this(ruleset, jenkinsRuleset, null, failOnPriority, publish, Map.of(), DEFAULT_PUBLISH_MAX_PRIORITY, null);
         }
 
         /**
@@ -515,7 +518,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         integer(lint.get("failOnPriority"), Lint.DEFAULTS.failOnPriority()),
                         bool(lint.get("publish"), Lint.DEFAULTS.publish()),
                         Lint.parseRules(lint.get("rules")),
-                        integer(lint.get("publishMaxPriority"), Lint.DEFAULT_PUBLISH_MAX_PRIORITY)),
+                        integer(lint.get("publishMaxPriority"), Lint.DEFAULT_PUBLISH_MAX_PRIORITY),
+                        string(lint.get("licenceHeader"), null)),
                 new TypeCheck(
                         string(typecheck.get("nullChecker"), TypeCheck.DEFAULTS.nullChecker()),
                         bool(typecheck.get("sqlInjection"), TypeCheck.DEFAULTS.sqlInjection()),

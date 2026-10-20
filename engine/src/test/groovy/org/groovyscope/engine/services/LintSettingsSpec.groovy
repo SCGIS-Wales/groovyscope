@@ -98,6 +98,28 @@ class LintSettingsSpec extends Specification {
         overridden.rules.size() == base.rules.size()
     }
 
+    def 'lint.licenceHeader requires the header in every default-profile file, and is off by default'() {
+        given:
+        def header = config('{"licenceHeader": "\\\\A// Copyright"}')
+
+        expect:
+        EngineConfig.DEFAULTS.lint().licenceHeader() == null
+        header.lint().licenceHeader() == '\\A// Copyright'
+        checked(header).findAll { it.code() == 'LicenceHeader' }.size() == 1
+        checked(header).find { it.code() == 'LicenceHeader' }.message().contains('licence header')
+        !checked(config('{}')).any { it.code() == 'LicenceHeader' }
+        !checked(config('{"licenceHeader": "\\\\Apackage sample"}')).any { it.code() == 'LicenceHeader' }
+    }
+
+    def 'a licence header pattern that does not compile is one lint-config finding, and no header is required'() {
+        when:
+        def found = checked(config('{"licenceHeader": "(["}'))
+
+        then:
+        !found.any { it.code() == 'LicenceHeader' }
+        found.find { it.code() == 'lint-config' }.message().contains('lint.licenceHeader is not a regular expression')
+    }
+
     def 'lint priorities follow severities'() {
         expect:
         CodeNarcAnalyzer.priorityOf(finding(Diagnostic.Severity.ERROR)) == 1

@@ -329,8 +329,9 @@ public final class QualityServices {
             return codeNarc.ruleSet(lint.gradleRuleset() == null ? CodeNarcAnalyzer.BUNDLED_GRADLE : lint.gradleRuleset(),
                     workspace.root(), CodeNarcAnalyzer.BUNDLED_GRADLE, lint.rules());
         }
-        return codeNarc.ruleSet(lint.ruleset() == null ? CodeNarcAnalyzer.BUNDLED_DEFAULT : lint.ruleset(),
+        RuleSet base = codeNarc.ruleSet(lint.ruleset() == null ? CodeNarcAnalyzer.BUNDLED_DEFAULT : lint.ruleset(),
                 workspace.root(), CodeNarcAnalyzer.BUNDLED_DEFAULT, lint.rules());
+        return lint.licenceHeader() == null ? base : codeNarc.withLicenceHeader(base, lint.licenceHeader());
     }
 
     /** Lint one document; {@code profile} may be {@code null} to pick one from the path. */

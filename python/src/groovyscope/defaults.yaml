@@ -54,6 +54,8 @@ lint:
   failOnPriority: 2       # check exits non-zero on violations with this priority or higher
   publish: true           # push lint findings to the editor/agent as diagnostics
   publishMaxPriority: 2   # only priority 1-2 findings are pushed; priority 3 stays available through check/review
+  licenceHeader: null     # a regular expression each default-profile file must contain (CodeNarc RequiredRegex,
+                          # reported as LicenceHeader), e.g. "\\A/\\*\\n \\* Copyright"; null requires none
   rules: {}               # per-rule overrides on top of the profile, e.g. {CompileStatic: off, LineLength: {priority: 3},
                           # Println: on}; on (or a priority) switches on a rule the profile leaves out
 diagnostics:
