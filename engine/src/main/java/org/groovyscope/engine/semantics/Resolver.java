@@ -16,10 +16,12 @@
 package org.groovyscope.engine.semantics;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassHelper;
 import org.codehaus.groovy.ast.ClassNode;
@@ -245,6 +247,10 @@ public final class Resolver {
             if (!closures.isEmpty()) {
                 return Resolution.of(canonical(closures.get(0)), Confidence.INFERRED);
             }
+            Resolution extension = extensionCall(receiver.type, name, count);
+            if (extension != null) {
+                return extension;
+            }
             if (receiver.exact && !receiver.type.isPrimaryClassNode()) {
                 // A known classpath type without such a method: probably a GDK extension or a typo.
                 return null;
@@ -252,6 +258,40 @@ public final class Resolver {
         }
         List<ASTNode> byName = workspaceMethodsNamed(name, count);
         return byName.isEmpty() ? null : new Resolution(byName, Confidence.DYNAMIC_UNKNOWN);
+    }
+
+    /**
+     * A call the receiver's type does not declare, answered by a workspace static method taking the receiver as its
+     * first parameter: an extension module method or a {@code @Category} method (static after canonicalisation).
+     * Whether it applies depends on registration or a {@code use} block at run time, so the answer is inferred at
+     * best; several candidates, or one whose first parameter is {@code Object}, are dynamic.
+     */
+    private Resolution extensionCall(ClassNode receiverType, String name, int count) {
+        int withSelf = count < 0 ? count : count + 1;
+        Set<String> receiverTypes = new HashSet<>();
+        for (ClassNode type : Members.hierarchy(receiverType)) {
+            receiverTypes.add(type.getName());
+        }
+        List<ASTNode> matches = new ArrayList<>();
+        boolean objectSelf = false;
+        for (NodeEntry declaration : index.declarations()) {
+            if (declaration.node() instanceof MethodNode method && !(method instanceof ConstructorNode)
+                    && method.isStatic() && method.getName().equals(name) && method.getParameters().length > 0
+                    && Members.accepts(method, withSelf)) {
+                ClassNode self = method.getParameters()[0].getType();
+                if (ClassHelper.isObjectType(self) || ClassHelper.isDynamicTyped(self)) {
+                    objectSelf = true;
+                    matches.add(method);
+                } else if (receiverTypes.contains(self.getName())) {
+                    matches.add(method);
+                }
+            }
+        }
+        if (matches.isEmpty()) {
+            return null;
+        }
+        boolean single = matches.size() == 1 && !objectSelf;
+        return new Resolution(matches, single ? Confidence.INFERRED : Confidence.DYNAMIC_UNKNOWN);
     }
 
     /**
