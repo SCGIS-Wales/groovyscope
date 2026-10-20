@@ -13,7 +13,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
@@ -33,9 +32,11 @@ from groovyscope import (
     kiro_agent,
     kiro_steer,
     practices,
+    process,
     profiles,
     provision,
     relay,
+    render,
     reports,
     rpc,
     test_results,
@@ -44,17 +45,17 @@ from groovyscope import (
     workspace_init,
 )
 from groovyscope import classpath as classpath_export
+from groovyscope import config as config_module
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope import fetch as fetch_engine
+from groovyscope import paths as workspace_paths
 from groovyscope.config import dump_yaml, load_config, load_config_with_notes
 from groovyscope.doctor import build_report, has_failures
 from groovyscope.edits import (
-    FileChangedError,
-    FileEdit,
     changed_line_count,
     counts_by_path,
     file_edits,
-    write_document,
+    write_if_unchanged,
 )
 from groovyscope.jar import locate_jar, read_manifest
 from groovyscope.java import JdkInfo, discover
@@ -73,9 +74,9 @@ from groovyscope.kiro import (
 from groovyscope.launch import MIN_JDK_FOR_AUTO_CDS, build_engine_command
 from groovyscope.render import compact_json, table
 
-LOG_ENV = "GROOVYSCOPE_LOG"
+LOG_ENV = config_module.LOG_ENV
 LOG = logging.getLogger("groovyscope.cli")
-CONFIG_ENV = "GROOVYSCOPE_CONFIG_JSON"
+CONFIG_ENV = config_module.CONFIG_JSON_ENV
 BASELINE_PATH = Path(".groovyscope") / "contract-baseline.json"
 LEVEL_MARKS = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "info": "info"}
 
@@ -110,7 +111,7 @@ def apply_config_logging(obj: dict[str, Any], effective: dict[str, Any]) -> None
     "config_path",
     type=click.Path(path_type=Path, dir_okay=False),
     default=None,
-    envvar="GROOVYSCOPE_CONFIG",
+    envvar=config_module.CONFIG_FILE_ENV,
     help="Path to .groovyscope.yaml (default: ./.groovyscope.yaml when present).",
 )
 @click.option(
@@ -719,7 +720,7 @@ def config_hash(obj: dict[str, Any]) -> str:
     return hashlib.sha256(str(obj.get("engine_config") or "").encode("utf-8")).hexdigest()
 
 
-RELOAD_METHOD = "groovyscope/reloadConfig"
+RELOAD_METHOD = rpc.RELOAD_METHOD
 RELOAD_TIMEOUT_SECONDS = 60.0
 
 
@@ -836,17 +837,6 @@ def run_through_daemon(obj: dict[str, Any], command: list[str], effective: dict[
     return None
 
 
-def write_if_unchanged(edit: FileEdit, refused: list[str]) -> bool:
-    """Writes the edit unless the file changed on disk since it was read, in which case the file joins ``refused``
-    with the reason and nothing is written. True when written."""
-    try:
-        write_document(edit["path"], edit["after"], expected=edit["before"])
-    except FileChangedError as exc:
-        refused.append(f"{edit['path'].as_uri()} ({exc})")
-        return False
-    return True
-
-
 def exec_process(path: str, argv: Sequence[str]) -> None:
     """Replace this process with the engine (never returns on success)."""
     os.execv(path, list(argv))  # noqa: S606 - deliberate: the CLI becomes the engine process
@@ -871,7 +861,7 @@ def serve_mcp(*args: Any, **kwargs: Any) -> int:
 
 _MCP_SERVE: Callable[..., int] = serve_mcp
 RPC_TIMEOUT_SECONDS = 600.0
-SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
+SEVERITY_NAMES = render.SEVERITY_NAMES
 POSITION_PARTS = 3  # path:line:col
 
 
@@ -893,11 +883,14 @@ def start_daemon_for(obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
 
 
 def to_uris(root: Path, paths: Sequence[Path]) -> list[str]:
-    return [(root / path).resolve().as_uri() for path in paths]
+    """The URIs of the files a command names; one outside the workspace stops the command."""
+    try:
+        return workspace_paths.to_uris(root, paths)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
-def uri_to_path(uri: str) -> Path:
-    return Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+uri_to_path = workspace_paths.uri_to_path
 
 
 def engine_call(
@@ -1211,7 +1204,7 @@ def review_command(
 def run_build(command: Sequence[str], cwd: Path, timeout: int) -> tuple[int, str]:
     """Run the project's build (``groovyscope verify``); the exit code and the combined output."""
     try:
-        done = subprocess.run(list(command), cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
+        done = process.run_text(command, cwd=cwd, timeout=timeout)
     except FileNotFoundError as exc:
         return (-1, f"cannot run {command[0]}: {exc}")
     except subprocess.TimeoutExpired:
@@ -2493,12 +2486,16 @@ def checks_prepare(obj: dict[str, Any], directory: Path | None, *, force: bool) 
         click.echo(line)
 
 
+HOOK_PROBE_SECONDS = 120.0  # far above a healthy answer; only a hung hook reaches it
+
+
 def hook_seconds(root: Path) -> float:
     """How long `groovyscope hook` takes to start and answer a Stop event in ``root``: what Kiro waits for after
     every write and at the end of every turn."""
     command = [sys.executable, "-c", "from groovyscope.cli import main; main()", "--root", str(root), "hook"]
     started = time.monotonic()
-    subprocess.run([*command, "--event", "stop"], input="{}", capture_output=True, text=True, check=False)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.run_text([*command, "--event", "stop"], stdin_text="{}", timeout=HOOK_PROBE_SECONDS)
     return time.monotonic() - started
 
 

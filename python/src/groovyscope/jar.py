@@ -10,12 +10,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import daemon
+from groovyscope import config, daemon
 
 JAR_DIR = Path(__file__).resolve().parent / "_jar"
 MANIFEST_NAME = "_manifest.json"
 VERSION_RESOURCE = "org/groovyscope/engine/engine-version.properties"
-JAR_ENV = "GROOVYSCOPE_JAR"
+JAR_ENV = config.JAR_ENV
 _CHUNK = 1 << 20
 
 

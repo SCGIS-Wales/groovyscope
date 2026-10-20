@@ -17,6 +17,7 @@ HEADER_END = b"\r\n\r\n"
 DEFAULT_TIMEOUT = 10.0
 MAX_FRAME_BYTES = 512 * 1024 * 1024  # a reply larger than this is refused rather than buffered
 MAX_HEADER_BYTES = 8192
+RELOAD_METHOD = "groovyscope/reloadConfig"  # the engine method that swaps in a new configuration
 DAEMON_EXITING_CODE = -32099  # the engine answers this, "daemon is exiting ...", while it shuts down: reconnect
 DAEMON_EXITING_PREFIX = "daemon is exiting"
 

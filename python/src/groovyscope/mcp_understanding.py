@@ -12,7 +12,7 @@ from typing import Any
 from groovyscope import diagram, interaction
 from groovyscope import graph as graphs
 from groovyscope.kiro import write_atomically
-from groovyscope.mcp_server_support import Call, relative_path, to_uri
+from groovyscope.paths import Call, relative_path, to_uri
 
 NAMING_CODES = tuple(f"GS{n:03d}" for n in range(20, 28))
 GRAPH_KINDS = ("extends", "implements", "has", "uses", "calls")

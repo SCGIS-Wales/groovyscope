@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from groovyscope.mcp_server_support import Call, Paged, clip, relative_path, to_uri
+from groovyscope.paths import Call, Paged, clip, relative_path, to_uri
 
 FIND_CODE_KINDS = (
     "catch",

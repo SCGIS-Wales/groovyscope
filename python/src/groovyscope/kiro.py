@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
 from groovyscope import __version__, atomic, kiro_agent, skills
-from groovyscope.config import deep_merge
+from groovyscope.config import LOG_ENV, deep_merge
 
 # (template name inside the package, destination relative to the workspace root)
 KIRO_FILES: tuple[tuple[str, str], ...] = (
@@ -141,7 +141,7 @@ def merge_content(
 # What a user tunes on the groovyscope server entry and a repair must not reset: a raised tool timeout, tools a
 # team switched off, tools approved without a prompt, a disabled server, a log level in the environment.
 USER_TUNED_KEYS = ("timeout", "requestTimeout", "disabledTools", "autoApprove", "disabled")
-USER_TUNED_ENV = ("GROOVYSCOPE_LOG",)
+USER_TUNED_ENV = (LOG_ENV,)
 
 
 def keep_user_tuning(current: Mapping[str, Any], merged: dict[str, Any]) -> dict[str, Any]:

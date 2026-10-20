@@ -17,6 +17,7 @@ from typing import Any, TypedDict
 
 import yaml
 
+from groovyscope import config
 from groovyscope.config import CONFIG_FILENAME
 
 RESOURCE_DIR = "_benchmark"
@@ -24,7 +25,7 @@ MANIFEST = "manifest.json"
 STAMP = ".groovyscope-benchmark.json"
 USER_DIR = Path(".groovyscope") / "benchmark"
 CORPUS_DIR = "codenarc"
-BENCHMARK_DIR_ENV = "GROOVYSCOPE_BENCHMARK_DIR"
+BENCHMARK_DIR_ENV = config.BENCHMARK_DIR_ENV
 README = """# groovyscope benchmark corpus
 
 CodeNarc {version} `src/main`, Apache License 2.0 (see LICENSE.txt and NOTICE.txt), unpacked by groovyscope from

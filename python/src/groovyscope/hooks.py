@@ -15,6 +15,7 @@ from typing import Any, TypedDict
 
 from groovyscope import atomic
 from groovyscope import config as config_module
+from groovyscope.paths import GROOVY_SUFFIXES
 
 # Tool ids Kiro uses for file writes, in V2 and V3 catalogues; anything else is not a write.
 WRITE_TOOLS = frozenset({"write", "fs_write", "write_file", "str_replace", "fs_append", "append"})
@@ -29,7 +30,6 @@ EVENT_NAMES = {
     "pretooluse": "preToolUse",
     "sessionend": "sessionEnd",
 }
-GROOVY_SUFFIXES = (".groovy", ".gvy", ".gy", ".gsh", ".gradle")
 ERROR_LEVEL = 1
 PORCELAIN_PATH_OFFSET = 3  # `XY path`: two status letters and a space
 WARNING_LEVEL = 2

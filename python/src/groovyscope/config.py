@@ -18,16 +18,17 @@ from groovyscope import trust
 CONFIG_FILENAME = ".groovyscope.yaml"
 ENV_PREFIX = "GROOVYSCOPE_"
 ENV_SEPARATOR = "__"
-# Environment variables that configure the CLI itself rather than the YAML document.
+# The environment variables that configure groovyscope itself rather than the YAML document; every module reads
+# the names from here.
+JAR_ENV = "GROOVYSCOPE_JAR"  # an engine JAR instead of the bundled one
+LOG_ENV = "GROOVYSCOPE_LOG"  # log level
+CONFIG_FILE_ENV = "GROOVYSCOPE_CONFIG"  # an explicit configuration file
+CONFIG_JSON_ENV = "GROOVYSCOPE_CONFIG_JSON"  # the engine configuration a front end hands to the engine
+SOCKET_DIR_ENV = "GROOVYSCOPE_SOCKET_DIR"  # where daemon sockets live
+CACHE_DIR_ENV = "GROOVYSCOPE_CACHE_DIR"  # where caches (class data sharing archives) live
+BENCHMARK_DIR_ENV = "GROOVYSCOPE_BENCHMARK_DIR"  # where the benchmark corpus is unpacked
 RESERVED_ENV = frozenset(
-    {
-        "GROOVYSCOPE_JAR",
-        "GROOVYSCOPE_LOG",
-        "GROOVYSCOPE_CONFIG",
-        "GROOVYSCOPE_CONFIG_JSON",
-        "GROOVYSCOPE_SOCKET_DIR",
-        "GROOVYSCOPE_CACHE_DIR",
-    }
+    {JAR_ENV, LOG_ENV, CONFIG_FILE_ENV, CONFIG_JSON_ENV, SOCKET_DIR_ENV, CACHE_DIR_ENV, BENCHMARK_DIR_ENV}
 )
 
 Config = dict[str, Any]

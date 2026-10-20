@@ -16,10 +16,10 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import rpc, selfheal
+from groovyscope import config, rpc, selfheal
 
-SOCKET_DIR_ENV = "GROOVYSCOPE_SOCKET_DIR"
-CACHE_DIR_ENV = "GROOVYSCOPE_CACHE_DIR"
+SOCKET_DIR_ENV = config.SOCKET_DIR_ENV
+CACHE_DIR_ENV = config.CACHE_DIR_ENV
 STATUS_METHOD = "groovyscope/status"
 SHUTDOWN_METHOD = "groovyscope/shutdownDaemon"
 START_TIMEOUT_SECONDS = 60.0

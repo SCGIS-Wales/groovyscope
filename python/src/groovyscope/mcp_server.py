@@ -28,6 +28,7 @@ from groovyscope import (
     mcp_search,
     mcp_understanding,
     practices,
+    render,
     reports,
     rpc,
     skills,
@@ -36,16 +37,16 @@ from groovyscope import (
 from groovyscope import classpath as classpath_export
 from groovyscope import test_results as test_results_module
 from groovyscope.edits import (
-    FileChangedError,
     FileEdit,
     changed_line_count,
     counts_by_path,
     file_edits,
     uri_path,
     write_document,
+    write_if_unchanged,
 )
 from groovyscope.kiro import write_atomically
-from groovyscope.mcp_server_support import (
+from groovyscope.paths import (
     Call,
     Paged,
     clip,
@@ -67,7 +68,7 @@ INSTRUCTIONS = (
     "review on the changed files and fix what it reports. GS100 means no classpath: suggest `groovyscope classpath`. "
     "Call profile_status before editing a file a runtime profile governs. The groovy-* prompts hold the recipes."
 )
-SEVERITY_NAMES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
+SEVERITY_NAMES = render.SEVERITY_NAMES
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "hint": 3}
 KIND_FILTERS = {
     "class": {"class", "interface", "trait", "enum", "record", "annotation"},
@@ -1190,10 +1191,8 @@ def build_tools(
     return tools
 
 
-def compact_json(value: Any) -> str:
-    """JSON without indentation or spaces after separators: the SDK's default pretty printing costs about a
-    third more characters, and every character reaches the agent's context."""
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
+# render.compact_json in the order a tool built its result (the summary first).
+compact_json = functools.partial(render.compact_json, sort_keys=False)
 
 
 def respond(
@@ -1515,7 +1514,7 @@ def compact_registered_schema(server: MCPServer, name: str) -> None:
 
 
 Configuration = Callable[[], tuple[str, str] | None]
-RELOAD_METHOD = "groovyscope/reloadConfig"
+RELOAD_METHOD = rpc.RELOAD_METHOD
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 100.0  # under Kiro's 120 s tool budget
 DEFAULT_MAX_IN_FLIGHT = 4
 RELOAD_TIMEOUT_SECONDS = 60.0
@@ -1550,17 +1549,6 @@ def with_decision(result: dict[str, Any], decision: str) -> dict[str, Any]:
     if declined(decision):
         result["note"] = "the user said no; nothing was written"
     return result
-
-
-def write_if_unchanged(edit: FileEdit, refused: list[str]) -> bool:
-    """Writes the edit unless the file changed on disk since it was read; then it joins ``refused`` with the
-    reason and nothing is written. True when written."""
-    try:
-        write_document(edit["path"], edit["after"], expected=edit["before"])
-    except FileChangedError as exc:
-        refused.append(f"{edit['path'].as_uri()} ({exc})")
-        return False
-    return True
 
 
 def request_limits(settings: Mapping[str, Any] | None) -> tuple[float, int]:
