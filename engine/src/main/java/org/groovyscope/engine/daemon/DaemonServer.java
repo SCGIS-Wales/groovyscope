@@ -21,7 +21,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
-import java.nio.channels.Channels;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
@@ -303,7 +302,7 @@ public final class DaemonServer implements Closeable {
 
     private void serve(SocketChannel channel) {
         GroovyscopeLanguageServer front = null;
-        try (InputStream in = Channels.newInputStream(channel); OutputStream out = Channels.newOutputStream(channel)) {
+        try (InputStream in = ChannelStreams.input(channel); OutputStream out = ChannelStreams.output(channel)) {
             front = new GroovyscopeLanguageServer(
                     code -> closeQuietly(channel), socketPath.toAbsolutePath().getParent(), config, registry,
                     this::requestExit, registry::config, registry::reload, executors);

@@ -13,6 +13,10 @@ updates:
     directory: "/engine"
     schedule:
       interval: "weekly"
+    ignore:
+      # Xtext 2.41 and later are compiled for Java 21; the engine supports Java 17 (checkJava17Bytecode).
+      - dependency-name: "org.eclipse.xtext:org.eclipse.xtext.xbase.lib"
+        versions: [">= 2.41.0"]
     groups:
       gradle-minor-patch:
         update-types: ["minor", "patch"]

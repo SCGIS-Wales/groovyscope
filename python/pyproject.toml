@@ -7,8 +7,9 @@ name = "groovyscope"
 version = "0.24.3"
 description = "Groovy 5/6 code intelligence for AI coding agents: LSP and MCP front ends over one JVM engine"
 readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+# The wheel bundles the engine JAR: its libraries' licences are listed in THIRD-PARTY-NOTICES.md.
+license = "Apache-2.0 AND EPL-2.0 AND EPL-1.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT"
+license-files = ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"]
 requires-python = ">=3.12"
 authors = [{ name = "SCGIS-Wales" }]
 keywords = ["groovy", "lsp", "mcp", "kiro", "code-intelligence", "codenarc"]

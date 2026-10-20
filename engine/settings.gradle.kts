@@ -10,14 +10,15 @@ import org.gradle.api.provider.ValueSourceParameters
 rootProject.name = "groovyscope-engine"
 
 // ---------------------------------------------------------------------------------------------------------
-// CodeNarc is not pinned. Every build asks Maven Central for the latest stable CodeNarc release and embeds
-// that one; `codenarc` in gradle/libs.versions.toml is only the floor (the oldest release the engine was
-// verified against) and the offline fallback. The resolved version is expanded into the engine
-// (engine-version.properties, the JAR manifest) so `groovyscope version`, `doctor` and `status` report it.
+// CodeNarc is pinned in gradle/libs.versions.toml, so two builds of one commit embed the same release;
+// Dependabot proposes newer ones. The lookup of the latest stable release on Maven Central is opt in: the
+// weekly `codenarc canary` workflow builds and tests with it, so a new release is tried before the bump PR.
+// The version used is expanded into the engine (engine-version.properties, the JAR manifest) so
+// `groovyscope version`, `doctor` and `status` report it.
 //
-//   -PcodenarcVersion=4.0.0 (or GROOVYSCOPE_CODENARC_VERSION)  pin a version for this build
-//   -PcodenarcResolve=false, or --offline                        skip the lookup, use the floor
-//   -PcodenarcMetadataUrl=https://mirror/.../maven-metadata.xml  read the metadata from a mirror
+//   -PcodenarcResolve=true                                        use the latest stable release (the canary)
+//   -PcodenarcVersion=x.y.z (or GROOVYSCOPE_CODENARC_VERSION)     use that version for this build
+//   -PcodenarcMetadataUrl=https://mirror/.../maven-metadata.xml   read the metadata from a mirror
 //
 // A ValueSource is re-evaluated on every build, so a cached configuration is invalidated when a new release
 // appears (the configuration cache is on in gradle.properties).
@@ -39,7 +40,7 @@ abstract class LatestStableCodenarc : ValueSource<String, LatestStableCodenarc.P
             return "$pin\tpinned by codenarcVersion"
         }
         if (!parameters.resolve.get()) {
-            return "$floor\tfloor from libs.versions.toml (lookup disabled or offline build)"
+            return "$floor\tpinned in libs.versions.toml"
         }
         val url = parameters.metadataUrl.get()
         return try {
@@ -89,7 +90,7 @@ val codenarcFloor = catalogue.map { text ->
     Regex("""(?m)^codenarc\s*=\s*"([^"]+)"""").find(text)?.groupValues?.get(1)
         ?: error("gradle/libs.versions.toml has no codenarc version (the floor)")
 }
-val resolveWanted = providers.gradleProperty("codenarcResolve").map { it != "false" }.orElse(true)
+val resolveWanted = providers.gradleProperty("codenarcResolve").map { it == "true" }.orElse(false)
 val offline = gradle.startParameter.isOffline
 
 val codenarcResolution = providers.of(LatestStableCodenarc::class) {

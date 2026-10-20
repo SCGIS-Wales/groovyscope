@@ -1,3 +1,8 @@
+import java.util.Calendar
+import java.util.GregorianCalendar
+import java.util.Properties
+import java.util.zip.ZipFile
+
 plugins {
     java
     groovy
@@ -28,17 +33,18 @@ dependencies {
     }
     runtimeOnly("org.apache.groovy:groovy-xml:${libs.versions.groovy.get()}")
     runtimeOnly("org.apache.groovy:groovy-json:${libs.versions.groovy.get()}")
-    runtimeOnly("org.apache.groovy:groovy-templates:${libs.versions.groovy.get()}")
     runtimeOnly("org.apache.groovy:groovy-groovydoc:${libs.versions.groovy.get()}")
-    runtimeOnly("org.apache.groovy:groovy-ant:${libs.versions.groovy.get()}")
     // Groovy modules workspace code commonly uses without declaring them; visible through
-    // WorkspaceParentClassLoader so their types resolve and the Groovy 6 checkers can see them.
-    for (module in listOf("groovy-sql", "groovy-datetime", "groovy-nio", "groovy-dateutil", "groovy-test", "groovy-contracts")) {
+    // WorkspaceParentClassLoader so their types resolve and the Groovy 6 checkers can see them. The engine itself
+    // needs none of them (its tests pass without templates and ant): a script using SimpleTemplateEngine or
+    // AntBuilder would otherwise report unresolved classes when no classpath is configured.
+    for (module in listOf("groovy-sql", "groovy-datetime", "groovy-nio", "groovy-dateutil", "groovy-test", "groovy-contracts",
+            "groovy-templates", "groovy-ant")) {
         runtimeOnly("org.apache.groovy:$module:${libs.versions.groovy.get()}")
     }
 
     testImplementation(libs.spock.core)
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -73,7 +79,7 @@ tasks.test {
 }
 
 jacoco {
-    toolVersion = "0.8.14"
+    toolVersion = libs.versions.jacoco.get()
 }
 
 tasks.jacocoTestReport {
@@ -114,8 +120,21 @@ tasks.shadowJar {
     // the nio, datetime, dateutil, sql and macro extension methods the type checker (and FormatStringChecker) need.
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
-    mergeGroovyExtensionModules()
-    filesNotMatching(listOf("META-INF/services/**", "META-INF/groovy/**")) {
+    // Shadow's own Groovy extension merge stamps the build time into the descriptor; this one writes no date, so two
+    // builds of one commit give byte-identical JARs.
+    transform(ReproducibleGroovyExtensionModules())
+    // Every bundled Apache NOTICE is kept (Apache-2.0 section 4(d)), merged into one; the inputs are fixed, so the
+    // merged file is the same in every build.
+    transform(com.github.jengelman.gradle.plugins.shadow.transformers.ApacheNoticeResourceTransformer::class.java) {
+        projectName.set("groovyscope")
+        organizationName.set("SCGIS-Wales and contributors")
+        organizationURL.set("https://github.com/SCGIS-Wales/groovyscope")
+        inceptionYear.set("2026")
+    }
+    from(layout.projectDirectory.file("../THIRD-PARTY-NOTICES.md")) {
+        into("META-INF")
+    }
+    filesNotMatching(listOf("META-INF/services/**", "META-INF/groovy/**", "META-INF/NOTICE*")) {
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     }
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/*.EC")
@@ -128,4 +147,71 @@ tasks.assemble {
     dependsOn(tasks.shadowJar)
 }
 
+// The engine supports Java 17: no class in the shaded JAR may need a newer runtime (a dependency compiled for 21
+// fails only when its classes load, which may be deep in a request). Multi-release entries are exempt.
+val checkJava17Bytecode = tasks.register("checkJava17Bytecode") {
+    val jar = tasks.shadowJar.flatMap { it.archiveFile }
+    inputs.file(jar)
+    doLast {
+        val java17ClassMajor = 61
+        val newer = mutableListOf<String>()
+        ZipFile(jar.get().asFile).use { zip ->
+            for (entry in zip.entries()) {
+                if (!entry.name.endsWith(".class") || entry.name.startsWith("META-INF/versions/")) continue
+                val header = zip.getInputStream(entry).use { it.readNBytes(8) }
+                val major = ((header[6].toInt() and 0xff) shl 8) or (header[7].toInt() and 0xff)
+                if (major > java17ClassMajor) newer += "${entry.name} (class version $major)"
+            }
+        }
+        check(newer.isEmpty()) { "classes that need a Java newer than 17:\n" + newer.take(20).joinToString("\n") }
+    }
+}
+
+tasks.check {
+    dependsOn(checkJava17Bytecode)
+}
+
 // The CycloneDX plugin (3.x) writes build/reports/cyclonedx/bom.json and bom.xml with its defaults.
+
+/**
+ * Merges every module's Groovy extension descriptor (extension and static extension classes, in the order the jars
+ * are read) into one descriptor, written without the date `Properties.store` would add.
+ */
+class ReproducibleGroovyExtensionModules : com.github.jengelman.gradle.plugins.shadow.transformers.ResourceTransformer {
+    private val extensionClasses = linkedSetOf<String>()
+    private val staticExtensionClasses = linkedSetOf<String>()
+
+    override fun canTransformResource(element: FileTreeElement): Boolean =
+        element.path == DESCRIPTOR || element.path == LEGACY_DESCRIPTOR
+
+    override fun transform(context: com.github.jengelman.gradle.plugins.shadow.transformers.TransformerContext) {
+        val properties = Properties()
+        context.inputStream.use { properties.load(it) }
+        extensionClasses += names(properties.getProperty("extensionClasses"))
+        staticExtensionClasses += names(properties.getProperty("staticExtensionClasses"))
+    }
+
+    override fun hasTransformedResource(): Boolean = extensionClasses.isNotEmpty() || staticExtensionClasses.isNotEmpty()
+
+    override fun modifyOutputStream(os: org.apache.tools.zip.ZipOutputStream, preserveFileTimestamps: Boolean) {
+        val entry = org.apache.tools.zip.ZipEntry(DESCRIPTOR)
+        entry.time = GregorianCalendar(1980, Calendar.FEBRUARY, 1, 0, 0, 0).timeInMillis
+        os.putNextEntry(entry)
+        val text = buildString {
+            append("moduleName=MergedByShadowJar\n")
+            append("moduleVersion=1.0.0\n")
+            append("extensionClasses=").append(extensionClasses.joinToString(",")).append('\n')
+            append("staticExtensionClasses=").append(staticExtensionClasses.joinToString(",")).append('\n')
+        }
+        os.write(text.toByteArray(Charsets.ISO_8859_1))
+        os.closeEntry()
+    }
+
+    private fun names(value: String?): List<String> =
+        value.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    companion object {
+        const val DESCRIPTOR = "META-INF/groovy/org.codehaus.groovy.runtime.ExtensionModule"
+        const val LEGACY_DESCRIPTOR = "META-INF/services/org.codehaus.groovy.runtime.ExtensionModule"
+    }
+}

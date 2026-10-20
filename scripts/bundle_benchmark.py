@@ -32,9 +32,12 @@ def corpus_files(checkout: Path) -> list[Path]:
         msg = f"{checkout} has no src/main folder; point --checkout at a CodeNarc source checkout"
         raise ValueError(msg)
     files = [p for p in main.rglob("*") if p.is_file() and p.suffix not in SKIPPED_SUFFIXES]
+    # The corpus is CodeNarc's source, Apache-2.0: it ships only with its licence and notice.
     for name in ("LICENSE.txt", "NOTICE.txt"):
-        if (checkout / name).is_file():
-            files.append(checkout / name)
+        if not (checkout / name).is_file():
+            msg = f"{checkout} has no {name}; the corpus is redistributed only with CodeNarc's licence and notice"
+            raise ValueError(msg)
+        files.append(checkout / name)
     return sorted(files)
 
 

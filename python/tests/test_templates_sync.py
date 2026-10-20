@@ -30,6 +30,9 @@ def pairs() -> list[tuple[Path, Path]]:
     found.append(
         (PACKAGE / "_templates" / "config" / "practices" / "practices.json", engine / "practices" / "practices.json")
     )
+    # The wheel's licence files are the repository's (the sdist and wheel are built from python/).
+    for name in ("LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"):
+        found.append((PACKAGE.parents[1] / name, REPO / name))
     return found
 
 

@@ -2,13 +2,9 @@
 # SCGIS-Wales/groovyscope is registered against; do not rename it without updating PyPI.
 name: Publish
 
+# Only dispatched (by release-please.yml or by hand): never called as a reusable workflow, because PyPI checks that
+# the signing certificate names this file.
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Release tag to build and publish (for example v0.1.0)
-        required: true
-        type: string
   workflow_dispatch:
     inputs:
       tag:
@@ -19,13 +15,78 @@ on:
 permissions:
   contents: read
 
+# One publish per tag at a time; a second dispatch of the same tag waits instead of racing the first.
+concurrency:
+  group: publish-${{ inputs.tag }}
+  cancel-in-progress: false
+
 env:
   GRADLE_OPTS: -Dorg.gradle.daemon=false
 
 jobs:
+  # Publishes only what CI has passed: the tag must be a release tag, name the version every build file declares,
+  # and its commit must have green checks (they may still be running right after the release PR merged).
+  verify:
+    name: verify the tag and its checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Check out ${{ inputs.tag }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tag is a release tag naming the declared version
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG is not a release tag (vX.Y.Z)"; exit 1; }
+          git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null || { echo "::error::no tag $TAG"; exit 1; }
+          version="${TAG#v}"
+          python_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' python/pyproject.toml | head -1)
+          engine_version=$(sed -n 's/^version=\(.*\)$/\1/p' engine/gradle.properties | head -1)
+          for declared in "$python_version" "$engine_version"; do
+            [ "$declared" = "$version" ] || { echo "::error::$TAG does not match the declared version $declared"; exit 1; }
+          done
+
+      - name: The tagged commit passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          required=("build (ubuntu-latest)" "build (macos-latest)" "python 3.13" "python 3.14" "python 3.15"
+            "analyze (python)" "analyze (java-kotlin)")
+          for attempt in $(seq 1 90); do
+            runs=$(gh api "repos/$GH_REPO/commits/$sha/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {name, status, conclusion}]')
+            pending=0
+            for name in "${required[@]}"; do
+              state=$(jq -r --arg n "$name" '[.[] | select(.name == $n)] | sort_by(.status != "completed") | .[0] // {} |
+                "\(.status // "missing") \(.conclusion // "")"' <<<"$runs")
+              case "$state" in
+                "completed success") ;;
+                completed*) echo "::error::check '$name' on $sha: $state"; exit 1 ;;
+                *) pending=1 ;;
+              esac
+            done
+            [ "$pending" = 0 ] && { echo "every required check passed on $sha"; exit 0; }
+            sleep 30
+          done
+          echo "::error::the required checks on $sha did not finish within 45 minutes"
+          exit 1
+
   build:
     name: build artefacts
+    needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out ${{ inputs.tag }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +145,9 @@ jobs:
           cp engine/build/libs/groovyscope-engine-*-all.jar release/
           cp engine/build/reports/cyclonedx/bom.json release/groovyscope-engine-sbom.cdx.json
           cp sbom/groovyscope-python-sbom.cdx.json release/
+          # The runtime dependencies with every hash, for installs that verify them (the Homebrew formula).
+          (cd python && uv export --frozen --no-dev --no-emit-project --format requirements-txt) \
+            > release/groovyscope-requirements.txt
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
 
@@ -107,6 +171,7 @@ jobs:
     name: attest provenance
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       attestations: write
@@ -125,11 +190,15 @@ jobs:
             release/*.whl
             release/*.tar.gz
             release/*.jar
+            release/SHA256SUMS.txt
+            release/*.cdx.json
+            release/groovyscope-requirements.txt
 
   pypi:
     name: publish to PyPI (trusted publishing)
     needs: [build, attest]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: pypi
       url: https://pypi.org/project/groovyscope/
@@ -149,10 +218,13 @@ jobs:
           attestations: true
           print-hash: true
 
+  # After PyPI, so a release page never offers files PyPI refused; without --clobber an asset already attached (a
+  # second run of the same tag) is never replaced.
   release-assets:
     name: attach assets to the GitHub Release
-    needs: [build, attest]
+    needs: [build, attest, pypi]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -167,4 +239,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
-        run: gh release upload "$TAG" release/* --clobber
+        run: gh release upload "$TAG" release/*

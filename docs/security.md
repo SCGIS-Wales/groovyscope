@@ -103,12 +103,23 @@ nothing else.
   you trust for that. `groovyscope jdk install` (and `jdk.autoProvision`, off by default) takes the latest
   Temurin build from the Adoptium API or the latest Amazon Corretto build from corretto.aws and verifies the
   checksum the vendor publishes before unpacking; archive members cannot escape the target folder.
-- The Homebrew formula installs the PyPI sdist (bundled JAR, same checksums) and Homebrew's `openjdk@21`.
-- Releases publish to PyPI through trusted publishing (OIDC, no API tokens) with provenance attestations for
-  the wheel, sdist and JAR, plus CycloneDX SBOMs on the GitHub Release. The SBOM tool is pinned and runs before
-  the build, apart from the files that are attested and published.
+- The Homebrew formula installs the PyPI sdist (bundled JAR, same checksums) and Homebrew's `openjdk@21`; the
+  Python dependencies come from the release's `groovyscope-requirements.txt` (exported from `uv.lock` with every
+  hash, attested) with `--require-hashes`, and the package itself with `--no-deps`.
+- A release publishes only a tag that names the version every build file declares and whose commit passed CI
+  (the publish workflow waits for the checks and refuses a red one). PyPI receives it through trusted publishing
+  (OIDC, no API tokens), with provenance attestations for the wheel, sdist, JAR, checksums, SBOMs and hashed
+  requirements; the GitHub Release gets its assets only after PyPI accepted the upload, and never replaces one.
+  The SBOM tool is pinned and runs before the build, apart from the files that are attested and published.
+- Two builds of one commit produce byte-identical engine JARs (fixed timestamps and file order, and the merged
+  Groovy extension descriptor written without a date). CodeNarc is pinned like every other dependency.
+- The wheel's licence metadata (`Apache-2.0 AND EPL-2.0 AND EPL-1.0 AND BSD-3-Clause AND BSD-2-Clause AND MIT`)
+  covers what the JAR bundles; `THIRD-PARTY-NOTICES.md` lists each component, and the Apache NOTICE files of the
+  bundled libraries are merged into the JAR's.
 - Third-party GitHub Actions are pinned to commit SHAs; Dependabot keeps them and the Gradle and uv
-  dependencies current. CodeQL runs on every PR for Python and Java.
+  dependencies current. CodeQL runs on every PR for Python, Java and the workflows themselves; zizmor audits the
+  workflows, a PR that adds a dependency with a known high or critical vulnerability fails, and the Gradle
+  dependency graph is submitted from `main` so Dependabot alerts cover the engine too.
 
 ## Reporting
 

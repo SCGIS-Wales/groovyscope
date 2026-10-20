@@ -697,3 +697,8 @@ Check monthly (`gh api repos/apache/groovy/pulls/2936` and the Groovy release no
   checker is isolated; the symbol store runs in WAL mode. The front end reconnects on a broken channel, writes the
   engine configuration to a private file, runs the classpath export in the background and never starts a JVM
   after a crash loop refusal.
+- 2026-10-19: Phase 3 of `docs/improvement-plan.md`: release, build and supply chain. Engine JARs are
+  byte-identical across builds; CodeNarc is pinned with a weekly canary; the publish workflow releases only a
+  verified tag whose commit passed CI; integration tests run on JDK 17 to 25; dependency review, zizmor and
+  CodeQL for workflows; licence metadata and notices cover the bundled libraries; the Homebrew formula installs
+  by hash. Lockfiles, verification metadata and Scorecard wait for the owner (section 13 of the plan).

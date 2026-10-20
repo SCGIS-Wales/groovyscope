@@ -702,6 +702,15 @@ public final class QualityServices {
                 found.put(uri, lint(uri, text, profile));
             }
         }
+        // A rule set naming rules this CodeNarc does not know still runs; the names are reported once per check.
+        List<String> problems = codeNarc.configProblems();
+        if (!problems.isEmpty() && !found.isEmpty()) {
+            String first = new java.util.TreeSet<>(found.keySet()).first();
+            List<Diagnostic> withProblem = new ArrayList<>(found.get(first));
+            withProblem.add(new Diagnostic(first, Range.of(0, 0, 0, 1), Diagnostic.Severity.WARNING,
+                    CodeNarcAnalyzer.SOURCE, "lint-config", String.join("; ", problems)));
+            found.put(first, withProblem);
+        }
         return found;
     }
 

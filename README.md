@@ -64,8 +64,9 @@ and diagnostics. Every answer carries a confidence (`STATIC`, `INFERRED`, `DYNAM
 rather than guesses when a call site can only be matched by name. Findings come from four sources:
 
 - the compiler and Groovy 6's type checkers (NullChecker, SqlInjection, Regex, FormatString, Combiner, Purity);
-- CodeNarc 4 with a profile aligned with the [practices knowledge base](docs/practices.md); the engine build
-  embeds the latest stable CodeNarc release on Maven Central at build time (`groovyscope version` prints it);
+- CodeNarc 4 with a profile aligned with the [practices knowledge base](docs/practices.md); the release is pinned
+  in the engine build, kept current by Dependabot and tried early by a weekly canary (`groovyscope version`
+  prints it);
 - groovyscope's own practice checks, GS001 to GS012 (integer division, Elvis on 0, GString logging, `Eval`,
   `@Grab`, string `execute()`, XXE, Groovy 6-only syntax under a Groovy 5 target and more), GS013 to GS016
   (test doubles that cannot take effect: a stub on a private method, a metaClass override `@CompileStatic` code
