@@ -1201,6 +1201,11 @@ def build_tools(
 compact_json = functools.partial(render.compact_json, sort_keys=False)
 
 
+def is_refusal(result: Any) -> bool:
+    """Whether a tool's result is a refusal: a mapping with an ``error`` (why nothing was done)."""
+    return isinstance(result, Mapping) and result.get("error") is not None
+
+
 def respond(
     function: Callable[..., Any],
     *,
@@ -1211,7 +1216,8 @@ def respond(
     """Return a tool result as one compact JSON text block; with ``output.structured`` also as structuredContent
     (for clients that read it; most send the text to the model, so it is off by default to avoid doubling).
     With ``max_bytes`` (``output.maxBytes``) no answer is larger: see :func:`fit`. ``on_client`` sees the request
-    context of every call (the server records the client's name and capabilities from the first)."""
+    context of every call (the server records the client's name and capabilities from the first). A refusal (a
+    result carrying ``error``) is a tool error (``isError``), never a success the client reads as an answer."""
 
     @functools.wraps(function)
     def wrapper(*args: Any, **kwargs: Any) -> CallToolResult:
@@ -1222,9 +1228,11 @@ def respond(
             on_client(context)
         with interaction.bound(context):
             result = fit(function(*args, **kwargs), max_bytes)
+        refused = is_refusal(result)
         return CallToolResult(
             content=[TextContent(type="text", text=compact_json(result))],
-            structured_content=result if structured and isinstance(result, dict) else None,
+            structured_content=result if structured and isinstance(result, dict) and not refused else None,
+            is_error=refused,
         )
 
     signature = inspect.signature(function)

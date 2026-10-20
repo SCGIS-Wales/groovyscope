@@ -284,7 +284,7 @@ def logs(obj: dict[str, Any], lines: int, follow_log: bool, from_kiro: bool) -> 
                 click.echo(line)
         return
     log_file = daemon_paths(obj["root"])[1]
-    click.echo(f"== {log_file}", err=True)
+    click.echo(f"== {log_file}", err=True)  # command output: which file follows
     for line in diagnostics.tail(log_file, lines):
         click.echo(line)
     if follow_log:
@@ -305,7 +305,7 @@ def config_validate(obj: dict[str, Any], show: bool) -> None:
     try:
         effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
-        click.echo(str(exc), err=True)
+        LOG.error(str(exc))
         sys.exit(1)
     if show:
         click.echo(dump_yaml(effective), nl=False)
@@ -363,7 +363,7 @@ def run_kiro_merge(
             run=_KIRO(),
         )
     except ValueError as exc:
-        click.echo(str(exc), err=True)
+        LOG.error(str(exc))
         sys.exit(1)
     if global_scope:
         click.echo(f"Kiro home: {base}")
@@ -391,7 +391,7 @@ def run_kiro_merge(
             "the project's .kiro/settings/lsp.json"
         )
         return
-    click.echo(f"note: {KIRO_INIT_WARNING}", err=True)
+    LOG.warning(f"note: {KIRO_INIT_WARNING}")
     click.echo("next: restart Kiro CLI, then run /code status (expect: groovyscope (groovy) - initialized)")
 
 
@@ -402,10 +402,10 @@ def unpack_benchmark(environ: dict[str, str], *, refresh: bool = False, target: 
     try:
         result = benchmark.ensure(destination, refresh=refresh)
     except (OSError, ValueError) as exc:
-        click.echo(f"benchmark corpus: could not unpack into {destination}: {exc}", err=True)
+        LOG.warning(f"benchmark corpus: could not unpack into {destination}: {exc}")
         return None
     if result is None:
-        click.echo("benchmark corpus: this package bundles none", err=True)
+        LOG.warning("benchmark corpus: this package bundles none")
         return None
     if result["action"] != "up-to-date":
         click.echo(
@@ -558,7 +558,7 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
     provisioned = provision.provisioned_homes(provision.jdk_dir(environ))
     found = discover(effective["jdk"].get("home"), environ, minimum=minimum, provisioned=provisioned)
     for note in found["notes"]:
-        click.echo(f"groovyscope: {note}", err=True)
+        LOG.warning(f"groovyscope: {note}")
     jdk = found["jdk"]
     LOG.debug("JDK: %s", jdk)
     if jdk is not None and jdk["version"] >= minimum:
@@ -566,9 +566,7 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
     if not effective["jdk"].get("autoProvision"):
         return None
     feature = max(minimum, provision.DEFAULT_FEATURE)
-    click.echo(
-        f"groovyscope: no JDK {minimum}+ found; jdk.autoProvision is on, downloading Temurin {feature}", err=True
-    )
+    LOG.warning(f"groovyscope: no JDK {minimum}+ found; jdk.autoProvision is on, downloading Temurin {feature}")
     try:
         installed = provision.provision_jdk(
             provision.jdk_dir(environ),
@@ -576,7 +574,7 @@ def resolve_jdk(effective: dict[str, Any], environ: dict[str, str]) -> JdkInfo |
             vendor=str(effective["jdk"].get("vendor", config_module.default("jdk", "vendor"))),
         )
     except (OSError, ValueError, KeyError) as exc:
-        click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
+        LOG.warning(f"groovyscope: JDK provisioning failed: {exc}")
         return None
     return {"home": installed["home"], "version": installed["version"], "source": "provisioned"}
 
@@ -586,10 +584,10 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     try:
         effective, notes = load_config_with_notes(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
-        click.echo(str(exc), err=True)
+        LOG.error(str(exc))
         sys.exit(1)
     for note in notes:
-        click.echo(f"groovyscope: {note}", err=True)
+        LOG.warning(f"groovyscope: {note}")
     apply_config_logging(obj, effective)
     LOG.debug(
         "configuration: %s; workspace %s; `groovyscope config validate --show` prints it",
@@ -598,12 +596,12 @@ def resolve_engine(obj: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     )
     jdk = resolve_jdk(effective, dict(os.environ))
     if jdk is None:
-        click.echo("groovyscope: no suitable JDK found; run `groovyscope doctor`", err=True)
+        LOG.error("groovyscope: no suitable JDK found; run `groovyscope doctor`")
         sys.exit(1)
     jar = locate_jar(dict(os.environ))
     LOG.debug("engine JAR: %s", jar)
     if jar["error"] or jar["path"] is None:
-        click.echo(f"groovyscope: {jar['error']}", err=True)
+        LOG.error(f"groovyscope: {jar['error']}")
         sys.exit(1)
     archive = cds_archive_for(effective, jdk, jar["actual_sha256"], dict(os.environ))
     if archive is not None:
@@ -662,7 +660,7 @@ def discover_profiles(obj: dict[str, Any], effective: dict[str, Any]) -> profile
     """Runtime profiles for the workspace; problems are reported on stderr and the profile is skipped."""
     found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
     for problem in found["errors"]:
-        click.echo(f"groovyscope: profile skipped: {problem}", err=True)
+        LOG.warning(f"groovyscope: profile skipped: {problem}")
     return found
 
 
@@ -674,7 +672,7 @@ def hand_over_config(obj: dict[str, Any], effective: dict[str, Any]) -> str:
     trusted = bool(effective["workspace"].get("trust"))
     if not trusted:
         for note in profiles.untrusted_jar_notes(found, obj["root"]):
-            click.echo(f"groovyscope: {note}", err=True)
+            LOG.warning(f"groovyscope: {note}")
     runtime = profiles.engine_profiles(found, obj["root"], trusted=trusted)
     text = json.dumps(engine_view(obj, effective, runtime), sort_keys=True)
     target = engine_config_file(obj["root"], dict(os.environ))
@@ -748,10 +746,9 @@ def reload_if_stale(obj: dict[str, Any], socket_file: Path, status: dict[str, An
     try:
         _RPC(socket_file, RELOAD_METHOD, {"config": str(obj.get("engine_config") or "")}, RELOAD_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, ValueError) as exc:
-        click.echo(
+        LOG.warning(
             f"groovyscope: the daemon runs an older configuration and could not reload it ({exc}); "
-            "run `groovyscope daemon restart` to apply it",
-            err=True,
+            "run `groovyscope daemon restart` to apply it"
         )
         return RELOAD_FAILED
     LOG.info("daemon configuration reloaded in place")
@@ -829,16 +826,16 @@ def run_through_daemon(obj: dict[str, Any], command: list[str], effective: dict[
             return _RELAY(socket_file)
         except daemon_lifecycle.CrashLoopRefusedError as exc:
             # A JVM started directly would die the same way: say why and start nothing.
-            click.echo(f"groovyscope: {exc}", err=True)
+            LOG.error(f"groovyscope: {exc}")
             sys.exit(1)
         except OSError as exc:
             if attempt == 0:
-                click.echo(f"groovyscope: daemon went away before the session started ({exc})", err=True)
-                click.echo("groovyscope: starting it again", err=True)
+                LOG.warning(f"groovyscope: daemon went away before the session started ({exc})")
+                LOG.warning("groovyscope: starting it again")
                 continue
-            click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
+            LOG.warning(f"groovyscope: daemon unavailable ({exc}); running the engine directly")
         except RuntimeError as exc:
-            click.echo(f"groovyscope: daemon unavailable ({exc}); running the engine directly", err=True)
+            LOG.warning(f"groovyscope: daemon unavailable ({exc}); running the engine directly")
             return None
     return None
 
@@ -876,7 +873,7 @@ def daemon_socket_for(obj: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     try:
         return start_daemon_for(obj)
     except (OSError, RuntimeError) as exc:
-        click.echo(f"groovyscope: {exc}", err=True)
+        LOG.error(f"groovyscope: {exc}")
         sys.exit(1)
 
 
@@ -911,7 +908,7 @@ def engine_result(socket_file: Path, method: str, params: dict[str, Any], timeou
     try:
         return _RPC(socket_file, method, params, timeout)
     except (OSError, RuntimeError, ValueError) as exc:
-        click.echo(f"groovyscope: {method} failed: {exc}", err=True)
+        LOG.error(f"groovyscope: {method} failed: {exc}")
         sys.exit(1)
 
 
@@ -922,7 +919,7 @@ def imported_rows(
     that cannot be read are reported on stderr and skipped."""
     found, notes = reports.merge_sarif(root, reports.reports_settings(effective)["sarif"], explicit=list(explicit))
     for note in notes:
-        click.echo(f"groovyscope: {note}", err=True)
+        LOG.warning(f"groovyscope: {note}")
     wanted = [shown_path(root / p, root).rstrip("/") for p in paths]
     rows = []
     for finding in found:
@@ -977,7 +974,7 @@ def finding_rows(diagnostics: dict[str, list[dict[str, Any]]], root: Path) -> li
 def lsp(obj: dict[str, Any], stdio: bool) -> None:
     """Run the engine's Language Server for Kiro CLI or an editor."""
     if not stdio:
-        click.echo("groovyscope lsp: pass --stdio (Kiro's lsp.json does)", err=True)
+        LOG.error("groovyscope lsp: pass --stdio (Kiro's lsp.json does)")
         sys.exit(2)
     command, effective = resolve_engine(obj)
     hand_over_config(obj, effective)
@@ -1080,7 +1077,7 @@ def hook_command(obj: dict[str, Any], event: str | None) -> None:
         run_hook(obj, event)
     except Exception as exc:  # a broken .groovyscope.yaml or anything else: logged, and the session goes on
         LOG.warning("hook failed: %s", exc, exc_info=True)
-        click.echo(f"groovyscope: hook skipped ({exc})", err=True)
+        LOG.warning(f"groovyscope: hook skipped ({exc})")
 
 
 def run_hook(obj: dict[str, Any], event: str | None) -> None:
@@ -1340,7 +1337,7 @@ def verify_command(
     tools = workspace_tools(obj, socket_file, effective)
     result = tools["review_changes"](base, staged, 8)
     if result.get("error"):
-        click.echo(f"groovyscope: {result['error']}", err=True)
+        LOG.error(f"groovyscope: {result['error']}")
         sys.exit(1)
     settings = effective.get("verify") or {}
     plan_result = result.get("tests") or {}
@@ -1379,7 +1376,7 @@ def verify_failed(obj: dict[str, Any], sources: Sequence[Path], *, dry_run: bool
     try:
         effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
-        click.echo(str(exc), err=True)
+        LOG.error(str(exc))
         sys.exit(1)
     root = obj["root"]
     last = test_results.summarise(test_results.default_sources(root, [str(p.resolve()) for p in sources]))
@@ -1553,15 +1550,14 @@ def coverage_command(obj: dict[str, Any], *, paths: tuple[Path, ...], as_json: b
     try:
         effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
-        click.echo(str(exc), err=True)
+        LOG.error(str(exc))
         sys.exit(1)
     configured = reports.reports_settings(effective)["jacoco"]
     report = reports.jacoco_file(obj["root"], configured)
     if report is None:
-        click.echo(
+        LOG.error(
             f"groovyscope: no JaCoCo report at {configured or reports.DEFAULT_JACOCO}; run the build's tests with "
-            "jacocoTestReport first",
-            err=True,
+            "jacocoTestReport first"
         )
         sys.exit(1)
     try:
@@ -1570,7 +1566,7 @@ def coverage_command(obj: dict[str, Any], *, paths: tuple[Path, ...], as_json: b
         )
         summary = reports.coverage_summary(report)
     except ValueError as exc:
-        click.echo(f"groovyscope: {exc}", err=True)
+        LOG.error(f"groovyscope: {exc}")
         sys.exit(1)
     if as_json:
         click.echo(compact_json({"report": shown_path(report, obj["root"]), "coverage": summary, "gaps": gaps}))
@@ -1600,7 +1596,7 @@ def explain_code_command(obj: dict[str, Any], target: str, as_json: bool) -> Non
         for line in render_explanation(result):
             click.echo(line)
     if not result.get("found"):
-        click.echo(f"no declaration found for {target}", err=True)
+        LOG.error(f"no declaration found for {target}")
         sys.exit(2)
 
 
@@ -1726,7 +1722,7 @@ def graph_command(
             drawio_path=shown_path(obj["root"] / target, obj["root"]),
         )
         if result.get("error"):
-            click.echo(f"groovyscope: {result['error']}", err=True)
+            LOG.error(f"groovyscope: {result['error']}")
             sys.exit(1)
         click.echo(
             f"{result['nodeCount']} class(es), {result['edgeCount']} relation(s) written to {result['written']} "
@@ -1750,11 +1746,11 @@ def graph_command(
                     f"{calls.get('unknown', 0)} unknown (grey); arrows point from caller to callee"
                 )
         for problem in result.get("layoutProblems", []):
-            click.echo(f"layout: {problem}", err=True)
+            LOG.warning(f"layout: {problem}")
         if result.get("layoutNote"):
-            click.echo(f"note: {result['layoutNote']}", err=True)
+            LOG.warning(f"note: {result['layoutNote']}")
         if result.get("truncated"):
-            click.echo("note: the graph was capped; raise --max-nodes or narrow the seeds", err=True)
+            LOG.warning("note: the graph was capped; raise --max-nodes or narrow the seeds")
         return
     result = tools["relationship_graph"](
         symbols=list(symbols),
@@ -1766,7 +1762,7 @@ def graph_command(
         mermaid=output_format == "mermaid",
     )
     if result.get("error"):
-        click.echo(f"groovyscope: {result['error']}", err=True)
+        LOG.error(f"groovyscope: {result['error']}")
         sys.exit(1)
     text = result["mermaid"] if output_format == "mermaid" else compact_json(result)
     if out is not None:
@@ -1821,7 +1817,7 @@ def format_command(obj: dict[str, Any], paths: tuple[Path, ...], apply_changes: 
             }
         )
     for uri in refused:
-        click.echo(f"groovyscope: refused an edit outside the workspace: {uri}", err=True)
+        LOG.warning(f"groovyscope: refused an edit outside the workspace: {uri}")
     checked = int(result.get("checked", 0))
     if as_json:
         click.echo(compact_json({"files": rows, "checked": checked, "changed": len(rows)}))
@@ -1858,7 +1854,7 @@ def fix(
         try:
             scope = changes.fix_scope(obj["root"], changes.changed_files(obj["root"], base))
         except ValueError as exc:
-            click.echo(f"groovyscope: {exc}", err=True)
+            LOG.error(f"groovyscope: {exc}")
             sys.exit(1)
         if not scope["uris"]:
             click.echo("no changed Groovy lines to fix")
@@ -1916,7 +1912,7 @@ def explain(obj: dict[str, Any], code: str, as_json: bool) -> None:
     socket_file, _ = daemon_socket_for(obj)
     answer = engine_call(socket_file, "groovyscope/explain", {"root": str(obj["root"]), "code": code})
     if not answer:
-        click.echo(f"groovyscope: nothing known about {code}", err=True)
+        LOG.error(f"groovyscope: nothing known about {code}")
         sys.exit(1)
     if as_json:
         click.echo(compact_json(answer))
@@ -1988,7 +1984,7 @@ def impact(obj: dict[str, Any], target: str, change: str, as_json: bool) -> None
         click.echo(compact_json(result))
         return
     if not result:
-        click.echo(f"no declaration found for {target}", err=True)
+        LOG.error(f"no declaration found for {target}")
         sys.exit(2)
     root = obj["root"]
     for report in result:
@@ -2028,7 +2024,7 @@ def callgraph(obj: dict[str, Any], target: str, direction: str, depth: int, as_j
         return
     root = obj["root"]
     if not result.get("roots"):
-        click.echo(f"no declaration found for {target}", err=True)
+        LOG.error(f"no declaration found for {target}")
         sys.exit(2)
     nodes = len(result.get("nodes", []))
     edges = result.get("edges", [])
@@ -2044,7 +2040,7 @@ def _rpc_list(socket_file: Path, method: str, params: dict[str, Any]) -> list[di
     try:
         result = _RPC(socket_file, method, params, RPC_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, ValueError) as exc:
-        click.echo(f"groovyscope: {method} failed: {exc}", err=True)
+        LOG.error(f"groovyscope: {method} failed: {exc}")
         sys.exit(1)
     return [dict(item) for item in result] if isinstance(result, list) else []
 
@@ -2089,7 +2085,7 @@ def fetch(source: str | None, sha256: str | None, engine_version: str) -> None:
     try:
         result = fetch_engine.fetch_jar(chosen, version=engine_version, destination=destination, sha256=sha256)
     except (OSError, ValueError) as exc:
-        click.echo(f"groovyscope: fetch failed: {exc}", err=True)
+        LOG.error(f"groovyscope: fetch failed: {exc}")
         sys.exit(1)
     click.echo(f"fetched {result['path']} (version {result['version']}, sha256 {result['sha256'][:16]}...)")
     click.echo(f"from {result['source']}")
@@ -2112,7 +2108,7 @@ def jdk_install(feature: int, vendor: str) -> None:
     try:
         installed = provision.provision_jdk(provision.jdk_dir(environ), feature=feature, vendor=vendor)
     except (OSError, ValueError, KeyError) as exc:
-        click.echo(f"groovyscope: JDK provisioning failed: {exc}", err=True)
+        LOG.error(f"groovyscope: JDK provisioning failed: {exc}")
         sys.exit(1)
     click.echo(f"installed {installed['release']} at {installed['home']}")
     click.echo("groovyscope will use it when no other JDK meets jdk.minimum; `groovyscope doctor` shows which wins")
@@ -2130,13 +2126,12 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int | None
     try:
         effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
-        click.echo(str(exc), err=True)
+        LOG.error(str(exc))
         sys.exit(1)
     if not effective["workspace"].get("trust"):
-        click.echo(
+        LOG.error(
             "groovyscope: `classpath` runs the project's build tool, which executes its build scripts; "
-            "run `groovyscope trust` first if you trust this workspace",
-            err=True,
+            "run `groovyscope trust` first if you trust this workspace"
         )
         sys.exit(1)
     environ = dict(os.environ)
@@ -2144,7 +2139,7 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int | None
         jdk = discover(effective["jdk"].get("home"), environ, minimum=int(effective["jdk"]["minimum"]))["jdk"]
         if jdk is not None:
             environ["JAVA_HOME"] = jdk["home"]
-    click.echo("running the build tool to resolve the classpath (this can take a while)…", err=True)
+    LOG.warning("running the build tool to resolve the classpath (this can take a while)…")
     target = obj["root"] / Path(effective["workspace"].get("classpathFile") or classpath_export.DEFAULT_FILE)
     try:
         with classpath_export.exclusive(target):
@@ -2153,13 +2148,13 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int | None
             )
             classpath_export.write_file(target, result, fingerprint=classpath_export.build_fingerprint(obj["root"]))
     except ValueError as exc:
-        click.echo(f"groovyscope: {exc}", err=True)
+        LOG.error(f"groovyscope: {exc}")
         sys.exit(1)
     click.echo(
         f"{len(result['paths'])} classpath entries from {result['tool']} written to {shown_path(target, obj['root'])}"
     )
     if result["missing"]:
-        click.echo(f"{len(result['missing'])} listed path(s) do not exist yet (not built?) and were left out", err=True)
+        LOG.warning(f"{len(result['missing'])} listed path(s) do not exist yet (not built?) and were left out")
     socket_file = daemon_paths(obj["root"])[0]
     status = daemon_lifecycle.probe(socket_file)
     if status is not None:
@@ -2173,7 +2168,7 @@ def classpath_command(obj: dict[str, Any], tool: str | None, timeout: int | None
             try:
                 daemon_lifecycle.stop(socket_file)
             except (OSError, RuntimeError) as exc:
-                click.echo(f"groovyscope: {exc}; run `groovyscope daemon restart` to apply the classpath", err=True)
+                LOG.warning(f"groovyscope: {exc}; run `groovyscope daemon restart` to apply the classpath")
             else:
                 click.echo("the running daemon was stopped; the next request starts it with the new classpath")
 
@@ -2186,7 +2181,7 @@ def init_command(obj: dict[str, Any], dry_run: bool) -> None:
     try:
         target, current, after = workspace_init.plan(obj["root"])
     except (ValueError, OSError) as exc:
-        click.echo(f"groovyscope: {exc}", err=True)
+        LOG.error(f"groovyscope: {exc}")
         sys.exit(1)
     if current == after:
         click.echo(f"{shown_path(target, obj['root'])} already has these settings")
@@ -2214,7 +2209,7 @@ def profile_list(obj: dict[str, Any]) -> None:
     try:
         effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
     except (ValueError, OSError) as exc:
-        click.echo(str(exc), err=True)
+        LOG.error(str(exc))
         sys.exit(1)
     found = profiles.discover(obj["root"], effective.get("profiles", {}), Path.home())
     for line in profiles.describe(found):
@@ -2235,13 +2230,13 @@ def profile_install(file: Path, force: bool) -> None:
         problems = (str(exc),)
     if problems:
         for problem in problems:
-            click.echo(f"{file}: {problem}", err=True)
+            LOG.error(f"{file}: {problem}")
         sys.exit(1)
     folder = Path.home() / profiles.USER_DIR
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     target = folder / file.name
     if target.exists() and not force:
-        click.echo(f"groovyscope: {target} exists; pass --force to replace it", err=True)
+        LOG.error(f"groovyscope: {target} exists; pass --force to replace it")
         sys.exit(1)
     write_atomically(target, file.read_text(encoding="utf-8"))
     target.chmod(0o600)
@@ -2259,7 +2254,7 @@ def profile_validate(files: tuple[Path, ...]) -> None:
         except (OSError, ValueError) as exc:
             problems = (str(exc),)
         for problem in problems:
-            click.echo(f"{file}: {problem}", err=True)
+            LOG.warning(f"{file}: {problem}")
         failed = failed or bool(problems)
         if not problems:
             click.echo(f"{file}: ok")
@@ -2274,7 +2269,7 @@ def profile_validate(files: tuple[Path, ...]) -> None:
 def profile_status(obj: dict[str, Any], path: Path, as_json: bool) -> None:
     """What the governing runtime profile says about one file (PATH relative to the workspace root)."""
     if not (obj["root"] / path).is_file():
-        click.echo(f"groovyscope: {path} is not a file under {obj['root']}", err=True)
+        LOG.error(f"groovyscope: {path} is not a file under {obj['root']}")
         sys.exit(2)
     socket_file, _ = daemon_socket_for(obj)
     status = engine_call(
@@ -2320,17 +2315,15 @@ def trust_command(obj: dict[str, Any], *, revoke: bool, list_all: bool, confirme
     if not revoke:
         marker = trust.agent_session(os.environ)
         if not _IS_TTY():
-            click.echo(
+            LOG.error(
                 "groovyscope trust: refused without a terminal; trust lets this workspace run code, so run it "
-                "yourself in a terminal",
-                err=True,
+                "yourself in a terminal"
             )
             sys.exit(2)
         if marker is not None and not confirmed:
-            click.echo(
+            LOG.error(
                 f"groovyscope trust: refused inside an agent session ({marker} is set); if you are typing this "
-                "yourself, add --yes-i-am-the-user",
-                err=True,
+                "yourself, add --yes-i-am-the-user"
             )
             sys.exit(2)
     trust.set_trusted(obj["root"], home, trusted=not revoke)
@@ -2405,7 +2398,7 @@ def daemon_restart(obj: dict[str, Any]) -> None:
     try:
         daemon_lifecycle.stop(socket_file)
     except (OSError, RuntimeError) as exc:
-        click.echo(f"groovyscope: {exc}", err=True)
+        LOG.error(f"groovyscope: {exc}")
         sys.exit(1)
     daemon_lifecycle.forget_restarts(log_file)
     socket_file, _ = daemon_socket_for(obj)
@@ -2421,7 +2414,7 @@ def daemon_stop(obj: dict[str, Any]) -> None:
     try:
         stopped = daemon_lifecycle.stop(socket_file)
     except (OSError, RuntimeError) as exc:
-        click.echo(f"groovyscope: {exc}", err=True)
+        LOG.error(f"groovyscope: {exc}")
         sys.exit(1)
     daemon_lifecycle.forget_restarts(log_file)
     click.echo("daemon stopped" if stopped else "daemon was not running")
@@ -2480,7 +2473,7 @@ def checks_prepare(obj: dict[str, Any], directory: Path | None, *, force: bool) 
                 if force
                 else "pass --force to replace it"
             )
-            click.echo(f"{target} exists; {reason}", err=True)
+            LOG.error(f"{target} exists; {reason}")
             sys.exit(1)
         shutil.rmtree(target)
     corpus = unpack_benchmark(dict(os.environ))
@@ -2489,7 +2482,7 @@ def checks_prepare(obj: dict[str, Any], directory: Path | None, *, force: bool) 
     try:
         done = checks.prepare(target, corpus, _CHECKS_RUNNER)
     except (OSError, subprocess.CalledProcessError) as exc:
-        click.echo(f"groovyscope checks prepare: {exc}", err=True)
+        LOG.error(f"groovyscope checks prepare: {exc}")
         sys.exit(1)
     for line in done:
         click.echo(line)
