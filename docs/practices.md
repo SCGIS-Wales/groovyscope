@@ -320,6 +320,18 @@ sql.rows("SELECT * FROM users WHERE name = $name")
 sql.rows('SELECT * FROM users WHERE name = ?', [name])
 ```
 
+- **Only a GString reaching `Sql` is bound.** Text built by concatenation, by `toString()` on a GString, or by
+  storing a GString in a `String` variable is plain text by then, so its values are part of the SQL (GS035). A
+  `LIKE` pattern binds as a whole: `"... LIKE ${'%' + part + '%'}"`, never `'%${part}%'` (GS012).
+- **Close what you open.** `Sql.newInstance` holds a connection until `close()`; prefer
+  `Sql.withInstance(url) { sql -> ... }` (GS036).
+
+### Secrets
+- **Never commit a credential.** Read it from the environment or a secret store, and revoke one that was committed:
+  rotation does not reach the copy in the history. GS019 reports a literal shaped like an AWS access key ID, a
+  GitHub token, a JSON Web Token or a private key as an error, and a literal given to a name such as `password` or
+  `token` as information; `secrets.allow` lists deliberate values or names.
+
 ### Command execution
 - **Use the list form.** `"cmd $arg".execute()` splits the string on whitespace, so use `['git', 'log', branch].execute(null, dir)` with validated arguments.
 - **Never `sh -c` with input.** Do not pass user input to `sh -c`.
@@ -610,18 +622,21 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Integer division | none | none | GS001: suggest `intdiv` (needs review; skipped when the quotient is narrowed to an integer) |
 | Floating money | NoDouble, NoFloat, BigDecimalInstantiation | none | Change to BigDecimal |
 | Elvis on zero | none | none | GS002 |
+| Number as a condition | none | none | GS028: `!= null`, `!= 0` or both (a warning on a boxed number, information on a primitive) |
 | Null dereference | BrokenNullCheck, UnnecessaryNullCheck | NullChecker (6) | Surface checker output; GS003 for safe navigation into a primitive |
-| GString misuse | GStringAsMapKey, UnnecessaryGString, GStringExpressionWithinString | none | `.toString()` or change the quotes |
+| GString misuse | GStringAsMapKey, UnnecessaryGString, GStringExpressionWithinString | none | `.toString()` or change the quotes; GS018: a GString looked up among Strings (`contains`, `get`, `in`, `equals`) |
 | File truthiness | none | Groovy 5 semantics | GS004: `!= null` or `exists()`, chosen by the reader |
 | Null returns | ReturnsNullInsteadOfEmptyCollection, BooleanMethodReturnsNull | none | Return empty |
 | Dead or unused code | DeadCode, Empty*, Unused* rules, UnusedImport | Duplicate labels (6) | Remove |
 | Java boilerplate | unnecessary and groovyism rule sets | none | "Groovify" action |
-| Immutability | PrivateFieldCouldBeFinal, PublicInstanceField, NonFinalPublicField | `@Immutable` | Convert to record |
+| Immutability | PrivateFieldCouldBeFinal, PublicInstanceField, NonFinalPublicField | `@Immutable` | Convert to record; GS034: a record keeping a mutable component as given |
 | Purity | none | ModifiesChecker, PurityChecker (6) | Suggest `@Pure` |
 | Exceptions | exceptions rule set, EmptyCatchBlock | none | Narrow the catch; rethrow with cause |
 | Logging | Println, PrintStackTrace, SystemOutPrint | none | GS005: GString in a SLF4J or Log4j2 call (`{}` fix); a level guard elsewhere |
 | Code evaluation, Grab | IllegalClassReference (configured) | `groovy.grape.enable`, `groovy.asttest.enable` | GS006; GS007 names the build dependency to declare (no automatic fix) |
-| SQL injection | jdbc rule set | SqlInjectionChecker plus runtime rejection (6) | Remove quotes |
+| SQL injection | jdbc rule set | SqlInjectionChecker plus runtime rejection (6) | GS012: remove the quotes (a `LIKE '%${x}%'` binds the whole pattern instead); GS035: text built by concatenation, `toString()` or a String variable |
+| Connections | JdbcConnectionReference | none | GS036: `Sql.newInstance` never closed; use `Sql.withInstance` |
+| Hardcoded secrets | none | none | GS019: a credential's shape is an error, a secret name with a literal information; `secrets.allow` |
 | Command injection | none | none | GS008: use the list form |
 | XXE | none | Secure defaults | GS009: `allowDocTypeDeclaration = true` |
 | ReDoS | IllegalRegex | `@SafeRegex` (6), RegexChecker | Add `@SafeRegex` |
@@ -631,6 +646,7 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Test doubles | none | none | GS013: Mockito or Spock stub on a private method; GS014: metaClass override `@CompileStatic` callers bypass; GS015: metaClass on a double |
 | Tests that check nothing | JUnitTestMethodWithoutAssert (junit rule set) | none | GS016: a JUnit test with no assert, verify or expected exception, helpers followed |
 | Version gating | none | none | GS010: Groovy 6 construct under a 5.x target |
+| Closures | ImplicitClosureParameter (excluded) | `@DelegatesTo`, `@ClosureParams` | GS017: a public Closure parameter without either; GS029: a multi-line closure on `it`; GS037: `return` inside `each` acts as continue |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
 GS codes are groovyscope's own diagnostics (see the table in the README and `explain`); they are not an external standard.

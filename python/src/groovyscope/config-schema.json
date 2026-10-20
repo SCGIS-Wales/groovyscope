@@ -516,6 +516,19 @@
         }
       }
     },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "naming": {
       "type": "object",
       "additionalProperties": false,

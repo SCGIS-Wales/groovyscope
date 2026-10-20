@@ -290,18 +290,27 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      *
      * @param enabled whether the GS diagnostics run at all
      * @param severities per-code overrides: {@code error}, {@code warning}, {@code info} or {@code off}
+     * @param secretsAllow regular expressions ({@code secrets.allow}); a literal whose value or name matches one is
+     *     never reported as a hardcoded secret (GS019)
      */
-    public record Practices(boolean enabled, Map<String, String> severities, Naming naming) {
+    public record Practices(boolean enabled, Map<String, String> severities, Naming naming,
+            List<String> secretsAllow) {
         public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
             severities = Map.copyOf(severities == null ? Map.of() : severities);
             naming = naming == null ? Naming.DEFAULTS : naming;
+            secretsAllow = List.copyOf(secretsAllow == null ? List.of() : secretsAllow);
         }
 
         /** Practices with the default naming settings. */
         public Practices(boolean enabled, Map<String, String> severities) {
             this(enabled, severities, Naming.DEFAULTS);
+        }
+
+        /** Practices with no secrets allow list. */
+        public Practices(boolean enabled, Map<String, String> severities, Naming naming) {
+            this(enabled, severities, naming, List.of());
         }
 
         /** The configured severity for a code, or {@code null} to keep the catalogue's default. */
@@ -491,6 +500,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject groovy = objectOrEmpty(document.get("groovy"));
         JsonObject practices = objectOrEmpty(document.get("practices"));
         JsonObject naming = objectOrEmpty(document.get("naming"));
+        JsonObject secrets = objectOrEmpty(document.get("secrets"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
         JsonObject daemon = objectOrEmpty(document.get("daemon"));
         return new EngineConfig(
@@ -526,7 +536,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         stringMap(practices.get("severity")),
                         new Naming(bool(naming.get("enabled"), Naming.DEFAULTS.enabled()),
                                 strings(naming.get("allowedAbbreviations"), List.of()),
-                                stringMap(naming.get("vocabulary")))),
+                                stringMap(naming.get("vocabulary"))),
+                        strings(secrets.get("allow"), List.of())),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),
