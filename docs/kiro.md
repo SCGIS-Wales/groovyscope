@@ -84,7 +84,8 @@ the written files changed since the daemon's last full compile, they are compile
 workspace as that compile left it, and CodeNarc runs alongside: on a 300-class workspace with a classpath, a check
 after writing a 3,600-line file went from 2.7 s to 1.5 s (compile and practices alone from 1.2 s to 0.45 s). The
 next whole-workspace question compiles everything as before. The engine
-request is bounded by `hooks.timeoutSeconds`; a hook never starts the daemon (the LSP session does, and a cold JVM
+request is bounded by `hooks.timeoutSeconds` (25 s, kept under the 30 s Kiro is reported to allow a hook, so the
+hook can still say it skipped); a hook never starts the daemon (the LSP session does, and a cold JVM
 would hold the agent for its start-up), so when it is over budget or the daemon is down the hook prints one
 line and the session carries on.
 
@@ -94,7 +95,7 @@ any has compile errors, the hook answers `{"decision": "block", "reason": ...}` 
 finishing. Whether Kiro V3 honours a blocking `Stop` answer is documented both ways; the owner's check decides.
 
 Settings: `hooks.afterWrite` (default true), `hooks.afterWriteInclude`, `hooks.afterWriteMaxFindings` (12),
-`hooks.stopGate` (false), `hooks.timeoutSeconds` (45).
+`hooks.stopGate` (false), `hooks.timeoutSeconds` (25).
 
 ## Skills and prompts
 
