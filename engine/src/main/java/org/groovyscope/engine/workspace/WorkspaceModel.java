@@ -354,13 +354,7 @@ public final class WorkspaceModel {
 
     /** 64 bits of the SHA-256 of {@code text}, as 16 hex digits (a 32-bit hash collides too easily on big trees). */
     public static String fingerprintOf(String text) {
-        try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return java.util.HexFormat.of().formatHex(digest, 0, 8);
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
+        return org.groovyscope.engine.util.Hashes.sha256Hex(text, 8);
     }
 
     private final java.util.concurrent.atomic.AtomicInteger fingerprintsTaken = new java.util.concurrent.atomic.AtomicInteger();
@@ -541,14 +535,6 @@ public final class WorkspaceModel {
 
     /** The file system path for a {@code file:} URI, or {@code null} for other schemes. */
     public static Path toPath(String uri) {
-        try {
-            java.net.URI parsed = java.net.URI.create(uri);
-            if (!"file".equalsIgnoreCase(parsed.getScheme())) {
-                return null;
-            }
-            return Paths.get(parsed).toAbsolutePath().normalize();
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+        return org.groovyscope.engine.util.Uris.toPath(uri);
     }
 }

@@ -444,12 +444,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         if (json == null) {
             return "";
         }
-        try {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            return java.util.HexFormat.of().formatHex(digest.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
+        return org.groovyscope.engine.util.Hashes.sha256Hex(json);
     }
 
     /** All settings except runtime profiles. */
