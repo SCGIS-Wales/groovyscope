@@ -369,7 +369,7 @@ wheels = [
 
 [[package]]
 name = "groovyscope"
-version = "0.24.3"
+version = "0.24.4"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
