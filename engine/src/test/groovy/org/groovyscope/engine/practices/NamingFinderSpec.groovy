@@ -37,7 +37,7 @@ class RemoveAllOnSelfRule {
 }
 
 class ValidateInput {
-    boolean valid = false
+    private boolean valid = false
     boolean isReady = true
     String retryCount = '3'
     String certificateExpiry = '2026-10-19T00:00:00Z'
@@ -74,6 +74,16 @@ package naming
 
 class InputValidator {
     boolean isValid = false
+    // a property: `active` already reads as isActive(), and renaming it would give isIsActive()
+    boolean active = true
+    // idiomatic shorthand every reader knows
+    String libDir = 'lib'
+    String docRoot = 'docs'
+    String orgName = 'acme'
+    String prevVersion = '1'
+    String subPath = 'a'
+    String implClass = 'B'
+    String initScript = 'c'
     int retryCount = 3
     Map<String, User> usersById = [:]
 

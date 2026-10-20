@@ -115,24 +115,24 @@ public final class NamingFinder {
             "something", "anything", "everything"));
     static final Set<String> CLASS_SUFFIXES = Set.copyOf(List.of("Manager", "Helper", "Util", "Utils", "Misc",
             "Stuff", "Thing"));
-    static final Set<String> ABBREVIATIONS = Set.copyOf(List.of("cfg", "mgr", "svc", "ctx", "btn", "usr", "pwd", "pw", "num",
-            "cnt", "idx", "tmp", "tmpl", "msg", "err", "ex", "exc", "req", "res", "resp", "rsp", "conn", "cfgs",
-            "env", "evt", "fn", "func", "impl", "init", "len", "lst", "mtd", "nbr", "obj", "opt", "opts", "pkg",
-            "ptr", "ref", "src", "dst", "dest", "str", "val", "var", "vals", "vars", "buf", "buff", "chk", "clr",
-            "cmd", "cmp", "col", "cols", "ctl", "ctrl", "cur", "curr", "db", "def", "del", "dir", "dirs", "doc",
-            "docs", "elem", "elt", "fld", "frm", "grp", "hdr", "img", "ins", "inst", "lbl", "lib", "lnk", "loc",
-            "max", "min", "mod", "nm", "no", "nr", "obs", "org", "orig", "pos", "prev", "prod", "prop", "props",
-            "qry", "rec", "rect", "reg", "rem", "rpt", "sec", "seq", "sess", "sig", "spec", "sql", "stmt", "sub",
-            "sys", "tbl", "tkn", "tok", "txt", "typ", "usr", "ver", "win", "wnd", "yr"));
-    static final Set<String> ALLOWED_ABBREVIATIONS = Set.copyOf(List.of("id", "ids", "uri", "url", "urls", "uuid", "json", "xml",
-            "yaml", "html", "http", "https", "sql", "jdbc", "jvm", "jdk", "api", "apis", "ui", "io", "os", "cpu",
-            "ram", "dns", "ip", "tcp", "udp", "ssl", "tls", "jwt", "oauth", "saml", "cors", "csv", "pdf", "png",
-            "svg", "md5", "sha", "sha256", "utf8", "ascii", "regex", "max", "min", "sum", "avg", "db", "env",
-            "args", "argv", "spec", "specs", "log", "ok", "iso", "utc", "gmt", "ttl", "cli", "mcp", "lsp", "pr",
-            "mr", "ci", "cd", "sdk", "ast", "dto", "dsl", "pom", "gradle", "git", "ssh", "sftp", "ftp", "smtp",
-            "imap", "rest", "soap", "grpc", "aws", "gcp", "s3", "ec2", "iam", "kms", "vpc", "eks", "ecs", "ecr",
-            "rds", "sqs", "sns", "ses", "lambda", "crud", "acl", "rbac", "ldap", "ad", "sso", "mfa", "otp", "pkce",
-            "oidc", "idp", "sp", "cn", "dn", "ou", "sam", "upn", "guid", "ref", "refs", "src", "dst"));
+    static final Set<String> ABBREVIATIONS = Set.copyOf(List.of("cfg", "mgr", "svc", "ctx", "btn", "usr", "pwd", "pw",
+            "num", "cnt", "idx", "tmp", "tmpl", "msg", "err", "ex", "exc", "req", "res", "resp", "rsp", "conn", "cfgs",
+            "env", "evt", "fn", "func", "len", "lst", "mtd", "nbr", "obj", "opt", "opts", "pkg", "ptr", "ref", "src",
+            "dst", "dest", "str", "val", "var", "vals", "vars", "buf", "buff", "chk", "clr", "cmd", "cmp", "col",
+            "cols", "ctl", "ctrl", "cur", "curr", "db", "def", "del", "elem", "elt", "fld", "frm", "grp", "hdr", "img",
+            "ins", "inst", "lbl", "lnk", "loc", "max", "min", "mod", "nm", "no", "nr", "obs", "orig", "pos", "prod",
+            "prop", "props", "qry", "rec", "rect", "reg", "rem", "rpt", "sec", "seq", "sess", "sig", "spec", "sql",
+            "stmt", "sys", "tbl", "tkn", "tok", "txt", "typ", "usr", "ver", "win", "wnd", "yr"));
+    static final Set<String> ALLOWED_ABBREVIATIONS = Set.copyOf(List.of("id", "ids", "uri", "url", "urls", "uuid",
+            "json", "xml", "yaml", "html", "http", "https", "sql", "jdbc", "jvm", "jdk", "api", "apis", "ui", "io",
+            "os", "cpu", "ram", "dns", "ip", "tcp", "udp", "ssl", "tls", "jwt", "oauth", "saml", "cors", "csv", "pdf",
+            "png", "svg", "md5", "sha", "sha256", "utf8", "ascii", "regex", "max", "min", "sum", "avg", "db", "env",
+            "args", "argv", "spec", "specs", "log", "ok", "iso", "utc", "gmt", "ttl", "cli", "mcp", "lsp", "pr", "mr",
+            "ci", "cd", "sdk", "ast", "dto", "dsl", "pom", "gradle", "git", "ssh", "sftp", "ftp", "smtp", "imap",
+            "rest", "soap", "grpc", "aws", "gcp", "s3", "ec2", "iam", "kms", "vpc", "eks", "ecs", "ecr", "rds", "sqs",
+            "sns", "ses", "lambda", "crud", "acl", "rbac", "ldap", "ad", "sso", "mfa", "otp", "pkce", "oidc", "idp",
+            "sp", "cn", "dn", "ou", "sam", "upn", "guid", "ref", "refs", "src", "dst", "dir", "dirs", "impl", "init",
+            "sub", "prev", "doc", "docs", "org", "lib"));
     static final Pattern TYPE_PREFIX = Pattern.compile("^(?:str|int|bool|b|s|i|n|f|m_|arr|lst|obj|o|p|ptr)[A-Z_].*");
     static final Pattern SINGLE_LETTER = Pattern.compile("^[a-zA-Z]$");
     static final Set<String> LOOP_LETTERS = Set.copyOf(List.of("i", "j", "k", "n", "x", "y", "z", "e", "t", "it", "k", "v"));
@@ -312,7 +312,11 @@ public final class NamingFinder {
             checkAbbreviations(node, name, what);
             checkTypePrefix(node, name, what);
             if (!dynamic) {
-                checkBooleanName(node, name, type, what);
+                // A property's accessor already asks the question (`active` reads as isActive()), and renaming the
+                // property `isActive` would give isIsActive().
+                if (!(node instanceof PropertyNode)) {
+                    checkBooleanName(node, name, type, what);
+                }
                 checkContradiction(node, name, type, what);
             }
         }
