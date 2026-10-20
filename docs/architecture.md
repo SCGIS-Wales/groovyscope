@@ -263,6 +263,11 @@ apart, a closure whose owner and delegate both declare the method). Rename refus
 - **CLI.** `groovyscope check` and `groovyscope format` talk to the daemon through the custom
   `groovyscope/check` and `groovyscope/format` requests (passing the workspace root, since those connections
   skip `initialize`) and return compact JSON on request.
+- **Merge conflicts.** `groovyscope/parse` parses up to 16 candidate texts of one file (syntax only: empty
+  classpath, no trust, the CONVERSION phase) and returns their errors and, on request, their declarations with
+  line ranges (`index/Declarations`); nothing is read from or written to disk. `resolve_conflicts` uses it to
+  choose among the ways of joining a hunk, `merge_review` to compare the declarations of a merge's result with
+  ours, theirs and the merge base.
 
 ## Practices and runtime profiles (Stage 8)
 
