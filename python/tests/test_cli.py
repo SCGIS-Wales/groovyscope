@@ -564,7 +564,14 @@ def test_checkup_and_benchmark_commands(
     assert "fix: groovyscope kiro init --global" in report.output
     agent = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--agent"])
     assert agent.exit_code == 0, agent.output
-    assert agent.output.startswith("groovyscope ") and "repaired: Kiro files installed" in agent.output
+    # The start hook reports and offers the repairs; it writes nothing on the user's machine.
+    assert agent.output.startswith("groovyscope ") and "0 repaired" in agent.output
+    assert "todo: " in agent.output and "groovyscope kiro init --global" in agent.output
+    assert "groovyscope checkup --fix" in agent.output and "ask" in agent.output
+    assert not (isolated_home / ".kiro" / "agents" / "groovy.json").exists()
+    assert not (isolated_home / ".groovyscope" / "benchmark").exists()
+    fixed = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--fix"])
+    assert fixed.exit_code == 0, fixed.output
     assert (isolated_home / ".kiro" / "agents" / "groovy.json").is_file()
     assert (isolated_home / ".groovyscope" / "benchmark" / "codenarc" / "README.md").is_file()
     as_json = runner.invoke(cli.main, ["--root", str(tmp_path), "checkup", "--json"])

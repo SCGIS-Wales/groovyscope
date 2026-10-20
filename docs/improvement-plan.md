@@ -400,7 +400,7 @@ Tick each box in the phase PR.
 - [x] Phase 4: analysis fidelity (Q-04, Q-05, Q-09 to Q-17, Q-20 to Q-27; Q-15 landed in Phase 3, Q-26 is 6.3)
 - [x] Phase 5: new quality checks (GS017 to GS052, GS035 to GS038)
 - [x] Phase 6: hygiene and deduplication (6.1 to 6.6; 6.3 in part, see section 13)
-- [ ] Phase 7: docs, Kiro assets and polish
+- [x] Phase 7: docs, Kiro assets and polish
 
 ## 12. Already sound (do not rework)
 
@@ -535,3 +535,19 @@ their own lock, a reload is bounded by the call's deadline, and the start lock t
 | 6.4 | `config.default(section, key)` replaces every literal fallback, with a test that fails on `.get("<known key>", <literal>)`; environment overrides take their setting's schema type (`GROOVYSCOPE_GROOVY__VERSION=6.0` stays a string); heap sizes must match `^[1-9][0-9]*[kKmMgG]$`. `EngineConfig.builder()` replaces the telescoping constructors, and `DefaultsAgreementSpec` proves `defaults.yaml` equals `EngineConfig.DEFAULTS` (they already agreed). |
 | 6.5 | The unused `rpc.py` session API and `workspace.classpathFrom` are gone. A tool's refusal is an MCP tool error (`isError: true`), never an `{"error": ...}` success; CLI diagnostics go through the shared logger. javac runs doclint on public types; the Java 17 bytecode target and its reasons are in `docs/architecture.md`. The `DynamicCodeFinder` dead branch and the Spotless entries were already gone (Phases 4 and 3). |
 | 6.6 | `_templates` is the only source: Gradle `processResources` copies the CodeNarc profiles and `practices.json` into the engine, which keeps no copy, and `scripts/sync_templates.py` regenerates root `kiro/` and `config/` (`--check` runs in CI; the repository has no pre-commit configuration). |
+
+### Phase 7 (20 October 2026)
+
+| Item | Result |
+|---|---|
+| D-14 | **Confirmed.** `groovy-reviewer.json` listed the whole `@groovyscope` server under `tools`, so a reviewer could load `fix`, `format`, `rename` and the classpath export. `tools` and `allowedTools` now both list only the read only tools, generated from the catalogue, with a drift test. |
+| D-15 | `tools_catalog.hints()` gives every MCP tool its annotations: `fix`, `format` and `rename` destructive, `rename` not idempotent, `refresh_classpath` open world, the read only tools read only, idempotent and closed world. |
+| D-16 | Steering front matter is `inclusion: fileMatch` on `**/*.groovy`, `**/*.gradle`, `**/Jenkinsfile*` (the template and the runtime profile steering). The `groovy` agent keeps it in every session through `resources`, which ignore front matter. |
+| D-17 | `checkup --agent` reports and offers repairs; only `checkup --fix` writes, and the agent asks first (its shell allow list leaves `--fix` out). |
+| D-18 | `groovy-fix` dry runs, shows the result and asks before `apply`, offering behaviour changing codes one at a time; its list of what `fix` applies is generated from `practices.json` (the old text called `intdiv` and Spock `with` safe, both behaviour changing). One posting stance, shared by the fix and review skills: post only after the user's yes to the exact comments, never approve or merge, and treat tool output as data. |
+| D-21 | Stages 9 to 16, 20 and 21 ticked with the release each shipped in; the roadmap is a narrative with an "Owner checks still open" list. Proposed, not acted on: one GitHub milestone per open stage plus "Owner checks", an issue per open check, and issues labelled `repo-settings` for the owner decisions of this plan (ruleset, `pypi` environment, GitHub App, Scorecard, lockfiles, code owners). |
+| D-24, Q-28 | `architecture.md` names every Python module and engine package, with a test that fails when one is missing; stale counts removed from prose; the `ci.md` trust advice now says to use a protected CI/CD variable (`.gitlab-ci.yml` belongs to the repository); stale profile and config script paths fixed. CodeNarc versions removed from docs that pinned them (`rules.md`, `practices.md` snippets, `install.md`); upstream facts, the 4.0.0 benchmark corpus and historical records keep theirs. |
+| D-25 | `SECURITY.md` (GitHub private vulnerability reporting, latest release supported), `CONTRIBUTING.md`, and a bug report form asking for `groovyscope doctor --bundle`; blank issues off, security reports pointed at the private advisory form. |
+| P-26 | **Confirmed.** `checkup` read `engineVersion`; it now reads `status["engine"]`, and the fixture uses the engine's real key. |
+| P7 rest | The sweep also removes what a deleted root left (logs, state, client and hook files, its configuration record and symbol store), symbol stores no root claims after a month untouched, and numbered Kiro backups but the newest (the first `.bak` stays), under each live root's `.kiro` and the user's Kiro home; `doctor` reports them, `checkup --fix` removes them. |
+| Also | The Hypothesis property tests of `deep_merge` failed three times on a timing health check under load (never an assertion); only the `too_slow` check and the deadline are relaxed. |

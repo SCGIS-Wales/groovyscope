@@ -1,0 +1,51 @@
+name: Bug report
+description: Something groovyscope does wrong, or a crash
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. For a security problem, do not use this form: report it privately as
+        SECURITY.md describes.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what groovyscope did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands or the agent prompt, and a minimal Groovy file or workspace if you can share one.
+      placeholder: |
+        1. groovyscope check src/main/groovy/Example.groovy
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: The output of `groovyscope version`, plus the JDK, the operating system and, for Kiro, `kiro-cli --version`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor report
+      description: |
+        Run `groovyscope doctor --bundle groovyscope-bug.zip` in the workspace and attach the zip in the field
+        below, or paste the report `groovyscope doctor` prints. The bundle holds versions, the configuration, the
+        daemon log and groovyscope's lines from Kiro's log; it holds no source code, no profile contents and no
+        Kiro chat.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: The zip from `doctor --bundle`, logs (`groovyscope logs`), screenshots, or what you already tried.

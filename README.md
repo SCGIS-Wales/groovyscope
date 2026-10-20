@@ -35,14 +35,15 @@ Then open any Groovy project:
 cd your-groovy-project
 kiro-cli --agent groovy
 > /code status                    # expect: groovyscope (groovy) - initialized
-> /mcp                            # expect: groovyscope running 29 tools
+> /mcp                            # expect: groovyscope running, with its tools listed
 ```
 
 Nothing else to run. When the `groovy` agent starts, its start hook runs `groovyscope checkup --agent`: it
-refreshes the Kiro files after an upgrade, writes the project's LSP entry, unpacks the benchmark corpus, and
-tells the agent what still needs your decision (trusting the repository and exporting its classpath, which run
-the build). The agent opens with that status and a menu of the most useful prompts; say yes and it runs
-`groovyscope trust` and `groovyscope classpath` for you. `groovyscope checkup` prints the same report in a
+reports what needs doing (Kiro files older than the package, the project's LSP entry, the benchmark corpus,
+trusting the repository and exporting its classpath) and writes nothing. The agent opens with that status and
+a menu of the most useful prompts, and asks before it runs `groovyscope checkup --fix`, `groovyscope trust` or
+`groovyscope classpath` for you. The steering loads only for Groovy, Gradle and Jenkinsfile work
+(`inclusion: fileMatch`), so other sessions do not pay for it. `groovyscope checkup` prints the same report in a
 terminal. Without a classpath the engine still answers from the project's own sources; imports of library
 classes then surface as one `GS100` "missing dependencies" warning per file instead of a wall of
 unresolved-class errors. [docs/prompts.md](docs/prompts.md) lists the prompts and how to read the answers.
@@ -72,7 +73,13 @@ rather than guesses when a call site can only be matched by name. Findings come 
   (test doubles that cannot take effect: a stub on a private method, a metaClass override `@CompileStatic` code
   bypasses or one on a Mockito double, and tests that assert nothing), GS020 to GS027
   (names that say what things are and do: booleans as questions, verbs on methods, no generic words,
-  abbreviations or type prefixes, names that match their types, one verb per idea), GS040 to GS043 (Spock
+  abbreviations or type prefixes, names that match their types, one verb per idea), GS017 to GS019 and GS028,
+  GS029, GS034 to GS037 (a `Closure` parameter the type checker cannot see into, a GString looked up among
+  Strings, hardcoded secrets, a number used as a condition, a long closure on `it`, a record that keeps a
+  mutable component, SQL text built from values, a connection never closed, `return` inside `each`), GS030 to
+  GS033 and GS038 (Jenkins pipeline code: a secret interpolated into a shell step, a step inside `@NonCPS`,
+  unserialisable state across a step, `@CompileStatic` or `java.io.File` in CPS code, and mutable static
+  state anywhere), GS040 to GS043 (Spock
   mistakes Spock would reject or silently ignore: interactions in `then:` without a cardinality, unused or
   duplicated data table columns, a redundant `@Unroll`, misplaced exception conditions), GS050 to GS052
   (Gradle build scripts: eager tasks, dynamic versions, `http://` repositories and `mavenLocal()`), and GS100, one warning

@@ -195,14 +195,14 @@ def client_check(root: Path, environ: Mapping[str, str]) -> Check:
     return ("info", "mcp client", f"{name}, protocol {recorded.get('protocol') or '?'}; can be asked: {asks}")
 
 
-def cache_check(environ: Mapping[str, str], config: Mapping[str, Any] | None) -> Check:
-    """What has piled up under the cache directory: rotated logs beyond the kept count, stale CDS archives and
-    old heap dumps; `groovyscope checkup --fix` removes them."""
+def cache_check(environ: Mapping[str, str], config: Mapping[str, Any] | None, kiro_global: Path | None = None) -> Check:
+    """What has piled up: rotated logs beyond the kept count, stale CDS archives, old heap dumps, what deleted roots
+    left behind, orphan symbol stores and surplus Kiro backups; `groovyscope checkup --fix` removes them."""
     section = (config or {}).get("daemon", {}) if isinstance(config, Mapping) else {}
     kept = int(
         (section if isinstance(section, Mapping) else {}).get("logsKept", config_module.default("daemon", "logsKept"))
     )
-    items = sweep.inventory(daemon.cache_dir(environ), logs_kept=kept)
+    items = sweep.inventory(daemon.cache_dir(environ), logs_kept=kept, kiro_home=kiro_global)
     if not items:
         return ("ok", "cache", f"nothing to sweep under {daemon.cache_dir(environ)}")
     return ("info", "cache", f"{sweep.summary(items)}; `groovyscope checkup --fix` removes them")
@@ -238,7 +238,7 @@ def build_report(
         profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
         client_check(root, environ),
-        cache_check(environ, config),
+        cache_check(environ, config, kiro_home(environ, home or Path.home())),
     ]
 
 

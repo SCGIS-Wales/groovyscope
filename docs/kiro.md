@@ -153,8 +153,11 @@ V2 agent files. What that means for groovyscope:
   an `ask` rule for the mutating ones, derived from the same tool catalogue the MCP server uses.
 - Hooks: V3 names the start hook `SessionStart`; the 2.x name `agentSpawn` in the universal file is reported
   to keep working. The check below confirms it.
-- Steering: V3 honours `inclusion: fileMatch`, so a later release can load the Groovy steering only when
-  Groovy files are in play.
+- Steering: the Groovy steering files carry `inclusion: fileMatch` on `**/*.groovy`, `**/*.gradle` and
+  `**/Jenkinsfile*`, so an agent other than `groovy` loads them only when such files are in play (V3 honours
+  the mode; the 2.x engines honour only `always`, so there they load for the `groovy` agent alone). The
+  `groovy` agent always has them: its `resources` list the steering folder, and resources ignore the front
+  matter.
 
 Checklist to run once on Kiro CLI 2.31 and again on 3.0, with the results pasted into `docs/roadmap.md`:
 
@@ -177,7 +180,7 @@ The full list of checks, with Kiro CLI prompts and a report table: [kiro-checks.
 kiro-cli --agent groovy
 > /code status          # expect: groovyscope (groovy) - initialized
 > /code logs -l ERROR   # empty is good
-> /mcp                  # expect: groovyscope running 29 tools, next to your other servers
+> /mcp                  # expect: groovyscope running, next to your other servers
 > /context show         # expect: steering/groovyscope.md among the context files
 > /tools                # the other servers' tools are listed too (available, prompting)
 ```
@@ -271,7 +274,7 @@ the file `groovyscope lsp` writes and passes with `--config` (private, under the
 ## What the MCP tools add
 
 The `code` tool stops at what LSP can express. The `groovyscope` MCP server (one process per Kiro session,
-sharing the workspace daemon with the LSP side) adds 29 tools; the README lists their arguments and
+sharing the workspace daemon with the LSP side) adds its tools; the README lists their arguments and
 [docs/prompts.md](prompts.md) the prompts. Typical turns in the `groovy` agent:
 
 - "Review this branch as a merge request reviewer" → `review_changes(base="main")`: verdict, blocking and

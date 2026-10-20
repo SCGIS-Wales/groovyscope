@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from groovyscope.config import (
@@ -26,6 +26,9 @@ scalars = st.one_of(st.integers(), st.text(max_size=8), st.booleans(), st.none()
 keys = st.text(alphabet="abcXYZ", min_size=1, max_size=3)
 nested = st.recursive(scalars, lambda inner: st.dictionaries(keys, inner, max_size=4), max_leaves=12)
 mappings = st.dictionaries(keys, nested, max_size=5)
+# Recursive dictionaries are slow to generate on a busy machine; the timing health checks then fail the test while
+# every example passes. Relax only those, so the properties still run in full.
+relaxed = settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
 
 
 def test_defaults_are_valid() -> None:
@@ -61,12 +64,14 @@ def test_heap_sizes_must_be_positive_and_the_retired_classpath_key_is_refused() 
     assert validate_config({**defaults, "workspace": retired})
 
 
+@relaxed
 @given(mappings)
 def test_deep_merge_identity(base: dict[str, object]) -> None:
     assert deep_merge(base, {}) == base
     assert deep_merge({}, base) == base
 
 
+@relaxed
 @given(mappings, mappings)
 def test_deep_merge_keys_are_the_union_and_override_wins(base: dict[str, object], over: dict[str, object]) -> None:
     merged = deep_merge(base, over)

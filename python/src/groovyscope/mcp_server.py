@@ -57,7 +57,7 @@ from groovyscope.paths import (
     to_uri,
 )
 from groovyscope.render import page
-from groovyscope.tools_catalog import TOOL_INFO, description
+from groovyscope.tools_catalog import TOOL_INFO, description, hints
 
 SERVER_NAME = "groovyscope"
 LOG = logging.getLogger("groovyscope.mcp")
@@ -1541,13 +1541,14 @@ def build_server(root: Path, call: Call, output: Mapping[str, Any], environ: Map
     max_bytes = int(output.get("maxBytes", config.default("output", "maxBytes")))
     record = client_recorder(daemon.client_path(root, environ))
     for name, function in build_tools(root, call, output, environ).items():
-        title, read_only = TOOL_INFO.get(name, (name, True))
+        title = TOOL_INFO.get(name, (name, True))[0]
         # The title is on the tool already; the hints are what clients that honour them act on.
+        tool_hints = hints(name)
         annotations = ToolAnnotations(
-            read_only_hint=read_only,
-            destructive_hint=False,
-            idempotent_hint=True,
-            open_world_hint=False,
+            read_only_hint=tool_hints["read_only"],
+            destructive_hint=tool_hints["destructive"],
+            idempotent_hint=tool_hints["idempotent"],
+            open_world_hint=tool_hints["open_world"],
         )
         tool = respond(
             diagnostics.timed(name, existing_paths(root, function), LOG),

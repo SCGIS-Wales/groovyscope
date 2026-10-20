@@ -234,15 +234,17 @@ def daemon_item(root: Path, environ: Mapping[str, str], config_hash: str | None)
         return {
             "level": "info",
             "name": "daemon",
-            "message": f"running (engine {status.get('engineVersion', '?')}) with a {grown} heap, grown after an "
+            "message": f"running (engine {status.get('engine', '?')}) with a {grown} heap, grown after an "
             "out-of-memory exit; raise daemon.heap to keep it",
         }
-    return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engineVersion', '?')})"}
+    return {"level": "ok", "name": "daemon", "message": f"running (engine {status.get('engine', '?')})"}
 
 
-def cache_item(environ: Mapping[str, str], logs_kept: int, *, fix: bool) -> tuple[Item, list[str]]:
+def cache_item(
+    environ: Mapping[str, str], logs_kept: int, *, fix: bool, kiro_global: Path | None = None
+) -> tuple[Item, list[str]]:
     """Rotated logs beyond the kept count, stale CDS archives and old heap dumps; removed with ``fix``."""
-    items = sweep.inventory(daemon.cache_dir(environ), logs_kept=logs_kept)
+    items = sweep.inventory(daemon.cache_dir(environ), logs_kept=logs_kept, kiro_home=kiro_global)
     if not items:
         return ({"level": "ok", "name": "cache", "message": "nothing to sweep"}, [])
     if fix:
@@ -292,7 +294,14 @@ def build(
     add(*guarded("jdk", lambda: (jdk_item(root, config_path, environ), [])))
     add(*guarded("engine jar", lambda: (jar_item(environ), [])))
     add(*guarded("daemon", lambda: (daemon_item(root, environ, config_hash), [])))
-    add(*guarded("cache", lambda: cache_item(environ, logs_kept(root, config_path, environ), fix=fix)))
+    add(
+        *guarded(
+            "cache",
+            lambda: cache_item(
+                environ, logs_kept(root, config_path, environ), fix=fix, kiro_global=kiro.kiro_home(environ, home)
+            ),
+        )
+    )
     todo = [f"{item['message']}. Fix: `{item['fix']}`" for item in items if item.get("fix") and not item.get("safe")]
     todo += [f"{item['message']}. Fix: `{item['fix']}`" for item in items if item.get("fix") and item.get("safe")]
     todo += [f"{item['name']}: {item['message']}" for item in items if item["level"] == "fail" and not item.get("fix")]
@@ -344,9 +353,14 @@ def render(report: Report) -> list[str]:
     return lines
 
 
+# What the agent offers to run for the safe repairs; the start hook itself never writes files.
+SAFE_REPAIR_COMMAND = "groovyscope checkup --fix"
+
+
 def render_agent(report: Report, limit: int = 3800) -> str:
-    """The compact block the agent start hook injects: a header, what was repaired, what needs a decision, and
-    what is fine, within ``limit`` characters so Kiro never truncates it mid-sentence."""
+    """The compact block the agent start hook injects: a header, what was repaired (only with ``--fix``), what needs
+    a decision with the command that settles it, and what is fine, within ``limit`` characters so Kiro never
+    truncates it mid-sentence."""
     counts = {level: sum(1 for item in report["items"] if item["level"] == level) for level in ("ok", "warn", "fail")}
     header = (
         f"groovyscope {report['version']} checkup for {report['root']}: {counts['ok']} ok, {len(report['repaired'])} "
@@ -357,6 +371,8 @@ def render_agent(report: Report, limit: int = 3800) -> str:
         lines.append(f"repaired: {done}")
     for todo in report["todo"]:
         lines.append(f"todo: {todo}")
+    if any(item.get("fix") and item.get("safe") for item in report["items"]):
+        lines.append(f"offer: `{SAFE_REPAIR_COMMAND}` applies the safe repairs above; it writes files, so ask first")
     fine = [f"{item['name']} ({item['message']})" for item in report["items"] if item["level"] == "ok"]
     if fine:
         lines.append("ok: " + "; ".join(fine))

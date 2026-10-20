@@ -12,9 +12,11 @@ the skills and the steering file, loaded when they are needed, and in the answer
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 SERVER_NAME = "groovyscope"
 
-# name: (title, read only). Every tool is closed-world (only this workspace) and idempotent.
+# name: (title, read only). The behaviour hints beyond read only are in ToolHints below.
 TOOL_INFO: dict[str, tuple[str, bool]] = {
     "find_symbol": ("Find Groovy declarations", True),
     "goto_definition": ("Go to definition", True),
@@ -86,6 +88,35 @@ DESCRIPTIONS: dict[str, str] = {
     "test_results": "Failing tests from TEST-*.xml at any depth under SOURCES (folders or .zip archives; default "
     "the workspace): message and the first frames in the code and the test.",
 }
+
+
+# Tools whose `apply` overwrites workspace files, so a client should confirm before calling them that way.
+DESTRUCTIVE_TOOLS = frozenset({"fix", "format", "rename"})
+# Repeating the call with the same arguments does not give the same result: after a rename the symbol at the
+# position already carries the new name.
+NOT_IDEMPOTENT_TOOLS = frozenset({"rename"})
+# Reaches beyond this workspace: the classpath export runs the project's build, which may download dependencies.
+OPEN_WORLD_TOOLS = frozenset({"refresh_classpath"})
+
+
+class ToolHints(TypedDict):
+    """The MCP behaviour annotations of one tool."""
+
+    read_only: bool
+    destructive: bool
+    idempotent: bool
+    open_world: bool
+
+
+def hints(name: str) -> ToolHints:
+    """The behaviour annotations of ``name``, from the catalogue (an unknown tool counts as read only)."""
+    read_only = TOOL_INFO.get(name, (name, True))[1]
+    return {
+        "read_only": read_only,
+        "destructive": not read_only and name in DESTRUCTIVE_TOOLS,
+        "idempotent": name not in NOT_IDEMPOTENT_TOOLS,
+        "open_world": name in OPEN_WORLD_TOOLS,
+    }
 
 
 def read_only_tools() -> tuple[str, ...]:
