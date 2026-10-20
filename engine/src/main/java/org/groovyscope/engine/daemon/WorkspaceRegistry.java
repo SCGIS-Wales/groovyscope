@@ -16,11 +16,7 @@
 package org.groovyscope.engine.daemon;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,6 +27,7 @@ import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.index.SymbolStore;
 import org.groovyscope.engine.services.LanguageServices;
 import org.groovyscope.engine.workspace.WorkspaceModel;
+import org.groovyscope.engine.util.Hashes;
 
 /**
  * One {@link LanguageServices} per workspace root, shared by every connection that opens that root, so
@@ -113,13 +110,7 @@ public final class WorkspaceRegistry implements Function<Path, LanguageServices>
 
     /** A short, stable directory name for a workspace root (first 16 hex digits of its SHA-256). */
     public static String workspaceKey(Path root) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(root.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash).substring(0, 16);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
+        return Hashes.sha256Hex(root.toAbsolutePath().normalize().toString(), 8);
     }
 
     /** The configuration every workspace currently runs with. */

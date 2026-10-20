@@ -44,21 +44,29 @@ dependencies {
     }
 
     testImplementation(libs.spock.core)
+    // Specs read the shipped defaults.yaml to check the engine's own defaults agree with it.
+    testImplementation("org.apache.groovy:groovy-yaml:${libs.versions.groovy.get()}")
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.withType<JavaCompile>().configureEach {
     options.release.set(17)
     options.encoding = "UTF-8"
-    options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror"))
+    // Doclint checks the Javadoc of public types and members (syntax, references, HTML); a missing comment is
+    // allowed, a wrong one fails the build like any other warning.
+    options.compilerArgs.addAll(listOf("-Xlint:all", "-Xdoclint:all,-missing/public", "-Werror"))
 }
 
 tasks.withType<GroovyCompile>().configureEach {
     options.encoding = "UTF-8"
 }
 
-// The CodeNarc version comes from settings.gradle.kts (latest stable release on Maven Central, or the floor).
+// The CodeNarc version is pinned in the catalogue (the weekly canary builds with -PcodenarcResolve=true instead).
 val codenarcVersion = libs.versions.codenarc.get()
+
+// The bundled CodeNarc profiles and the practices catalogue have one source, the Python package's templates; the
+// engine's copies are made here and never kept in src/main/resources.
+val templates = layout.projectDirectory.dir("../python/src/groovyscope/_templates/config")
 
 tasks.processResources {
     // Locals only: a task action must not capture the script object (configuration cache).
@@ -68,6 +76,14 @@ tasks.processResources {
     inputs.property("codenarc", embeddedCodenarc)
     filesMatching("**/engine-version.properties") {
         expand("version" to projectVersion, "codenarc" to embeddedCodenarc)
+    }
+    from(templates.dir("codenarc")) {
+        include("*.groovy")
+        into("org/groovyscope/engine/lint")
+    }
+    from(templates.dir("practices")) {
+        include("practices.json")
+        into("org/groovyscope/engine/practices")
     }
 }
 

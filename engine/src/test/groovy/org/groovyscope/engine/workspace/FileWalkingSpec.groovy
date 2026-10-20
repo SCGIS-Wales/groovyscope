@@ -119,7 +119,7 @@ class FileWalkingSpec extends Specification {
     def 'invalid globs are reported once and match nothing'() {
         given:
         write('src/main/groovy/A.groovy', 'class A {}')
-        def config = new EngineConfig(EngineConfig.DEFAULTS.sourceRoots(), [], ['src/[', '**/build/**'], false)
+        def config = EngineConfig.builder().exclude(['src/[', '**/build/**']).build()
 
         expect:
         new WorkspaceModel(root, config).discoverSourceFiles()*.fileName*.toString() == ['A.groovy']

@@ -74,6 +74,9 @@ jobs:
         working-directory: python
         run: uv lock --check
 
+      - name: The repository's kiro/ and config/ match the package templates
+        run: python3 scripts/sync_templates.py --check
+
       - name: Bundle the engine JAR into the package
         run: python3 scripts/bundle_jar.py
 
