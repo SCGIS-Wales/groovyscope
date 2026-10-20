@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.26.0...v0.26.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* documentation brought up to date and reliability defects fixed ([#122](https://github.com/SCGIS-Wales/groovyscope/issues/122)) ([60aa2b3](https://github.com/SCGIS-Wales/groovyscope/commit/60aa2b3d290a4512d8f13fd8fb4fb35995ed07ad))
+
 ## [0.26.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.25.2...v0.26.0) (2026-10-20)
 
 
