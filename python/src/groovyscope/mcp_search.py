@@ -66,14 +66,16 @@ def search_tools(
     def uris(paths: Sequence[str] | None) -> list[str]:
         return [to_uri(root, p) for p in paths or []]
 
-    def read_symbol(path: str, symbol: str, line: int | None = None, max_chars_: int | None = None) -> dict[str, Any]:
+    ceiling = max_chars  # the session's output.maxBytes; the tool's own max_chars may only lower it
+
+    def read_symbol(path: str, symbol: str, line: int | None = None, max_chars: int | None = None) -> dict[str, Any]:
         """The source of one class, method or field in PATH (SYMBOL: `name`, `Class.name` or a class name), with
         line numbers. LINE (1-based) picks between overloads. Prefer this over reading line ranges."""
         params: dict[str, Any] = {
             "root": str(root),
             "uri": to_uri(root, path),
             "symbol": symbol,
-            "maxChars": min(max_chars_ or max_chars, max_chars),
+            "maxChars": min(max_chars or ceiling, ceiling),
         }
         if line is not None:
             params["line"] = line - 1

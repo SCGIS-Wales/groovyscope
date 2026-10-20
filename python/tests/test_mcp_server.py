@@ -1013,3 +1013,30 @@ def test_a_configuration_reload_never_outlives_the_call_that_carries_it() -> Non
     dispatch("groovyscope/status", {}, timeout=2.0)
     assert timeouts[mcp_server.RELOAD_METHOD] <= 2.0
     assert timeouts["groovyscope/status"] <= 2.0
+
+
+def test_read_symbol_takes_max_chars_as_documented(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "A.groovy").write_text("class A {}\n", encoding="utf-8")
+    seen: list[dict[str, Any]] = []
+
+    def call(method: str, params: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:
+        seen.append(params or {})
+        return {"found": True, "name": "A", "kind": "class", "startLine": 0, "endLine": 0, "text": "class A {}"}
+
+    server = mcp_server.build_server(tmp_path, call, {"maxBytes": 16000}, {})
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    schema = tools["read_symbol"].input_schema
+    assert "max_chars" in schema["properties"] and "max_chars_" not in schema["properties"]
+    # an internal name leaking into a published parameter would leave the documented one ignored
+    leaked = {
+        name: key
+        for name, tool in tools.items()
+        for key in tool.input_schema.get("properties", {})
+        if key.endswith("_") or key.startswith("_")
+    }
+    assert leaked == {}
+    asyncio.run(server.call_tool("read_symbol", {"path": "src/A.groovy", "symbol": "A", "max_chars": 40}))
+    assert seen[-1]["maxChars"] == 40
+    asyncio.run(server.call_tool("read_symbol", {"path": "src/A.groovy", "symbol": "A", "max_chars": 99999}))
+    assert seen[-1]["maxChars"] == 16000  # never above output.maxBytes
