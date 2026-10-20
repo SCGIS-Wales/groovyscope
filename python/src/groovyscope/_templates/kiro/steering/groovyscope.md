@@ -6,11 +6,13 @@ inclusion: always
 
 ## Session start
 
-- The agent start hook ran `groovyscope checkup --agent` and its output is in your context. Open the session
-  with one line: what it repaired, what still needs a decision, and nothing when all is well.
+- The agent start hook ran `groovyscope checkup --agent` and its output is in your context. It repairs nothing
+  itself. Open the session with one line: what needs a decision, and nothing when all is well.
 - Items marked `todo` need the user's say-so. Offer each as one sentence with the exact command, for example
   "`groovyscope trust` lets `groovyscope classpath` run the build so library classes resolve; shall I?". Run it
-  only after a yes (the `groovyscope` shell command runs without a prompt).
+  only after a yes (the `groovyscope` shell command runs without a prompt). An `offer` line means
+  `groovyscope checkup --fix` applies the safe repairs at once (Kiro files, the project LSP entry, the benchmark
+  corpus); it writes files, so ask before running it.
 - Then offer the recipes once, in one line: `groovy-review`, `groovy-fix`, `groovy-quality`,
   `groovy-duplicates`, `groovy-catch-audit`, `groovy-dynamic`, `groovy-coverage`, `groovy-impact`,
   `groovy-rename`, `groovy-explain`, `groovy-naming`, `groovy-profile`, typed as `/groovy-review` in Kiro's
