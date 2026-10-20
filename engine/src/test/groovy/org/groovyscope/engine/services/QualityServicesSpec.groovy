@@ -51,10 +51,10 @@ class QualityServicesSpec extends Specification {
 
     def 'profiles are picked from the path'() {
         expect:
-        QualityServices.profileFor('file:///p/Jenkinsfile') == 'jenkins'
-        QualityServices.profileFor('file:///p/Jenkinsfile.prod') == 'jenkins'
-        QualityServices.profileFor('file:///lib/vars/deploy.groovy') == 'jenkins'
-        QualityServices.profileFor('file:///p/src/A.groovy') == 'default'
+        QualityServices.profileByName('file:///p/Jenkinsfile') == 'jenkins'
+        QualityServices.profileByName('file:///p/Jenkinsfile.prod') == 'jenkins'
+        QualityServices.profileByName('file:///lib/vars/deploy.groovy') == 'jenkins'
+        QualityServices.profileByName('file:///p/src/A.groovy') == 'default'
     }
 
     def 'check runs every analysis and sorts findings by position'() {

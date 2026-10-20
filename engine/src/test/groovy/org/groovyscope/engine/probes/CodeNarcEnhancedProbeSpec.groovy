@@ -21,10 +21,8 @@ import spock.lang.Shared
 import spock.lang.Specification
 
 /**
- * Probe 0.5 of the improvement plan, pinned as it is today so the Phase 4 fixes flip it on purpose: enhanced rules
- * fire for JDK types but not for the workspace's own classes (no workspace classpath reaches CodeNarc, Q-05), and the
- * jenkins.xml rules run only in files named Jenkinsfile (CodeNarc's default applyToFileNames), never in a shared
- * library's vars/ or src/ (Q-04).
+ * Probe 0.5 of the improvement plan, flipped by Phase 4: enhanced rules now see the workspace's own classes (Q-05),
+ * and the jenkins.xml rules run in every file of the Jenkins profile, a shared library's vars/ and src/ included (Q-04).
  */
 class CodeNarcEnhancedProbeSpec extends Specification {
 
@@ -37,19 +35,19 @@ class CodeNarcEnhancedProbeSpec extends Specification {
         services.quality().lint(uri, text, profile)*.code() as Set
     }
 
-    def 'enhanced rules fire for JDK types but not for workspace classes'() {
+    def 'enhanced rules fire for JDK types and for workspace classes'() {
         expect:
         'MissingOverrideAnnotation' in codes('class Task implements Runnable {\n    void run() {\n    }\n}\n', 'default')
         'CloneWithoutCloneable' in codes('class Copy {\n    Copy clone() {\n        null\n    }\n}\n', 'default')
-        !('MissingOverrideAnnotation' in codes(
+        'MissingOverrideAnnotation' in codes(
                 'import app.Greeter\nclass Polite extends Greeter {\n    String greet(String name) {\n        name\n    }\n}\n',
-                'default'))
+                'default')
     }
 
-    def 'jenkins.xml rules run in a Jenkinsfile only'() {
+    def 'jenkins.xml rules run in every file of the Jenkins profile'() {
         expect:
         'ClosureInGString' in codes(CLOSURE_IN_GSTRING, 'jenkins', 'file:///probe/Jenkinsfile')
-        !('ClosureInGString' in codes(CLOSURE_IN_GSTRING, 'jenkins', 'file:///probe/vars/deploy.groovy'))
-        !('ClosureInGString' in codes(CLOSURE_IN_GSTRING, 'jenkins', 'file:///probe/src/org/acme/Deploy.groovy'))
+        'ClosureInGString' in codes(CLOSURE_IN_GSTRING, 'jenkins', 'file:///probe/vars/deploy.groovy')
+        'ClosureInGString' in codes(CLOSURE_IN_GSTRING, 'jenkins', 'file:///probe/src/org/acme/Deploy.groovy')
     }
 }

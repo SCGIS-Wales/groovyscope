@@ -187,6 +187,7 @@ public final class CodeNarcAnalyzer {
         for (int attempt = 0; attempt <= MAX_UNKNOWN_RULES; attempt++) {
             try {
                 RuleSet loaded = text == null ? new GroovyDslRuleSet(resolved) : loadText(text);
+                forEveryFileOfTheProfile(loaded);
                 if (!unknown.isEmpty()) {
                     unknownRules.put(resolved, unknown);
                     org.groovyscope.engine.log.EngineLog.warn("%s", configProblems().get(0));
@@ -205,6 +206,20 @@ public final class CodeNarcAnalyzer {
             }
         }
         throw new IllegalStateException("cannot load CodeNarc rule set " + resolved + ": too many unknown rules");
+    }
+
+    /**
+     * CodeNarc's Jenkins rules apply to files named {@code Jenkinsfile} only (their default {@code applyToFileNames});
+     * the engine picks the Jenkins profile itself (Jenkinsfiles, {@code vars/}, a shared library's {@code src/}), so
+     * within that profile they apply to every file.
+     */
+    static void forEveryFileOfTheProfile(RuleSet loaded) {
+        for (Object item : loaded.getRules()) {
+            if (item instanceof org.codenarc.rule.AbstractRule rule
+                    && rule.getClass().getPackageName().equals("org.codenarc.rule.jenkins")) {
+                rule.setApplyToFileNames(null);
+            }
+        }
     }
 
     static final int MAX_UNKNOWN_RULES = 64;
@@ -274,6 +289,21 @@ public final class CodeNarcAnalyzer {
     static String pathOf(String uri) {
         java.nio.file.Path path = org.groovyscope.engine.workspace.WorkspaceModel.toPath(uri);
         return path == null ? null : path.toString().replace('\\', '/');
+    }
+
+    /**
+     * Lints one document's text with {@code context} as the thread's context class loader, which is what CodeNarc's
+     * enhanced rules resolve types through (the workspace's classes, see {@code QualityServices.lintLoader}).
+     */
+    public List<Diagnostic> analyze(String uri, String text, RuleSet ruleSet, ClassLoader context) {
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        thread.setContextClassLoader(context);
+        try {
+            return analyze(uri, text, ruleSet);
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
     }
 
     /** Lints one document's text with the given rule set. */

@@ -77,6 +77,60 @@ public final class QualityServices {
     private final WorkspaceModel workspace;
     private final LanguageServices navigation;
     private final CodeNarcAnalyzer codeNarc = new CodeNarcAnalyzer();
+    /**
+     * The class loader CodeNarc's enhanced rules resolve types through (Q-05): the workspace's source roots, so a
+     * rule sees a superclass the workspace declares, and in a trusted workspace its classpath too (jars can bring
+     * AST transformations, which only trust lets run). One per published snapshot; the one before the previous is
+     * closed, so a lint still running on the previous keeps working.
+     */
+    private record LintLoader(long version, groovy.lang.GroovyClassLoader loader) {
+    }
+
+    private final java.util.concurrent.atomic.AtomicReference<LintLoader> lintLoader =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<LintLoader> previousLintLoader =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    ClassLoader lintLoader() {
+        long version = navigation.currentSnapshot().version();
+        LintLoader current = lintLoader.get();
+        if (current != null && current.version() == version) {
+            return current.loader();
+        }
+        groovy.lang.GroovyClassLoader loader = new groovy.lang.GroovyClassLoader(
+                new org.groovyscope.engine.compile.WorkspaceParentClassLoader(
+                        org.groovyscope.engine.compile.GroovyCompiler.class.getClassLoader()));
+        for (java.nio.file.Path root : workspace.sourceRootPaths()) {
+            loader.addClasspath(root.toString());
+        }
+        if (workspace.config().trust()) {
+            for (java.nio.file.Path entry : workspace.classpath()) {
+                try {
+                    loader.addURL(entry.toUri().toURL());
+                } catch (java.net.MalformedURLException e) {
+                    org.groovyscope.engine.log.EngineLog.debug("lint classpath entry %s skipped: %s", entry, e);
+                }
+            }
+        }
+        LintLoader fresh = new LintLoader(version, loader);
+        if (!lintLoader.compareAndSet(current, fresh)) {
+            closeQuietly(loader);
+            return lintLoader.get().loader();
+        }
+        LintLoader retired = previousLintLoader.getAndSet(current);
+        if (retired != null) {
+            closeQuietly(retired.loader());
+        }
+        return loader;
+    }
+
+    private static void closeQuietly(groovy.lang.GroovyClassLoader loader) {
+        try {
+            loader.close();
+        } catch (java.io.IOException e) {
+            // the jars are released on GC at the latest
+        }
+    }
     private final TypeCheckAnalyzer typeChecker = new TypeCheckAnalyzer();
     private final org.groovyscope.engine.compile.GroovyCompiler compiler = new org.groovyscope.engine.compile.GroovyCompiler();
     private final Map<String, LintEntry> lintCache = new ConcurrentHashMap<>();
@@ -225,8 +279,22 @@ public final class QualityServices {
         this.navigation = navigation;
     }
 
+    /**
+     * The profile of a file in this workspace: {@link #profileByName}, and {@code jenkins} as well for the {@code src}
+     * classes of a Jenkins shared library (a folder holding {@code vars/} beside {@code src/} or {@code resources/}),
+     * which run on the same CPS runtime as its {@code vars} scripts.
+     */
+    public String profileFor(String uri) {
+        String byName = profileByName(uri);
+        if (!PROFILE_DEFAULT.equals(byName)) {
+            return byName;
+        }
+        java.nio.file.Path file = WorkspaceModel.toPath(uri);
+        return file != null && WorkspaceModel.inSharedLibrarySource(file, workspace.root()) ? PROFILE_JENKINS : byName;
+    }
+
     /** {@code jenkins} for Jenkinsfiles and shared-library {@code vars} scripts, {@code default} otherwise. */
-    public static String profileFor(String uri) {
+    public static String profileByName(String uri) {
         String path = uri.replace('\\', '/');
         int slash = path.lastIndexOf('/');
         String name = slash >= 0 ? path.substring(slash + 1) : path;
@@ -259,8 +327,8 @@ public final class QualityServices {
         if (cached != null && cached.key.equals(key)) {
             diagnostics = cached.diagnostics;
         } else {
-            diagnostics = codeNarc.analyze(uri, text, ruleSet(chosen));
-            lintCache.put(uri, new LintEntry(key, List.copyOf(diagnostics)));
+            diagnostics = List.copyOf(codeNarc.analyze(uri, text, ruleSet(chosen), lintLoader()));
+            lintCache.put(uri, new LintEntry(key, diagnostics));
         }
         Optional<Profile> governing = governing(uri);
         if (governing.isEmpty() || governing.get().codenarcDisable().isEmpty()) {
