@@ -19,6 +19,8 @@ when given, else `main`; "only what is staged" means `staged: true`.
 ## Report, in this order
 
 - The verdict in one sentence: `request changes`, `approve with comments` or `approve`.
+- Unused code first when there is any (`attention` and the `unused` block): every unused import, variable and
+  parameter on the changed lines with file and line, and the count already in the changed files.
 - Blocking items with file and line: errors, and anything from the security and runtime-profile groups.
 - Should-fix items (warnings on the changed lines); offer `groovyscope.fix` for the mechanical ones.
 - What is by design, and why.

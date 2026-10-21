@@ -361,6 +361,7 @@ deliberately loose so shared runners do not fail the build.
 | `jar.py` | JAR lookup (`GROOVYSCOPE_JAR`, bundled, fetched) and SHA-256 verification |
 | `fetch.py` | `groovyscope fetch`: checksum-verified install of a release JAR into the cache |
 | `gitignore.py` | keeps the workspace's `.groovyscope/` folder out of git: one entry in the repository's `.gitignore`, never duplicated (an equivalent line or a rule git already applies counts), and never written while a merge or rebase is in progress |
+| `unused.py` | unused code: the CodeNarc rules that report unused imports, variables, parameters, private members and unreachable code, the `unused` block and `attention` line every finding answer carries, and the ordering that puts one finding of each code on a page before the second of any |
 | `conflicts.py` | merge conflict hunks: parsing (with the stray markers a hand edit leaves), suggestions when one side left a hunk unchanged, the choices, the joins of both sides that repeat the lines git moved out of a hunk, and the git state (operation in progress, unmerged files, the base from the index) |
 | `mcp_merge.py` | `merge_conflicts`, `resolve_conflicts` (one write per file, parsed by the engine's `groovyscope/parse` first) and `merge_review` (declarations lost, deletions undone and changes dropped, against ours, theirs and the merge base) |
 | `provision.py` | opt-in Temurin JDK provisioning through the Adoptium API (`jdk install`, `jdk.autoProvision`) |

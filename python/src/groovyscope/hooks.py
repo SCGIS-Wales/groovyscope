@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import atomic, conflicts
+from groovyscope import atomic, conflicts, unused
 from groovyscope import config as config_module
 from groovyscope.paths import GROOVY_SUFFIXES
 
@@ -124,6 +124,10 @@ def render_after_write(rows: Sequence[Mapping[str, Any]], paths: Sequence[Path],
     warnings = sum(1 for row in ordered if int(row.get("level", 3)) == WARNING_LEVEL)
     shown = ", ".join(_relative(path, root) for path in paths)
     lines = [f"groovyscope checked {shown}: {errors} error(s), {warnings} warning(s), {len(ordered)} finding(s)"]
+    dead = unused.summary(ordered, limit=limit)
+    if dead["total"]:
+        where = ", ".join(f"{item['line']} {item['kind'].rstrip('s')}" for item in dead["items"])
+        lines.append(f"  UNUSED: {unused.counted(dead['byKind'])} (lines {where}); remove them now")
     for row in ordered[:limit]:
         lines.append(
             f"  {row.get('path')}:{row.get('line')}:{row.get('column')} {row.get('severity')} "

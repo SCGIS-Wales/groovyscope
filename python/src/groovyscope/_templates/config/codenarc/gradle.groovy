@@ -27,7 +27,13 @@ ruleset {
         exclude 'SpaceAroundMapEntryColon'
     }
     ruleset('rulesets/groovyism.xml')
-    ruleset('rulesets/imports.xml')
+    ruleset('rulesets/imports.xml') {
+        // unused and redundant imports are dead code: warnings, so the editor and the after-write hook show them
+        'UnusedImport' { priority = 2 }
+        'UnnecessaryGroovyImport' { priority = 2 }
+        'DuplicateImport' { priority = 2 }
+        'ImportFromSamePackage' { priority = 2 }
+    }
     ruleset('rulesets/security.xml') {
         exclude 'JavaIoPackageAccess'   // build logic reads and writes files
     }

@@ -22,6 +22,7 @@ EXPECTED = (
     "groovy-quality",
     "groovy-rename",
     "groovy-review",
+    "groovy-unused",
 )
 
 

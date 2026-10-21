@@ -34,6 +34,7 @@ from groovyscope import (
     reports,
     rpc,
     skills,
+    unused,
     verify,
 )
 from groovyscope import classpath as classpath_export
@@ -453,6 +454,7 @@ def check(
     clip_at: int,
     settings: Mapping[str, Any],
     classpath: Mapping[str, Any],
+    cap: int,
     *,
     paths: list[str] | None = None,
     profile: str | None = None,
@@ -480,14 +482,54 @@ def check(
     ]
     imported, imported_summary = imported_findings(root, settings, paths)
     findings, extra = summarise([*findings, *imported], codes, max_priority)
-    findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["path"], f["line"]))
+    findings = unused.diverse(findings, SEVERITY_ORDER)
     result = paged(findings, limit, cursor)
+    unused.with_unused(result, findings, limit=cap)
     result["summary"] = raw.get("summary", {})
     result.update(extra)
     result.update(imported_summary)
     state = classpath_state(root, classpath)
     if state is not None and state["state"] in ATTENTION_STATES:
         result["classpath"] = state
+    return result
+
+
+def find_unused(
+    root: Path,
+    call: Call,
+    cap: int,
+    clip_at: int,
+    paths: list[str] | None = None,
+    changed_only: bool = False,
+    base: str | None = None,
+) -> dict[str, Any]:
+    """Every unused import, variable, parameter, private method and field, and unreachable statement in PATHS
+    (the workspace when empty), or only on the lines this branch changed against BASE with CHANGED_ONLY, counted by
+    kind, with the ones `fix` removes safely marked fixable. Nothing else is listed, so nothing crowds them out."""
+    ranges: dict[str, list[list[int]]] | None = None
+    if changed_only:
+        try:
+            change = changes.changed_files(root, base)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        ranges = changes.ranges_by_path(change)
+        paths = list(ranges)
+        if not paths:
+            return {"unused": unused.summary([], limit=cap), "note": f"no Groovy changes against {change['base']}"}
+    raw = call(
+        "groovyscope/check", {"root": str(root), "uris": [to_uri(root, p) for p in paths or []], "include": ["lint"]}
+    )
+    findings = [
+        compact_diagnostic(uri, item, root, clip_at)
+        for uri, items in raw.get("diagnostics", {}).items()
+        for item in items
+        if unused.is_unused(item.get("code"))
+    ]
+    if ranges is not None:
+        findings = changes.split_findings(findings, ranges)[0]
+    result = unused.with_unused({}, findings, limit=cap)
+    if result["unused"]["total"] > cap:
+        result["note"] = f"{cap} of {result['unused']['total']} listed; narrow the paths to see the rest"
     return result
 
 
@@ -573,7 +615,8 @@ def quality_tools(
     export_job = new_export_job()
 
     return {
-        "check": bind(check, root, call, paged, clip_at, settings, classpath),
+        "check": bind(check, root, call, paged, clip_at, settings, classpath, cap),
+        "find_unused": bind(find_unused, root, call, cap, clip_at),
         "format": bind(format_files, root, call, cap, confirm_policy),
         "find_dynamic_code": bind(find_dynamic_code, root, call, paged),
         "workspace_status": bind(workspace_status, root, environ, call, classpath, export_job),
@@ -894,13 +937,14 @@ def review(
     ]
     imported, imported_summary = imported_findings(root, settings, paths)
     findings, extra = summarise([*findings, *imported], None, max_priority)
-    groups = practices.review(findings, max(1, min(top, cap)))
+    groups = practices.review(findings, max(1, min(top, cap)), full={practices.UNUSED_GROUP: cap})
     result: dict[str, Any] = {
         "summary": raw.get("summary", {}),
         "groups": groups[:cap],
         **extra,
         **imported_summary,
     }
+    unused.with_unused(result, findings, limit=cap)
     governed = governed_files(root, call, cap, paths or [])
     if governed:
         result["profiles"] = governed
@@ -1167,6 +1211,8 @@ def review_changes(
     inside, elsewhere = changes.split_findings(findings, ranges)
     buckets = changes.bucket(inside)
     limit = max(1, min(top, cap))
+    dead = unused_review(inside, elsewhere, cap)
+    kinds = dead["unused"]["byKind"]
     impact: list[dict[str, Any]] = []
     reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
     touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
@@ -1213,7 +1259,8 @@ def review_changes(
     )
     result.update(
         {
-            "verdict": changes.verdict(buckets, risky, impact),
+            "verdict": changes.verdict(buckets, risky, impact, kinds),
+            **dead,
             "triage": changes.triage(inside, limit=limit),
             "tests": verify.plan(root, reports, paths, verify_settings or {}, limit=limit, touched=touched),
             "blocking": buckets["blocking"][:limit],
@@ -1237,9 +1284,24 @@ def review_changes(
     comments = changes.draft_comments(buckets, risky[:limit], uncovered[:limit], limit=limit * COMMENTS_PER_TOP)
     result["comments"] = comments
     result["summaryComment"] = changes.summary_comment(
-        result["verdict"], result["counts"], impact, len(uncovered), len(comments)
+        result["verdict"], result["counts"], impact, len(uncovered), len(comments), unused_kinds=kinds
     )
     return result
+
+
+def unused_review(
+    inside: Sequence[Mapping[str, Any]], elsewhere: Sequence[Mapping[str, Any]], cap: int
+) -> dict[str, Any]:
+    """The ``unused`` block of review_changes (the changed lines, with the counts already in the changed files) and
+    its ``attention`` line when the change leaves unused code."""
+    found = unused.summary(inside, limit=cap)
+    entries: dict[str, Any] = {
+        "unused": {**found, "elsewhereInChangedFiles": unused.summary(elsewhere, limit=0)["byKind"]}
+    }
+    line = unused.attention(found, where=" on the changed lines")
+    if line is not None:
+        entries["attention"] = line
+    return entries
 
 
 def in_change(gap: Mapping[str, Any], ranges: Mapping[str, Sequence[Sequence[int]]]) -> bool:

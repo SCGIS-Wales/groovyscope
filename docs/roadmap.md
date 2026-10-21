@@ -425,6 +425,19 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   to 13,986 bytes, the three tools add 1,017; the budget goes from 14,000 to 15,100.
   Done when: merged and released (0.27.0, verified from PyPI on a real conflicted merge); the owner's next
   conflicted merge in Kiro is listed under the owner checks.
+- [ ] **Stage 23: unused code in the reviewer's face** — branch `feat/unused-code`, 2026-10-21, from the owner's
+  report on a clean-up merge request: the unused imports, variables and parameters it removed by hand were all
+  detected (CodeNarc), but sat among hundreds of `LineLength` and `Indentation` findings, so a page of `check`
+  and the top five of `review`'s style group never showed them, and unused imports were information only, so the
+  editor never got them. Now: an `unused` group in the catalogue, first in every `review` and listed in full; an
+  `unused` block on every `check`, `review` and `review_changes` answer (built before any page is cut, zero
+  included) and an `attention` line that sorts first; the verdict, the triage (never a nit) and the merge request
+  summary name them; one finding of each code on a page before the second of any; unused and redundant imports
+  raised to warnings in the three profiles; `find_unused`, `groovyscope unused` (exits 1, for a pipeline), the
+  `groovy-unused` skill and an `UNUSED:` line in the after-write hook. Not done: a low-confidence mark on a stale
+  classpath, since CodeNarc's unused rules read the source, not the classpath. Tool surface: 15,003 bytes, plus
+  452 for `find_unused`; the budget goes from 15,100 to 15,500.
+  Done when: merged, released, and the owner's next review shows the unused items first.
 
 ## Owner checks still open
 
