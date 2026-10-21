@@ -425,7 +425,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   to 13,986 bytes, the three tools add 1,017; the budget goes from 14,000 to 15,100.
   Done when: merged and released (0.27.0, verified from PyPI on a real conflicted merge); the owner's next
   conflicted merge in Kiro is listed under the owner checks.
-- [ ] **Stage 23: unused code in the reviewer's face** — branch `feat/unused-code`, 2026-10-21, from the owner's
+- [x] **Stage 23: unused code in the reviewer's face** — released in 0.28.0 (PR #128); 2026-10-21, from the owner's
   report on a clean-up merge request: the unused imports, variables and parameters it removed by hand were all
   detected (CodeNarc), but sat among hundreds of `LineLength` and `Indentation` findings, so a page of `check`
   and the top five of `review`'s style group never showed them, and unused imports were information only, so the
@@ -437,7 +437,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   `groovy-unused` skill and an `UNUSED:` line in the after-write hook. Not done: a low-confidence mark on a stale
   classpath, since CodeNarc's unused rules read the source, not the classpath. Tool surface: 15,003 bytes, plus
   452 for `find_unused`; the budget goes from 15,100 to 15,500.
-  Done when: merged, released, and the owner's next review shows the unused items first.
+  Done when: merged and released (0.28.0, verified from PyPI: `groovyscope unused` lists the items and exits 1,
+  `groovyscope review` opens with them); the owner's next review in Kiro is listed under the owner checks.
 
 ## Owner checks still open
 
@@ -457,6 +458,7 @@ without them.
 - Stage 20: one elicitation prompt.
 - Stage 21: the retest of the failed checks.
 - Stage 22: one conflicted merge resolved in Kiro with `groovy-merge` (approvals asked, hook lines, review).
+- Stage 23: one `review_changes` in Kiro that opens with the unused code, and `groovy-unused` on a real file.
 - Repository settings: the `RELEASE_PLEASE_TOKEN` secret, "Allow auto-merge", and the decisions listed in
   section 13 of the improvement plan (ruleset, `pypi` environment tag rule, GitHub App, Scorecard, lockfiles,
   code owner review).
