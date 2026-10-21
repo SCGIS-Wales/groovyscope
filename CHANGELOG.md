@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.28.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.27.0...v0.28.0) (2026-10-21)
+
+
+### Features
+
+* unused code leads every review ([#128](https://github.com/SCGIS-Wales/groovyscope/issues/128)) ([4463623](https://github.com/SCGIS-Wales/groovyscope/commit/446362332fbb875b4379703bc9b3d78f9fd763e6))
+
+
+### Documentation
+
+* mark the merge conflict stage released in 0.27.0 ([#126](https://github.com/SCGIS-Wales/groovyscope/issues/126)) ([a0ef19b](https://github.com/SCGIS-Wales/groovyscope/commit/a0ef19ba4440b38a5a924bacd52008deae6affae))
+
 ## [0.27.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.26.1...v0.27.0) (2026-10-20)
 
 
