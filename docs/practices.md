@@ -533,6 +533,30 @@ dependencies {
 
 **Suppressing a finding:** use `@SuppressWarnings('RuleName')` or a `// codenarc-disable RuleName` comment.\[44\]
 
+### 12.1 Unused code
+
+Unused imports, variables, parameters, private methods and fields, objects created and dropped, and unreachable
+statements are dead code: they mislead the reader about what a file depends on and what a method needs, and they
+survive every refactoring because nothing fails. groovyscope treats them as their own review group, above style:
+`check`, `review` and `review_changes` carry an `unused` block with every one of them (never cut by the style
+findings around them) and an `attention` line when there are any, `find_unused` lists them alone, and
+`groovyscope unused` exits 1 on them, so a pipeline can gate on it. Unused, duplicate and redundant Groovy imports
+are removed by `fix`; a variable, a parameter or a private member needs a hand edit, because the right side of an
+assignment may have an effect and a parameter has arguments at every call site. To make the whole family errors,
+raise their priority in `.groovyscope.yaml`:
+
+```yaml
+lint:
+  rules:
+    UnusedImport: {priority: 1}
+    UnnecessaryGroovyImport: {priority: 1}
+    UnusedVariable: {priority: 1}
+    UnusedMethodParameter: {priority: 1}
+    UnusedPrivateMethodParameter: {priority: 1}
+    UnusedPrivateMethod: {priority: 1}
+    UnusedPrivateField: {priority: 1}
+```
+
 ---
 
 ## 13. Groovy 5 and 6 feature adoption guide

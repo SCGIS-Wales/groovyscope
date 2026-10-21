@@ -16,7 +16,7 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
   corpus); it writes files, so ask before running it.
 - Then offer the recipes once, in one line: `groovy-review`, `groovy-fix`, `groovy-quality`,
   `groovy-duplicates`, `groovy-catch-audit`, `groovy-dynamic`, `groovy-coverage`, `groovy-impact`,
-  `groovy-rename`, `groovy-explain`, `groovy-naming`, `groovy-profile`, `groovy-merge`, typed as `/groovy-review` in Kiro's
+  `groovy-rename`, `groovy-explain`, `groovy-naming`, `groovy-profile`, `groovy-merge`, `groovy-unused`, typed as `/groovy-review` in Kiro's
   terminal UI and as `@groovy-review` in the classic chat (`--classic`). Each is a skill (and an MCP
   prompt of the same name) that says which tools to call and how to report; follow it when the request
   matches, whether or not the user typed the slash command.
@@ -27,6 +27,11 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
   block appears with its findings, errors first. No block means the file is clean. Fix errors before moving
   on (`groovyscope.fix` applies the safe ones); treat warnings as part of the job.
 - When a `Stop` gate is on, the turn is refused while files you changed do not compile: fix, then finish.
+
+## Unused code
+
+- An `attention` line or an `UNUSED:` hook line means unused imports, variables or parameters: report them first
+  and remove them before finishing (`groovy-unused`); never leave them for a later clean-up.
 
 ## Merge conflicts
 

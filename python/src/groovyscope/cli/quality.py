@@ -28,6 +28,7 @@ from groovyscope import (
 )
 from groovyscope import config as config_module
 from groovyscope import daemon as daemon_lifecycle
+from groovyscope import unused as unused_module
 from groovyscope.cli import common
 from groovyscope.config import load_config
 from groovyscope.edits import (
@@ -89,8 +90,9 @@ def check(
     rows = common.finding_rows(result.get("diagnostics", {}), obj["root"])
     rows += common.imported_rows(obj["root"], effective, sarif_paths, paths)
     summary = result.get("summary", {})
+    found = unused_module.summary(rows, limit=0)
     if as_json or output_format == "json":
-        click.echo(compact_json({"findings": rows, "summary": summary}))
+        click.echo(compact_json({"findings": rows, "summary": summary, "unused": found}))
     elif output_format == "short":
         for line in practices.short_lines(rows):
             click.echo(line)
@@ -104,6 +106,8 @@ def check(
             f"{summary.get('errors', 0)} error(s), {summary.get('warnings', 0)} warning(s), "
             f"{summary.get('information', 0)} info in {summary.get('files', 0)} file(s)"
         )
+        if found["total"]:
+            click.echo(f"UNUSED: {unused_module.counted(found['byKind'])}; `groovyscope unused` lists them")
     fail_on = int(effective["lint"]["failOnPriority"])
     if any(row["level"] <= fail_on for row in rows):
         sys.exit(1)
@@ -493,7 +497,11 @@ def render_review(result: dict[str, Any]) -> list[str]:
     """The review as text: verdict first, then the groups a reviewer reads in order."""
     if result.get("error"):
         return [f"groovyscope: {result['error']}"]
-    lines: list[str] = []
+    lines: list[str] = [f"ATTENTION: {result['attention']}"] if result.get("attention") else []
+    lines += [
+        f"  unused {item['kind'].rstrip('s')}: {item['path']}:{item['line']} {item.get('name') or item['code']}"
+        for item in (result.get("unused") or {}).get("items", [])
+    ]
     if "verdict" in result:
         lines.append(f"verdict: {result['verdict']}")
         shown = ", ".join(f"{f['path']} ({f['status']}, {f['changedLines']} lines)" for f in result.get("files", []))
@@ -592,6 +600,40 @@ def naming_command(obj: dict[str, Any], *, paths: tuple[Path, ...], as_json: boo
             f"[{finding['code']}] {finding['message']}"
         )
     click.echo(f"{len(result.get('items', []))} naming finding(s); by code: {result.get('byCode', {})}")
+
+
+@common.main.command("unused")
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option("--changed", is_flag=True, help="Only the lines this branch changed (against --base).")
+@click.option("--base", default=None, help="Base branch for --changed (default: the repository's default branch).")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_obj
+def unused_command(
+    obj: dict[str, Any], *, paths: tuple[Path, ...], changed: bool, base: str | None, as_json: bool
+) -> None:
+    """Unused imports, variables, parameters, private methods and fields, and unreachable code in PATHS (the
+    workspace when empty); exits 1 when there is any, so a pipeline can gate on it."""
+    socket_file, effective = common.daemon_socket_for(obj)
+    tools = common.workspace_tools(obj, socket_file, effective)
+    relative = [common.shown_path(obj["root"] / p, obj["root"]) for p in paths]
+    result = tools["find_unused"](relative or None, changed_only=changed, base=base)
+    if as_json:
+        click.echo(compact_json(result))
+    elif result.get("error"):
+        click.echo(f"groovyscope: {result['error']}")
+    else:
+        found = result["unused"]
+        for item in found["items"]:
+            fixable = " (fix removes it)" if item.get("fixable") else ""
+            where = f"{item['path']}:{item['line']}: unused {item['kind'].rstrip('s')}"
+            click.echo(f"{where} [{item['code']}] {item['message']}{fixable}")
+        click.echo(
+            f"{found['total']} unused" + (f": {unused_module.counted(found['byKind'])}" if found["total"] else "")
+        )
+        if result.get("note"):
+            click.echo(result["note"])
+    if result.get("error") or result.get("unused", {}).get("total"):
+        sys.exit(1)
 
 
 @common.main.command("format")

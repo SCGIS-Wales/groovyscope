@@ -12,6 +12,7 @@ from groovyscope import __version__
 
 CATALOG_PATH = ("_templates", "config", "practices", "practices.json")
 DEFAULT_GROUP = "style"
+UNUSED_GROUP = "unused"  # dead code: always the first group of a review, and listed in full
 SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 SARIF_LEVELS = {"error": "error", "warning": "warning", "info": "note", "hint": "note"}
 
@@ -50,8 +51,12 @@ def level(row: Mapping[str, Any]) -> int:
     return int(row["level"]) if "level" in row else LEVELS.get(str(row.get("severity")), 3)
 
 
-def review(rows: Sequence[Mapping[str, Any]], top: int) -> list[dict[str, Any]]:
-    """Findings grouped by the section 15 checklist, worst groups first, each with counts and its top findings."""
+def review(
+    rows: Sequence[Mapping[str, Any]], top: int, *, full: Mapping[str, int] | None = None
+) -> list[dict[str, Any]]:
+    """Findings grouped by the section 15 checklist, worst groups first, each with counts and its top findings.
+    The unused code group comes first whatever its severity, since it is the cheapest to fix and the easiest to
+    lose among style findings; ``full`` gives groups listed beyond ``top`` (group id to how many)."""
     groups = {g["id"]: g for g in catalog()["groups"]}
     buckets: dict[str, list[Mapping[str, Any]]] = {}
     for row in rows:
@@ -71,10 +76,10 @@ def review(rows: Sequence[Mapping[str, Any]], top: int) -> list[dict[str, Any]]:
                 "counts": counts,
                 "total": len(items),
                 "worst": min(level(r) for r in items),
-                "findings": ordered[:top],
+                "findings": ordered[: (full or {}).get(group_id, top)],
             }
         )
-    result.sort(key=lambda g: (g["worst"], -g["total"]))
+    result.sort(key=lambda g: (g["group"] != UNUSED_GROUP, g["worst"], -g["total"]))
     return result
 
 

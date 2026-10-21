@@ -24,7 +24,9 @@ Use for "fix what is safe", "clean up my changes". Base branch: `$ARGUMENTS` whe
 <!-- fix checklist: generated from practices.json by skills.with_fix_checklist -->
 - Applied without naming a code, behaviour kept: GS005 (GString in a log call),
   UnnecessaryDefInVariableDeclaration (def combined with a type), UnnecessaryGString (Double quotes without
-  interpolation), and the semicolon, whitespace and blank line fixes the formatter also makes.
+  interpolation), UnusedImport (Unused import), UnnecessaryGroovyImport (Import Groovy already provides),
+  DuplicateImport (Duplicate import), and the semicolon, whitespace and blank line fixes the formatter also
+  makes.
 - Applied only when named in `codes`, because the fix changes behaviour: GS001 (Integer division with /),
   GS002 (Elvis on a value where 0 or empty is valid), GS003 (Safe navigation into a primitive), GS004 (File or
   Path used as a boolean), GS008 (Command built as a string), GS011 (Spock .with {} in a condition block),

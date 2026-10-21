@@ -17,7 +17,8 @@ files) when given, else the workspace.
 
 ## Report
 
-Groups top down: static compilation, explicit types, numbers and money, Groovy truth, strings, null safety,
+Unused code first, from the `unused` block (imports, variables, parameters, private members, unreachable code,
+each with file and line), then the groups top down: static compilation, explicit types, numbers and money, Groovy truth, strings, null safety,
 immutability, exceptions and logging, security, concurrency, testing, style. Counts per group first, then
 the worst examples with file and line. Offer "fix the safe ones" (`groovyscope.fix`) at the end.
 

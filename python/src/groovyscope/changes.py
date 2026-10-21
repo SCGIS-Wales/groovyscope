@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
-from groovyscope import practices, process
+from groovyscope import practices, process, unused
 from groovyscope.paths import GROOVY_SUFFIXES
 
 Runner = Callable[[Sequence[str], Path], tuple[int, str]]
@@ -194,7 +194,7 @@ def bucket(findings: Sequence[Mapping[str, Any]]) -> dict[str, list[dict[str, An
         severity = str(finding.get("severity") or "info")
         if severity == "error" or practices.group_of(code) in BLOCKING_GROUPS:
             buckets["blocking"].append(dict(finding))
-        elif severity == "warning":
+        elif severity == "warning" or unused.is_unused(code):  # dead code on a changed line is never a nit
             buckets["shouldFix"].append(dict(finding))
         else:
             buckets["nits"].append(dict(finding))
@@ -275,14 +275,24 @@ def triage(findings: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, An
     return tiers
 
 
-def verdict(buckets: Mapping[str, Sequence[Any]], risky: Sequence[Any], impact: Sequence[Mapping[str, Any]]) -> str:
-    """One sentence a reviewer would write first."""
+def verdict(
+    buckets: Mapping[str, Sequence[Any]],
+    risky: Sequence[Any],
+    impact: Sequence[Mapping[str, Any]],
+    unused_kinds: Mapping[str, int] | None = None,
+) -> str:
+    """One sentence a reviewer would write first. Unused code on the changed lines is always named in it."""
     blocking = len(buckets.get("blocking", ()))
-    should = len(buckets.get("shouldFix", ()))
+    should = sum(  # the unused findings are named on their own below
+        1 for f in buckets.get("shouldFix", ()) if not (isinstance(f, Mapping) and unused.is_unused(f.get("code")))
+    )
     high = sum(1 for report in impact if report.get("riskLevel") == "high")
+    dead = f"unused {unused.counted(unused_kinds)} to remove" if unused_kinds else ""
     if blocking:
-        return f"request changes: {blocking} blocking finding(s) on the changed lines"
-    parts = []
+        return f"request changes: {blocking} blocking finding(s) on the changed lines" + (
+            f", and {dead}" if dead else ""
+        )
+    parts = [dead] if dead else []
     if should:
         parts.append(f"{should} warning(s) to fix")
     if risky:
@@ -375,6 +385,8 @@ def summary_comment(
     impact: Sequence[Mapping[str, Any]],
     uncovered_count: int,
     comments: int,
+    *,
+    unused_kinds: Mapping[str, int] | None = None,
 ) -> str:
     """The note that goes on the merge request itself: thanks, the verdict in plain words, the numbers, and what
     the reviewer looked at, so the author knows the comments are complete."""
@@ -393,6 +405,8 @@ def summary_comment(
         lines.append("Nothing blocks the merge and I found nothing to fix on the changed lines. Nice work.")
     if should or nits:
         lines.append(f"Suggestions: {should} worth fixing here, {nits} nit(s).")
+    if unused_kinds:
+        lines.append(f"Unused code on the changed lines: {unused.counted(unused_kinds)}; please remove it.")
     if high:
         names = ", ".join(f"`{r.get('symbol') or r.get('name')}`" for r in high[:3])
         lines.append(f"Changed declarations with many callers: {names}. Please run their callers' tests too.")

@@ -35,10 +35,11 @@ classes then resolve and the GS100 warnings go away.
 | Are the names in `<folder>` right | `check_naming`, then `rename` | 0.4 to 0.8 |
 | Can I use `<construct>` in this plugin | `profile_status` | 0.2 |
 | Resolve the merge conflicts | `merge_conflicts`, `resolve_conflicts`, `merge_review` | 0.3 per file |
+| What is unused in `<folder>`, and remove it | `find_unused`, then `fix` and hand edits | 0.2 to 0.5 |
 
 "Run all" runs the first six and gives one combined summary. Every row is also a skill, `/groovy-<name>`
 (review, fix, quality, duplicates, catch-audit, dynamic, coverage, impact, rename, explain, naming, profile,
-merge),
+merge, unused),
 and an MCP prompt of the same name; the skill body is this page's recipe, loaded only when it runs.
 
 ## 1. Review this branch as a merge request reviewer
@@ -268,6 +269,20 @@ the other side's behaviour, so the recipe ends with the affected tests. While a 
 after-write hook says so in one line instead of checking it, and `groovyscope merge status | show | resolve |
 review` gives the same answers in a terminal. Set `git config merge.conflictStyle zdiff3` once so every hunk
 shows its base.
+
+## 14. Unused code
+
+```text
+What is unused in src/main/groovy, and remove it.
+```
+
+`find_unused` lists every unused import, variable, parameter, private method and field, and unreachable
+statement, and nothing else, so a file with hundreds of `LineLength` and `Indentation` findings cannot hide them.
+The imports go with one `fix`; variables, parameters and private members are edited by hand (a parameter's
+arguments go at every call, which `impact_of` lists). The same findings lead every review: `check`, `review` and
+`review_changes` carry an `unused` block and, when there is any, an `attention` line that sorts first in the
+answer, the review verdict and the merge request summary name them, and the after-write hook prints an `UNUSED:`
+line. `groovyscope unused --changed` exits 1 on them, for a pipeline.
 
 ## Glossary
 
