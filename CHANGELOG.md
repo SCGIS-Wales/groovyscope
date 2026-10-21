@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.28.0...v0.28.1) (2026-10-21)
+
+
+### Documentation
+
+* mark the unused code stage released in 0.28.0 ([#129](https://github.com/SCGIS-Wales/groovyscope/issues/129)) ([7b3ee78](https://github.com/SCGIS-Wales/groovyscope/commit/7b3ee7836a8b4e1d5f08d0657d106406e3d574e4))
+
 ## [0.28.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.27.0...v0.28.0) (2026-10-21)
 
 
