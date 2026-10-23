@@ -75,6 +75,8 @@ class EngineConfigSpec extends Specification {
         'returnsEmptyListForBlankQuery' ==~ defaults.namePattern()
         'test_blank_query_gives_nothing' ==~ defaults.namePattern()
         !('shouldWork' ==~ defaults.namePattern())
+        'chargesTax' ==~ defaults.namePattern()
+        !('testTotal' ==~ defaults.namePattern())
         !('test1' ==~ defaults.namePattern())
     }
 

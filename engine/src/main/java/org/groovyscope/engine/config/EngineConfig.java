@@ -381,9 +381,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      */
     public record Tests(double maxTestToCodeRatio, int maxMethodsPerSubject, String namePattern,
             List<String> vagueNames) {
-        /** A sentence of two words or more with a space (Spock), or an identifier of two words or more. */
-        public static final String DEFAULT_NAME_PATTERN = "^(?:.*\\S\\s+\\S.*|_*[a-z][a-z0-9]*"
-                + "(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){1,}_*)$";
+        /**
+         * A sentence of two words or more with a space (Spock), or an identifier of two words or more, where a leading
+         * {@code test} or {@code should} does not count as a word.
+         */
+        public static final String DEFAULT_NAME_PATTERN = "^(?:.*\\S\\s+\\S.*"
+                + "|(?:test|should)(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){2,}_*"
+                + "|(?!(?:test|should)(?:[A-Z_]|$))_*[a-z][a-z0-9]*(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){1,}_*)$";
         public static final List<String> DEFAULT_VAGUE_NAMES = List.of("test", "tests", "testing", "should", "it",
                 "works", "work", "working", "method", "check", "checks", "verify", "verifies", "case", "scenario",
                 "simple", "basic", "happy", "path", "example", "sample", "ok", "correct", "correctly", "properly",

@@ -447,13 +447,13 @@ live in `.groovyscope.yaml`:
 tests:
   maxTestToCodeRatio: 3.0   # GS046: test file lines allowed per line of the file of the class under test
   maxMethodsPerSubject: 40  # GS046: test methods allowed in one test class
-  namePattern: '^(?:.*\S\s+\S.*|_*[a-z][a-z0-9]*(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){1,}_*)$'
+  namePattern: '^(?:.*\S\s+\S.*|(?:test|should)(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){2,}_*|(?!(?:test|should)(?:[A-Z_]|$))_*[a-z][a-z0-9]*(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){1,}_*)$'
   vagueNames: [test, should, works, method, check, verify, example, ...]  # GS048: words that alone say nothing
 ```
 
 The default `namePattern` accepts a sentence of two words or more (a Spock feature name) and an identifier of two
-words or more in camel or snake case (`chargesTax`, `returnsEmptyListForBlankQuery`, `test_blank_query_gives_nothing`);
-`test1` does not match it, and `shouldWork` is made of vague words only. Whatever the pattern, a name made only of vague words, numbers and the
+words or more in camel or snake case (`chargesTax`, `returnsEmptyListForBlankQuery`, `test_blank_query_gives_nothing`),
+where a leading `test` or `should` does not count as a word; `test1`, `testTotal` and `shouldWork` do not match it. Whatever the pattern, a name made only of vague words, numbers and the
 names of what the test calls or creates (`testSquare` for a test of `square`) says no behaviour.
 
 | Code | Checks | Fix |
