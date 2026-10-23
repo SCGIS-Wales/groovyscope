@@ -231,30 +231,47 @@ def check_candidate(
 ) -> Verdict:
     """The verdict on writing ``after`` to ``path``: the engine previews the candidate (nothing is written) and
     checks the current file, so only what the write introduces counts. Engine errors propagate."""
-    uri = path.as_uri()
-    preview = call(
-        "groovyscope/preview", {"root": str(root), "texts": [{"uri": uri, "text": after}], "include": INCLUDE}
-    )
-    current: Sequence[Mapping[str, Any]] = []
-    if path.is_file():
-        checked = call("groovyscope/check", {"root": str(root), "uris": [uri], "include": INCLUDE})
-        current = (checked.get("diagnostics") or {}).get(uri) or []
-    found = (preview.get("results") or {}).get(uri) or {}
-    verdict = evaluate(
-        rows(found.get("diagnostics") or []),
-        rows(current),
-        syntax=found.get("syntax") or [],
-        mode=mode,
-        before=before,
-        after=after,
-        comments=comments,
-    )
-    if reuse is None or found.get("syntax"):
-        return verdict
-    blocking, advice = mcp_reuse.write_findings(call, root, path, before=before, after=after, settings=reuse)
-    reasons = [*verdict["reasons"], *blocking]
-    decision: Decision = ("block" if mode == "block" else "warn") if reasons else "pass"
-    return {**verdict, "reasons": reasons, "decision": decision, "advice": advice}
+    return check_candidates(call, root, [(path, before, after)], mode=mode, comments=comments, reuse=reuse)[0]
+
+
+def check_candidates(
+    call: EngineCall,
+    root: Path,
+    candidates: Sequence[tuple[Path, str, str]],
+    *,
+    mode: str,
+    comments: CommentPolicy | None = None,
+    reuse: Mapping[str, Any] | None = None,
+) -> list[Verdict]:
+    """The verdicts on writing several files at once (``(path, before, after)`` each), previewed together, so a
+    change that spans files (a signature and its call sites) is compiled as one."""
+    texts = [{"uri": path.as_uri(), "text": after} for path, _before, after in candidates]
+    preview = call("groovyscope/preview", {"root": str(root), "texts": texts, "include": INCLUDE})
+    existing = [path.as_uri() for path, _before, _after in candidates if path.is_file()]
+    current: Mapping[str, Any] = {}
+    if existing:
+        checked = call("groovyscope/check", {"root": str(root), "uris": existing, "include": INCLUDE})
+        current = checked.get("diagnostics") or {}
+    verdicts: list[Verdict] = []
+    for path, before, after in candidates:
+        uri = path.as_uri()
+        found = (preview.get("results") or {}).get(uri) or {}
+        verdict = evaluate(
+            rows(found.get("diagnostics") or []),
+            rows(current.get(uri) or []),
+            syntax=found.get("syntax") or [],
+            mode=mode,
+            before=before,
+            after=after,
+            comments=comments,
+        )
+        if reuse is not None and not found.get("syntax"):
+            blocking, advice = mcp_reuse.write_findings(call, root, path, before=before, after=after, settings=reuse)
+            reasons = [*verdict["reasons"], *blocking]
+            decision: Decision = ("block" if mode == "block" else "warn") if reasons else "pass"
+            verdict = {**verdict, "reasons": reasons, "decision": decision, "advice": advice}
+        verdicts.append(verdict)
+    return verdicts
 
 
 def render(verdict: Verdict, shown: str, *, planned: bool = False) -> str:

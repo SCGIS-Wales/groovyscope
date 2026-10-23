@@ -59,28 +59,20 @@ def refactor(
     comments = gate.comment_policy({"comments": settings.get("comments") or {}})
     reuse = gate.reuse_settings(settings)
     limits = edit_settings(settings)
+    verdicts = gate.check_candidates(
+        call,
+        root,
+        [(edit["path"], edit["before"], edit["after"]) for edit in changed],
+        mode="block",
+        comments=comments,
+        reuse=reuse,
+    )
+    blocked = any(verdict["decision"] == "block" for verdict in verdicts)
     files: list[dict[str, Any]] = []
-    blocked = False
-    for edit in changed:
-        verdict = gate.check_candidate(
-            call,
-            root,
-            edit["path"],
-            before=edit["before"],
-            after=edit["after"],
-            mode="block",
-            comments=comments,
-            reuse=reuse,
-        )
-        blocked = blocked or verdict["decision"] == "block"
+    for edit, verdict in zip(changed, verdicts, strict=True):
         shown = relative_path(edit["path"].as_uri(), root)
-        files.append(
-            {
-                "path": shown,
-                "gate": gate_summary(verdict),
-                "diff": "\n".join(unified(edit["before"], edit["after"], shown)),
-            }
-        )
+        diff = "\n".join(unified(edit["before"], edit["after"], shown))
+        files.append({"path": shown, "gate": gate_summary(verdict), "diff": diff})
     result["files"] = files
     if params.get("symbol"):
         tests = reaching_tests(call, root, str(params["symbol"]))

@@ -171,3 +171,67 @@ def test_a_type_error_under_compile_static_is_caught_before_the_write(
         assert "BLOCKED" in blocked.stderr and "String" in blocked.stderr
     finally:
         runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])
+
+
+PRICES = """package demo
+
+import groovy.transform.CompileStatic
+
+@CompileStatic
+class Prices {
+    static int total(int quantity, int price) {
+        int gross = quantity * price
+        int rounded = gross - gross % 5
+        return rounded
+    }
+}
+"""
+SHOP = """package demo
+
+import groovy.transform.CompileStatic
+
+@CompileStatic
+class Shop {
+    int one() { Prices.total(1, 2) }
+    int two() { Prices.total(3, 4) }
+    int three() { Prices.total(5, 6) }
+}
+"""
+
+
+@pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
+def test_change_signature_and_extract_method_through_the_daemon(
+    tmp_path: Path, short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "ws"
+    folder = workspace / "src" / "main" / "groovy" / "demo"
+    folder.mkdir(parents=True)
+    (folder / "Prices.groovy").write_text(PRICES, encoding="utf-8")
+    (folder / "Shop.groovy").write_text(SHOP, encoding="utf-8")
+    monkeypatch.setenv(daemon.SOCKET_DIR_ENV, str(short_dir))
+    monkeypatch.setenv(daemon.CACHE_DIR_ENV, str(tmp_path / "cache"))
+    monkeypatch.setenv("GROOVYSCOPE_DAEMON__IDLETIMEOUTMINUTES", "1")
+    runner = CliRunner()
+    obj = {"config_path": None, "root": workspace.resolve(), "log_level": "WARNING", "log_file": None}
+    try:
+        socket_file, _ = common.daemon_socket_for(obj)
+        tools = common.workspace_tools(obj, socket_file, load_config(obj["root"], None, {}))
+        parameters = [
+            {"name": "quantity", "type": "int"},
+            {"name": "price", "type": "int"},
+            {"name": "discount", "type": "int", "default": "0"},
+        ]
+        changed = tools["change_signature"](
+            "src/main/groovy/demo/Prices.groovy", "Prices.total", parameters, apply=True
+        )
+        assert changed["applied"] is True and changed["callSites"] == 3, changed
+        shop = (folder / "Shop.groovy").read_text(encoding="utf-8")
+        assert shop.count(", 0)") == 3 and "Prices.total(1, 2, 0)" in shop
+        extracted = tools["extract_method"]("src/main/groovy/demo/Prices.groovy", 8, 9, "rounded", apply=True)
+        assert extracted["applied"] is True and "verified" in extracted, extracted
+        prices = (folder / "Prices.groovy").read_text(encoding="utf-8")
+        assert "rounded(" in prices and extracted["static"] is True
+        checked = runner.invoke(cli.main, ["--root", str(workspace), "check", "--include", "compile"])
+        assert checked.exit_code == 0, checked.output
+    finally:
+        runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])
