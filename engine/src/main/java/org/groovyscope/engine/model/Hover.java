@@ -15,6 +15,31 @@
  */
 package org.groovyscope.engine.model;
 
-/** Markdown shown for the node under the cursor, and the range it applies to. */
-public record Hover(String markdown, Range range) {
+import java.util.List;
+
+/**
+ * Markdown shown for the node under the cursor, and the range it applies to.
+ *
+ * @param inferredTypes for a local assigned more than once, each value it is assigned in source order (null literals
+ *     left out); empty otherwise
+ */
+public record Hover(String markdown, Range range, List<InferredType> inferredTypes) {
+
+    public Hover {
+        inferredTypes = List.copyOf(inferredTypes == null ? List.of() : inferredTypes);
+    }
+
+    /** A hover without assigned types. */
+    public Hover(String markdown, Range range) {
+        this(markdown, range, List.of());
+    }
+
+    /**
+     * One value a local is assigned.
+     *
+     * @param type the value's type, or {@code null} when it is not known
+     * @param line where it is assigned (1-based)
+     */
+    public record InferredType(String type, int line) {
+    }
 }

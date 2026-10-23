@@ -590,6 +590,24 @@ final class SnapshotManager {
         return result;
     }
 
+    /**
+     * The type preview of {@code texts} ({@link org.groovyscope.engine.typecheck.TypePreview#check}) against the
+     * classes of the last full compile, the texts' own documents left out. With {@code compileFirst} the first full
+     * compile runs here when none has yet; without it the texts are then checked against the classpath alone.
+     */
+    org.groovyscope.engine.typecheck.TypePreview.Outcome typePreview(Map<String, String> texts,
+            java.util.Set<String> speculative, boolean compileFirst,
+            java.util.function.Consumer<Map<String, ModuleNode>> reader) {
+        Snapshot last = hasCompiled() ? snapshot : compileFirst ? snapshot() : null;
+        Map<String, ClassNode> known = last == null ? Map.of() : knownClasses(last, texts.keySet());
+        long started = System.nanoTime();
+        org.groovyscope.engine.typecheck.TypePreview.Outcome outcome = org.groovyscope.engine.typecheck.TypePreview
+                .check(texts, workspace.classpath(), workspace.config().trust(), known, speculative, reader);
+        EngineLog.debug("type preview of %d text(s), %d class(es) speculative, in %d ms", texts.size(),
+                speculative.size(), (System.nanoTime() - started) / 1_000_000);
+        return outcome;
+    }
+
     /** The classes of {@code last} by name, minus those of {@code replaced} documents and of unresolved ones. */
     private static Map<String, ClassNode> knownClasses(Snapshot last, Collection<String> replaced) {
         Map<String, ClassNode> known = new HashMap<>();

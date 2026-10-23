@@ -70,7 +70,7 @@ class EngineConfigSpec extends Specification {
         tuned == new EngineConfig.Tests(2.5, 12, '^should.*', ['test', 'check'])
         partial == new EngineConfig.Tests(4.0, 40, defaults.namePattern(), defaults.vagueNames())
         EngineConfig.DEFAULTS.practices().tests() == defaults
-        new EngineConfig.Practices(true, [:], null, null, null, null, null).tests() == defaults
+        new EngineConfig.Practices(true, [:], null, null, null, null, null, null).tests() == defaults
         'should work' ==~ defaults.namePattern()
         'returnsEmptyListForBlankQuery' ==~ defaults.namePattern()
         'test_blank_query_gives_nothing' ==~ defaults.namePattern()
@@ -78,6 +78,15 @@ class EngineConfigSpec extends Specification {
         'chargesTax' ==~ defaults.namePattern()
         !('testTotal' ==~ defaults.namePattern())
         !('test1' ==~ defaults.namePattern())
+    }
+
+    def 'the value type settings are read from the types section, each missing key keeping its default'() {
+        expect:
+        EngineConfig.fromJson('{"types": {"preview": false, "previewMaxPerFile": 3, "declareOnEdit": false}}')
+                .practices().types() == new EngineConfig.Types(false, 3, false)
+        EngineConfig.fromJson('{"types": {"previewMaxPerFile": "x"}}').practices().types() == EngineConfig.Types.DEFAULTS
+        EngineConfig.DEFAULTS.practices().types() == new EngineConfig.Types(true, 10, true)
+        new EngineConfig.Practices(true, [:], null, null, null, null, null, null).types() == EngineConfig.Types.DEFAULTS
     }
 
     def 'each lint profile takes its own rule set path'() {

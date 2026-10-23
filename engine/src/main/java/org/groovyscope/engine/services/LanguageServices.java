@@ -336,6 +336,16 @@ public final class LanguageServices {
         return snapshots.compileOverlay(texts);
     }
 
+    /**
+     * The type preview of candidate texts against the classes of the last full compile (see
+     * {@link SnapshotManager#typePreview}); the snapshot is untouched.
+     */
+    public org.groovyscope.engine.typecheck.TypePreview.Outcome typePreview(Map<String, String> texts,
+            Set<String> speculative, boolean compileFirst,
+            java.util.function.Consumer<Map<String, org.codehaus.groovy.ast.ModuleNode>> reader) {
+        return snapshots.typePreview(texts, speculative, compileFirst, reader);
+    }
+
     /** Adds one {@code GS101} warning on the first document when the budget left files out; else {@code base}. */
     Map<String, List<Diagnostic>> withBudgetWarning(Map<String, List<Diagnostic>> base, Set<String> uris) {
         List<java.nio.file.Path> omitted = workspace.omitted();

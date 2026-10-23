@@ -136,6 +136,28 @@ public record Profile(String name, Activation activation, Target target, List<Co
         return org.groovyscope.engine.workspace.Globs.matches(glob, relative);
     }
 
+    /**
+     * Whether the runtime forbids static compilation: a construct the profile marks {@code blocked} lists
+     * {@code CompileStatic} or {@code TypeChecked} among its imports or classes. The type preview (GS077) then
+     * leaves governed files alone, since the advice it leads to cannot be taken.
+     */
+    public boolean blocksStaticCompilation() {
+        for (Construct construct : constructs) {
+            if (!"blocked".equalsIgnoreCase(construct.status())) {
+                continue;
+            }
+            List<String> names = new java.util.ArrayList<>(construct.imports() == null ? List.of()
+                    : construct.imports());
+            names.addAll(construct.classes() == null ? List.of() : construct.classes());
+            for (String name : names) {
+                if (name != null && (name.contains("CompileStatic") || name.contains("TypeChecked"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** The provenance label for a file, or {@code null}. */
     public String compiledBy(String relativePath) {
         for (Label label : target.compiledBy()) {

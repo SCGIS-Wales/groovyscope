@@ -286,10 +286,12 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
     static java.util.Optional<org.groovyscope.engine.model.Hover> fullHover(LanguageServices current, String uri,
             org.groovyscope.engine.model.Position position) {
         java.util.Optional<org.groovyscope.engine.model.Hover> hover = current.hover(uri, position);
+        List<org.groovyscope.engine.model.Hover.InferredType> assigned = hover
+                .map(org.groovyscope.engine.model.Hover::inferredTypes).orElse(List.of());
         java.util.Optional<String> parameter = current.quality().parameterHover(uri, position);
         if (parameter.isPresent()) {
             hover = java.util.Optional.of(new org.groovyscope.engine.model.Hover(parameter.get(),
-                    hover.map(org.groovyscope.engine.model.Hover::range).orElse(null)));
+                    hover.map(org.groovyscope.engine.model.Hover::range).orElse(null), assigned));
         }
         String notes = findingNotes(current, uri, position.line());
         if (notes.isEmpty()) {
@@ -297,7 +299,7 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
         }
         String markdown = hover.map(h -> h.markdown() + "\n\n---\n\n").orElse("") + notes;
         org.groovyscope.engine.model.Range range = hover.map(org.groovyscope.engine.model.Hover::range).orElse(null);
-        return java.util.Optional.of(new org.groovyscope.engine.model.Hover(markdown, range));
+        return java.util.Optional.of(new org.groovyscope.engine.model.Hover(markdown, range, assigned));
     }
 
     /**

@@ -297,7 +297,19 @@ final class NavigationQueries {
         ClassNode inferred = declaration instanceof VariableExpression variable && variable.isDynamicTyped()
                 ? current.resolver().typeOfVariable(variable)
                 : null;
-        return Optional.of(new Hover(HoverRenderer.render(declaration, resolution.get(), inferred), entry.get().range()));
+        String markdown = HoverRenderer.render(declaration, resolution.get(), inferred);
+        List<Hover.InferredType> assigned = declaration instanceof VariableExpression local
+                ? org.groovyscope.engine.practices.PracticeFinder.assignedTypes(entry.get().enclosingClass(),
+                        entry.get().enclosingMethod(), local)
+                : List.of();
+        if (!assigned.isEmpty()) {
+            List<String> seen = new ArrayList<>();
+            for (Hover.InferredType type : assigned) {
+                seen.add((type.type() == null ? "unknown" : type.type()) + " (line " + type.line() + ")");
+            }
+            markdown += "\n*assigned:* " + String.join(", ", seen) + "\n";
+        }
+        return Optional.of(new Hover(markdown, entry.get().range(), assigned));
     }
 
     List<Symbol> documentSymbols(String uri) {

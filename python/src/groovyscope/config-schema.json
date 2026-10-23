@@ -735,6 +735,22 @@
         }
       }
     },
+    "types": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preview": {
+          "type": "boolean"
+        },
+        "previewMaxPerFile": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "declareOnEdit": {
+          "type": "boolean"
+        }
+      }
+    },
     "mcp": {
       "type": "object",
       "additionalProperties": false,

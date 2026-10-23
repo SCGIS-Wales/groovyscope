@@ -32,8 +32,8 @@ Use for "fix what is safe", "clean up my changes". Base branch: `$ARGUMENTS` whe
   into a primitive), GS004 (File or Path used as a boolean), GS008 (Command built as a string), GS011 (Spock
   .with {} in a condition block), GS012 (Quoted interpolation in SQL), GS018 (GString looked up among
   Strings), GS044 (Tests repeating one shape with other literals), GS060 (Comment restates the code), GS063
-  (Commented out code), CompileStatic (Class without a static compilation choice), NoDef (def instead of a
-  type), GStringAsMapKey (GString used as a map key).
+  (Commented out code), GS074 (Arrays and lists mixed), CompileStatic (Class without a static compilation
+  choice), NoDef (def instead of a type), GStringAsMapKey (GString used as a map key).
 <!-- end of fix checklist -->
 
 ## Report

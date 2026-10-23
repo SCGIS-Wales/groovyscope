@@ -118,6 +118,16 @@ final class SearchRequests {
                     .map(found -> {
                         Map<String, Object> response = new LinkedHashMap<>();
                         response.put("markdown", found.markdown());
+                        if (!found.inferredTypes().isEmpty()) {
+                            List<Map<String, Object>> types = new ArrayList<>();
+                            for (org.groovyscope.engine.model.Hover.InferredType type : found.inferredTypes()) {
+                                Map<String, Object> item = new LinkedHashMap<>();
+                                item.put("type", type.type());
+                                item.put("line", type.line());
+                                types.add(item);
+                            }
+                            response.put("inferredTypes", types);
+                        }
                         return response;
                     })
                     .orElse(null);

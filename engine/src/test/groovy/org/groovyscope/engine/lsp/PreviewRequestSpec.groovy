@@ -115,6 +115,32 @@ class Subject {
         shape(preview.diagnostics) == shape(check)
     }
 
+    def 'the type preview runs with practices or types, and types adds the errors of a static class the compile misses'() {
+        given:
+        String text = Fixtures.text(PROJECT, TYPES)
+        String typed = 'package demo\n\n@groovy.transform.CompileStatic\nclass Subject {\n\n    int square(int value) {\n        return \'x\'\n    }\n}\n'
+
+        when:
+        def types = request('preview', [texts: [[uri: uri(TYPES), text: text]], include: ['types']]).results[uri(TYPES)].diagnostics
+        def plain = request('preview', [texts: [[uri: uri(TYPES), text: text]]]).results[uri(TYPES)].diagnostics
+        def lint = request('preview', [texts: [[uri: uri(TYPES), text: text]], include: ['lint', 'compile']]).results[uri(TYPES)].diagnostics
+        def compiled = request('preview', [texts: [[uri: uri(SUBJECT), text: typed]], include: ['compile']]).results[uri(SUBJECT)].diagnostics
+        def checked = request('preview', [texts: [[uri: uri(SUBJECT), text: typed]], include: ['compile', 'types']]).results[uri(SUBJECT)].diagnostics
+        def check = request('check', [uris: [uri(TYPES)], include: ['types']]).diagnostics[uri(TYPES)]
+
+        then:
+        types*.code*.getLeft() == ['GS077', 'GS077']
+        types*.range*.start*.line == [5, 17]
+        types[0].message.getLeft() == 'would not type check: Cannot call java.lang.String#compareTo(java.lang.String) with arguments [int]'
+        types.every { it.severity == DiagnosticSeverity.Warning && it.data.get('confidence').asString == 'INFERRED' }
+        plain.count { it.code.getLeft() == 'GS077' } == 2
+        !lint.any { it.code.getLeft() == 'GS077' }
+        plain.find { it.code.getLeft() == 'GS070' }.data.get('confidence').asString == 'STATIC'
+        errors(compiled) == []
+        errors(checked).any { it.message.contains('Cannot return value of type java.lang.String') && it.line == 6 }
+        check*.code*.getLeft() == ['GS077', 'GS077']
+    }
+
     def 'a candidate for a new file inside the workspace is compiled against the rest and nothing is created'() {
         given:
         String fresh = 'src/main/groovy/demo/Fresh.groovy'

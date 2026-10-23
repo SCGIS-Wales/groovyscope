@@ -116,8 +116,11 @@ public final class SymbolEditor {
      * @param endLine last such line (1-based, inclusive)
      * @param symbol the declaration edited, by its full name ({@code Verbose.countWords}); the import line for
      *               {@link Operation#ADD_IMPORT}
+     * @param insertedFrom where the inserted or replacing text starts in {@code text} (a character offset)
+     * @param insertedTo where it ends in {@code text} (exclusive; equal to {@code insertedFrom} for a deletion)
      */
-    public record Result(String text, String oldStr, String newStr, int startLine, int endLine, String symbol) {
+    public record Result(String text, String oldStr, String newStr, int startLine, int endLine, String symbol,
+            int insertedFrom, int insertedTo) {
     }
 
     /** A replacement of {@code [start, end)} of the original by {@code replacement}, and the lines it reports. */
@@ -633,7 +636,7 @@ public final class SymbolEditor {
             }
         }
         return new Result(text, source.substring(from, to), text.substring(from, to + delta), change.startLine(),
-                change.endLine(), symbol);
+                change.endLine(), symbol, change.start(), change.start() + change.replacement().length());
     }
 
     static boolean occursOnce(String text, String part) {

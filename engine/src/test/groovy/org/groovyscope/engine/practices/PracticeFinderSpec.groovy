@@ -172,7 +172,9 @@ class PracticeFinderSpec extends Specification {
         def actions = services.quality().codeActions(numbers, new Range(new Position(4, 0), new Position(4, 1)))
 
         then:
-        checked.diagnostics()[numbers]*.code() == ['GS001', 'GS002', 'GS003']
+        checked.diagnostics()[numbers]*.code().findAll { it != 'GS077' } == ['GS001', 'GS002', 'GS003']
+        // a check of named files runs the type preview with the practices: int / int is a BigDecimal
+        checked.diagnostics()[numbers].findAll { it.code() == 'GS077' }*.range()*.start()*.line() == [5, 46, 47, 48, 50]
         published*.code().containsAll(['GS001', 'GS002', 'GS003'])
         actions*.title().contains('Use intdiv')
     }

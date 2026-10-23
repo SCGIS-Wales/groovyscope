@@ -716,6 +716,7 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Mutable static state | NonFinalPublicField, StaticCalendarField and the other Static* rules | none | GS038: an instance, or an immutable value |
 | Jenkins pipeline code | jenkins rule set | none | GS030 to GS033: secrets in shell GStrings, steps in `@NonCPS`, unserialisable state across a step, `@CompileStatic` or `java.io.File` in CPS code |
 | Comments | none | none | GS060 to GS065: a comment restating the statement below it, a long comment block, Javadoc that adds nothing, commented out code, banners and unowned TODOs, more comment than code |
+| Value types | none | `@CompileStatic`, `@TypeChecked` (GS077 runs the checker speculatively) | GS070 to GS076: a literal of another kind, one variable or map key holding several kinds, text used as a boolean, returns of different kinds, arrays and lists mixed, an argument of another kind; GS077: what the static type checker would say about a dynamic class |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
 GS codes are groovyscope's own diagnostics (see the table in the README and `explain`); they are not an external standard.
@@ -834,6 +835,46 @@ comments:
 | GS063 | Comment lines that read like code (an operator, a bracket or a closing `;`, mostly not words) and parse as Groovy; an example introduced by a colon or `e.g.` is left alone | Remove them, applied only when the code is named |
 | GS064 | A banner (`// -----`, `/* ***** */`), an empty comment, a TODO or FIXME without an owner or a ticket | Remove banner and empty lines |
 | GS065 | Comment lines over code lines above `maxDensity` in a method of five code lines or more, once per method; a comment that gives a reason is not counted (GS061 limits its length) | none |
+
+## 22. Value types
+
+One kind of value per place: a variable, a map key, a comparison, an argument and a return each hold text, a
+number, a boolean, a character, a collection, a map or an array, never two of them. Dynamic Groovy converts between
+kinds at run time, or fails there, where the compiler said nothing: `int n = '5'` stores 53, `'b' > 18` answers true,
+`send(5)` into `send(String)` throws `MissingMethodException`, and `if (flag)` is true for the text `'false'`.
+
+A kind is known from a literal, from a declared type (the finding's `confidence` is `STATIC`), or for a `def` local
+from every value its method assigns it when they all agree (`INFERRED`). Anything else is unknown and never
+reported. Calls are checked only where the target is certain: one method of that name and arity on the enclosing
+class (outside closures, whose delegate may answer instead) or on a receiver of known type. The confidence reaches
+clients in the diagnostic's `data.confidence`. Settings live in `.groovyscope.yaml`:
+
+```yaml
+types:
+  preview: true          # GS077: run Groovy's static type checker on classes without @CompileStatic or @TypeChecked
+  previewMaxPerFile: 10  # GS077: most type preview warnings per file
+  declareOnEdit: true    # edit_symbol: list the def parameters, return types and fields of new text, with inferred types
+```
+
+| Code | Checks | Fix |
+|---|---|---|
+| GS070 | A literal of one kind assigned, compared (`==`, `!=`, `<`, `in`), passed or returned where the declared or inferred type is another kind (text against a number or a boolean, a number against a boolean; a call only where Groovy then finds no method) | none |
+| GS071 | A variable, field or parameter declared without a type and assigned values of two kinds in its scope; null is not a kind; the message names both lines and types | none |
+| GS072 | Text compared with `'true'` or `'false'`, and text that is also tested for truth or stored or returned as a boolean | none |
+| GS073 | A `def` method returning values of two kinds on its paths (the last expression included, null not counted) | none |
+| GS074 | `.length` on a collection; a list literal passed for a `T[]` parameter; `==` between an array and a list literal; a literal of one kind looked for with `in` in an array of another | `size()`; `as T[]` (both change behaviour, applied only when the code is named) |
+| GS075 | The same literal map key written with values of two kinds in one method | none |
+| GS076 | An argument whose known type is another kind than the parameter's declared type (an int into a String, a String into an int, a GString into a char, a list into an array) where the call's target is certain | none |
+| GS077 | Groovy's static type checker run speculatively on each class without `@CompileStatic` or `@TypeChecked`; each error is a warning in the checker's words, `would not type check: <message>`, confidence `INFERRED` | none |
+
+GS077 leaves alone what is dynamic on purpose: classes that rely on `methodMissing`, `propertyMissing`,
+`invokeMethod`, `metaClass`, builders, `Expando` or categories, Spock specifications, traits, Jenkins pipeline code,
+build scripts and files whose runtime profile blocks `@CompileStatic`; and among the checker's errors, those that say
+only that dynamic code is dynamic (a value it types as `Object`, a variable a binding or a delegate supplies, a member
+a closure's delegate or a type that answers anything provides). The preview runs with the practices in a
+`groovyscope/check` of named files (the check after a write) and in `groovyscope/preview`, and in a whole workspace
+`check` only with `include: ["types"]`, since there it is a second compile of every file. In `preview`, `types` also
+reports the type errors of the classes already static, which its compile to canonicalization does not reach.
 
 ## Caveats
 - **Release notes not fully retrieved:**

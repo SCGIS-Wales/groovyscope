@@ -443,7 +443,7 @@ public final class TypeCheckAnalyzer {
     }
 
     /** The checker that produced a static type checking message, or {@code typecheck} for the core checker. */
-    static String codeFor(String message) {
+    public static String codeFor(String message) {
         if (message.startsWith("Potential null dereference") || message.contains("may be null")
                 || message.contains("@NonNull") || message.contains("@Nullable")) {
             return "NullChecker";

@@ -92,6 +92,91 @@ public final class DynamicCodeFinder {
         return findings;
     }
 
+    /** Builder base classes: a class extending one answers calls that no declaration describes. */
+    static final Set<String> BUILDER_SUPPORT = Set.of("groovy.util.BuilderSupport",
+            "groovy.util.FactoryBuilderSupport");
+
+    /**
+     * Why a class relies on dynamic features the static type checker cannot follow, or {@code null} when it does not:
+     * a {@code methodMissing}, {@code propertyMissing}, {@code invokeMethod}, {@code getProperty} or
+     * {@code setProperty} of its own, {@code GroovyInterceptable}, {@code @Mixin}, a builder base class, and in its
+     * code {@code metaClass}, an {@code Expando}, a Groovy builder ({@code new MarkupBuilder()} and the like), a
+     * category ({@code use(...)}) or a computed method name. The type preview (GS077) skips such classes.
+     */
+    public static String dynamicFeature(ClassNode classNode) {
+        for (MethodNode method : classNode.getMethods()) {
+            if (DISPATCH_HOOKS.contains(method.getName()) && !method.isSynthetic()) {
+                return method.getName();
+            }
+        }
+        if (hasAnnotation(classNode, MIXIN_ANNOTATIONS)) {
+            return "@Mixin";
+        }
+        for (ClassNode type : Members.hierarchy(classNode)) {
+            if (INTERCEPTABLE.equals(type.getName())) {
+                return "GroovyInterceptable";
+            }
+            if (BUILDER_SUPPORT.contains(type.getName())) {
+                return "a builder (" + type.getNameWithoutPackage() + ")";
+            }
+        }
+        String[] found = new String[1];
+        org.codehaus.groovy.ast.ClassCodeVisitorSupport visitor =
+                new org.codehaus.groovy.ast.ClassCodeVisitorSupport() {
+            @Override
+            protected org.codehaus.groovy.control.SourceUnit getSourceUnit() {
+                return null;
+            }
+
+            @Override
+            public void visitPropertyExpression(PropertyExpression expression) {
+                if ("metaClass".equals(expression.getPropertyAsString())) {
+                    found[0] = "metaClass";
+                }
+                super.visitPropertyExpression(expression);
+            }
+
+            @Override
+            public void visitMethodCallExpression(MethodCallExpression call) {
+                String name = call.getMethodAsString();
+                if (name == null) {
+                    found[0] = "a computed method name";
+                } else if ("setMetaClass".equals(name) || "getMetaClass".equals(name)) {
+                    found[0] = "metaClass";
+                } else if ("use".equals(name) && call.isImplicitThis() && isCategoryUse(call.getArguments())) {
+                    found[0] = "a category (use)";
+                }
+                super.visitMethodCallExpression(call);
+            }
+
+            @Override
+            public void visitConstructorCallExpression(ConstructorCallExpression call) {
+                ClassNode type = call.getType();
+                if (type != null && EXPANDO_CLASSES.contains(type.getName())) {
+                    found[0] = "Expando";
+                } else if (type != null && isBuilder(type)) {
+                    found[0] = "a builder (" + type.getNameWithoutPackage() + ")";
+                }
+                super.visitConstructorCallExpression(call);
+            }
+        };
+        visitor.visitClass(classNode);
+        return found[0];
+    }
+
+    /** A Groovy builder: a {@code groovy.*} class named {@code *Builder}, or one extending a builder base class. */
+    static boolean isBuilder(ClassNode type) {
+        if (type.getName().startsWith("groovy.") && type.getName().endsWith("Builder")) {
+            return true;
+        }
+        for (ClassNode parent : Members.hierarchy(type)) {
+            if (BUILDER_SUPPORT.contains(parent.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void inspect(AstIndex index, NodeEntry entry, List<Finding> out) {
         Object node = entry.node();
         if (entry.isDeclaration() && node instanceof ClassNode classNode) {

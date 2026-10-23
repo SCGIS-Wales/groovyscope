@@ -33,7 +33,7 @@ class ReuseConfigSpec extends Specification {
         tuned == new EngineConfig.Reuse(0.5, 4, ['log'], 8, 3, 9, 2)
         partial == new EngineConfig.Reuse(0.6, 10, EngineConfig.Reuse.DEFAULTS.ignoreCalls(), 15, 20, 5, 3)
         EngineConfig.DEFAULTS.practices().reuse() == EngineConfig.Reuse.DEFAULTS
-        new EngineConfig.Practices(true, [:], null, null, null, null, null).reuse() == EngineConfig.Reuse.DEFAULTS
+        new EngineConfig.Practices(true, [:], null, null, null, null, null, null).reuse() == EngineConfig.Reuse.DEFAULTS
         new EngineConfig.Practices(true, [:], null, null, null).reuse() == EngineConfig.Reuse.DEFAULTS
     }
 

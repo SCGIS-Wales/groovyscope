@@ -143,7 +143,8 @@ class Shapes {
                 text: '/** The counter. */\nprivate int current() {\n    counter\n}\n'])
 
         then:
-        result.keySet() as List == ['text', 'oldStr', 'newStr', 'startLine', 'endLine', 'symbol']
+        result.keySet() as List == ['text', 'oldStr', 'newStr', 'startLine', 'endLine', 'symbol', 'untyped']
+        result.untyped == []
         result.symbol == 'Verbose.current'
         result.startLine == 14
         result.endLine == 20
@@ -493,5 +494,34 @@ class Shapes {
 
         then:
         error.responseError.message.contains('has no body')
+    }
+
+    def 'untyped lists the def parameters, return types and fields of the new text, with the types the checker infers'() {
+        when:
+        def result = onFixture(SUBJECT, [symbol: 'Subject', operation: 'add_member', position: 'end',
+                text: "def label = 'x'\n\ndef twice(value, int times = 2) {\n    return value * times\n}\n\n" +
+                        "def size(List<String> items) {\n    items.size()\n}\n\ndef hello() {\n    return 'hi'\n}\n"])
+        def lines = result.text.readLines()
+
+        then:
+        result.untyped*.what == ['field label', 'return type of twice', 'parameter value', 'return type of size',
+                                 'return type of hello']
+        result.untyped*.inferred == ['String', null, null, 'int', 'String']
+        result.untyped.every { lines[it.line - 1].contains(it.what.tokenize(' ').last()) }
+    }
+
+    def 'untyped ignores the body a replace_body leaves in place, a deletion, an import, and is absent when off'() {
+        given:
+        def off = new GroovyscopeLanguageServer({ int code -> } as IntConsumer, Fixtures.project(PROJECT),
+                EngineConfig.DEFAULTS.toBuilder().practices(new EngineConfig.Practices(true, [:],
+                        EngineConfig.Naming.DEFAULTS, [], EngineConfig.Comments.DEFAULTS, EngineConfig.Reuse.DEFAULTS,
+                        EngineConfig.Tests.DEFAULTS, new EngineConfig.Types(true, 10, false))).build())
+
+        expect:
+        onFixture(VERBOSE, [symbol: 'current', operation: 'replace_body', text: 'def x = counter\nx']).untyped == []
+        onFixture(VERBOSE, [symbol: 'current', operation: 'delete']).untyped == []
+        onFixture(VERBOSE, [operation: 'add_import', text: 'java.util.List']).untyped == []
+        !off.edit([root: root, uri: uri(VERBOSE), symbol: 'current', operation: 'delete']).get(60, TimeUnit.SECONDS)
+                .containsKey('untyped')
     }
 }

@@ -130,6 +130,10 @@ comments:
   maxAddedShare: 0.2      # edit gate: share of a write's added lines that may be comment lines
   minAddedLines: 10       # edit gate: the share applies to writes that add this many lines or more
   exemptPublicJavadoc: true  # edit gate: one Javadoc line per public member is left out of that share
+types:
+  preview: true           # GS077: run Groovy's static type checker on classes without @CompileStatic or @TypeChecked
+  previewMaxPerFile: 10   # GS077: most type preview warnings reported per file
+  declareOnEdit: true     # edit_symbol: list the def parameters, return types and fields of new text, with inferred types
 profiles:
   paths: []              # runtime profile files or directories (YAML/JSON), see docs/profiles.md
   discover: true         # also load <root>/.groovyscope/profiles/ and ~/.groovyscope/profiles/
