@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.34.0...v0.35.0) (2026-10-23)
+
+
+### Features
+
+* object oriented edits and design findings ([#143](https://github.com/SCGIS-Wales/groovyscope/issues/143)) ([40bdef2](https://github.com/SCGIS-Wales/groovyscope/commit/40bdef2f0d845b04a520faaa2192eee9c7404b06))
+
 ## [0.34.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.33.0...v0.34.0) (2026-10-23)
 
 
