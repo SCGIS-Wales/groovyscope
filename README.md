@@ -105,6 +105,18 @@ or receiver type, `return null`, string literals matching a pattern, annotations
 blocks, long methods) and duplicated code with identifiers and literals ignored (`find_duplicates`). None of
 them returns a whole file.
 
+### Every edit, planned and gated
+
+An agent changes Groovy through groovyscope and writes through Kiro. `edit_symbol` (one declaration),
+`change_signature`, `extract_method` and `move_member` compute the change in the engine and return, per file, the
+diff, the gate's verdict on a preview of the file as it would be, the tests that reach the change, and the exact
+`old_str` and `new_str`; the agent passes them to Kiro's `write`, so you see Kiro's diff and answer its prompt. A
+hook before every write previews the text it would leave and reports what it would introduce: syntax, compile and
+type errors, a repeat of existing code (GS080), a write that is mostly comment; in `block` mode
+(`hooks.preWrite.mode`) the write is refused. After the write the hook says whether the plan landed and lists the
+file's findings. `test_plan`, `suggest_reuse` and `class_design` say what to test, what to reuse and where code
+belongs before anything is written.
+
 ## Architecture
 
 <picture>

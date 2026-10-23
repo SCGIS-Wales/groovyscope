@@ -551,6 +551,17 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Done when: merged and released, verified from PyPI (`change_signature` on a method with three call sites updates
   them; `extract_method` leaves code that compiles).
 
+- [ ] **Stage 30: Kiro assets and documentation for the edit intelligence plan** (edit plan Phase 7, branch
+  `docs/edit-intelligence`): the steering regrouped under "Every edit", 73 lines; four skills and MCP prompts
+  (`groovy-edit`, `groovy-tests`, `groovy-design`, `groovy-reuse`, eighteen in all); the reviewer agent gains the
+  read-only `class_design`, `test_plan` and `suggest_reuse` from the catalogue, the edit tools stay out of
+  `allowedTools` and ask under V3; README (the planned write flow), `docs/prompts.md` (four recipes),
+  `docs/rules.md`, `docs/architecture.md` (the engine requests), `docs/troubleshooting.md` (a blocked write and how
+  to override it for a session), `docs/security.md` (the gate reads the hook payload and writes nothing; plans 0600
+  under the cache). Not done: the plan's benchmark repeat (tasks 3 and 4 with the gate on) costs Kiro credits, so it
+  waits for the owner's say-so, as `docs/benchmark.md` requires. Done when: merged and released, verified from PyPI
+  (`groovyscope kiro init` writes eighteen skills; the MCP server lists eighteen prompts).
+
 ## Owner checks still open
 
 These need a Kiro CLI install or the owner's account, so no session can close them; each stage above shipped
@@ -575,6 +586,8 @@ without them.
 - Stage 24: one `edit_symbol` dry run applied through Kiro's `write` (the diff prompt shown, `planned write
   applied` after it), and one write that adds a compile error with `hooks.preWrite.mode: block` (refused, the
   reason shown to the agent).
+- Stage 30: the benchmark's tasks 3 and 4 with the gate on, against the 0.28 numbers (Kiro credits; the owner's
+  decision), and `/groovy-edit` on a real change.
 - Stage 29: one `change_signature` and one `extract_method` in Kiro, applied through Kiro's `write` (one diff per
   file).
 - Stage 25: one Kiro session that writes a heavily commented method, to see the gate's comment share message and

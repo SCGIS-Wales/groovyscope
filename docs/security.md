@@ -74,6 +74,16 @@ two actions that run repository code (`trust`, `classpath`) are proposed on thei
 them only after you say yes. It never grants trust, never starts or stops a daemon and never reads source code,
 and it finishes within Kiro's hook budget or is cut off without effect.
 
+## The edit gate and planned writes
+
+The `preToolUse` hook reads the text a write would leave from Kiro's hook payload (the tool's own input) and asks the
+engine to preview it: an overlay compile against the last snapshot, under the same safety flags and trust gate as any
+compile, with nothing written. It never starts the engine and never writes a file; a blocked write is Kiro's refusal,
+on the hook's exit code. Plans (`edit_symbol` and the refactoring tools' dry runs) are kept under the cache directory,
+one JSON file per source file, readable by you only (mode 0600), and expire after `edits.planTtlMinutes`. The edit
+tools write only with `apply: true`, after asking when the client supports it, and restore every file when the
+recompile finds new errors.
+
 ## Reports are data
 
 `check`, `review` and `review_changes` read the build's SARIF logs, and `coverage_gaps` reads the JaCoCo XML

@@ -6,6 +6,9 @@ hard failures.
 | Symptom | Cause and fix |
 |---|---|
 | No groovyscope question before a write, only Kiro's approval | The client declares no MCP elicitation; the answer says `"confirmation": "not offered"` and `groovyscope doctor` shows `mcp client ... can be asked: no`. Try Kiro's terminal UI (drop `--classic`) |
+| A write is refused with `groovyscope gate: write to ... BLOCKED` | The write would add the errors listed (a syntax, compile or type error, a repeat of existing code, a share of comment lines); fix the text, or plan it with `edit_symbol`. To let writes through with a report instead, set `hooks.preWrite.mode: warn` in `.groovyscope.yaml`, or for one session start Kiro with `GROOVYSCOPE_HOOKS__PREWRITE__MODE=warn` |
+| `groovyscope: planned write drifted` after a write | The file does not hold what the plan produced: the write differed, or the file changed in between; read the declaration again and plan again |
+| `Stop` refused with `changed class(es) under 80% line coverage` | `hooks.coverageGate` is on and a fresh JaCoCo report has changed classes under `coverage.minimumPercent`; add the tests `test_plan` lists, or turn the gate off |
 | `/groovy-impact` gives `unrecognized subcommand` | Classic chat (`--classic`) invokes prompts as `@groovy-impact`; the terminal UI uses `/groovy-impact` |
 | `FAIL jdk no JDK found` | Install JDK 21 (docs/install.md) or set `JAVA_HOME`; on macOS add the `/Library/Java/JavaVirtualMachines` symlink |
 | `FAIL jdk JDK 11 ... below the minimum 17` | Groovy 6 needs 17+; point `jdk.home` or `JAVA_HOME` at a newer JDK |
