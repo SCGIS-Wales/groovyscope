@@ -62,7 +62,9 @@ def test_a_dry_run_plans_the_write_and_stores_the_plan(target: Path) -> None:
             "line": 2,
         },
     )
-    assert [method for method, _ in call.calls] == ["groovyscope/edit", "groovyscope/preview", "groovyscope/check"]
+    methods = [method for method, _ in call.calls]
+    assert methods == ["groovyscope/edit", "groovyscope/preview", "groovyscope/check", "groovyscope/impact"]
+    assert call.calls[-1][1]["symbol"] == "A#a" and "tests" not in result
     assert result["gate"]["decision"] == "pass" and result["lines"] == [2, 2] and result["symbol"] == "A.a"
     assert "-    int a() { 1 }\n+    int a() { 2 }" in result["diff"]
     assert result["plan"]["old_str"] == "{ 1 }" and result["applyWith"].startswith("write command str_replace")
@@ -147,3 +149,25 @@ def test_an_edit_that_leaves_types_undeclared_is_held_back(target: Path) -> None
     ]
     applied = tools(target.parent, untyped)("A.groovy", "a", "replace", text="def a(x) { x }", apply=True)
     assert applied["edited"] is False and target.read_text(encoding="utf-8") == BEFORE
+
+
+def test_reaching_tests_name_the_tests_through_the_call_graph(tmp_path: Path) -> None:
+    def site(container: str, name: str) -> dict[str, Any]:
+        return {"caller": {"containerName": container, "name": name}}
+
+    reports = [{"tests": [site("demo.ASpec", "adds"), site("demo.ASpec", "adds"), site("demo.AIT", "stores")]}]
+    seen: list[dict[str, Any]] = []
+
+    def call(_method: str, params: dict[str, Any]) -> Any:
+        seen.append(params)
+        return reports
+
+    assert mcp_edit.reaching_tests(call, tmp_path, "demo.A.add") == ["demo.ASpec.adds", "demo.AIT.stores"]
+    assert seen[0]["symbol"] == "demo.A#add" and seen[0]["change"] == "behaviour"
+    mcp_edit.reaching_tests(call, tmp_path, "demo.A")
+    assert seen[-1]["symbol"] == "demo.A"  # a class is asked for as it is
+
+    def broken(_method: str, _params: dict[str, Any]) -> Any:
+        raise RuntimeError("engine down")
+
+    assert mcp_edit.reaching_tests(broken, tmp_path, "A.a") == []

@@ -105,7 +105,7 @@ class LspPracticesSpec extends Specification {
                 new Range(new Position(4, 0), new Position(4, 1)), new CodeActionContext([]))).get(60, TimeUnit.SECONDS)
 
         then:
-        def first = (checked.diagnostics[numbers] as List)[0]
+        def first = (checked.diagnostics[numbers] as List).find { !it.code.startsWith('GS09') }
         first.code == 'GS001'
         first.codeDescription.href.endsWith('docs/practices.md#23-numeric-pitfalls')
         explained.title == 'Elvis on a value where 0 or empty is valid'

@@ -40,6 +40,11 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
   field, parameter and return type; `List<String>`, not a raw `List`; arrays only at a Java boundary, converted
   with `as`. GS070 to GS076 report mixed value types and GS077 what would not type check.
 
+- Before changing a class, `groovyscope.class_design` names its responsibilities; put a method where its state
+  lives, and extract shared code with `groovyscope.extract_method`. Change a public signature with
+  `groovyscope.change_signature` and move a method with `groovyscope.move_member`, never by editing call sites one
+  at a time. Read each dry run's gate and `tests` before you apply its writes.
+
 ## After every write
 
 - After you write a Groovy, Gradle or Jenkinsfile file, a hook checks that file and a `groovyscope checked ...`

@@ -515,7 +515,8 @@ class Shapes {
         def off = new GroovyscopeLanguageServer({ int code -> } as IntConsumer, Fixtures.project(PROJECT),
                 EngineConfig.DEFAULTS.toBuilder().practices(new EngineConfig.Practices(true, [:],
                         EngineConfig.Naming.DEFAULTS, [], EngineConfig.Comments.DEFAULTS, EngineConfig.Reuse.DEFAULTS,
-                        EngineConfig.Tests.DEFAULTS, new EngineConfig.Types(true, 10, false))).build())
+                        EngineConfig.Tests.DEFAULTS, new EngineConfig.Types(true, 10, false),
+                        EngineConfig.Design.DEFAULTS)).build())
 
         expect:
         onFixture(VERBOSE, [symbol: 'current', operation: 'replace_body', text: 'def x = counter\nx']).untyped == []

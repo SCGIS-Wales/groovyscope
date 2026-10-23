@@ -39,6 +39,10 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "rename": ("Rename a symbol", False),
     "edit_symbol": ("Edit one declaration, gated", False),
     "suggest_reuse": ("Existing code to reuse", True),
+    "change_signature": ("Change a method signature", False),
+    "extract_method": ("Extract a method", False),
+    "move_member": ("Move a method to a class", False),
+    "class_design": ("How a class is designed", True),
     "read_symbol": ("Read one declaration", True),
     "find_code": ("Structural code search", True),
     "find_duplicates": ("Find duplicated code", True),
@@ -110,14 +114,22 @@ DESCRIPTIONS: dict[str, str] = {
         "`needed`: the gaps to test, nothing else."
     ),
     "suggest_reuse": "Existing code doing what TEXT (or SYMBOL in PATH) does: same shape, name and types, or calls.",
+    "change_signature": (
+        "SYMBOL's new PARAMETERS ([{name, type, default?}]) and RETURN_TYPE, call sites too; APPLY writes."
+    ),
+    "extract_method": "Lines START_LINE to END_LINE of PATH into a new method NAME, from the data flow; APPLY writes.",
+    "move_member": "Move SYMBOL to TO_CLASS with its imports and call sites; APPLY writes.",
+    "class_design": "SYMBOL's (or PATH's classes') responsibilities, cohesion, envy, mutable state, and refactors.",
 }
 
 
 # Tools whose `apply` overwrites workspace files, so a client should confirm before calling them that way.
-DESTRUCTIVE_TOOLS = frozenset({"edit_symbol", "fix", "format", "rename", "resolve_conflicts"})
+DESTRUCTIVE_TOOLS = frozenset(
+    {"change_signature", "edit_symbol", "extract_method", "fix", "format", "move_member", "rename", "resolve_conflicts"}
+)
 # Repeating the call with the same arguments does not give the same result: after a rename the symbol at the
 # position already carries the new name, and an inserted member is inserted again.
-NOT_IDEMPOTENT_TOOLS = frozenset({"edit_symbol", "rename"})
+NOT_IDEMPOTENT_TOOLS = frozenset({"change_signature", "edit_symbol", "extract_method", "move_member", "rename"})
 # Reaches beyond this workspace: the classpath export runs the project's build, which may download dependencies.
 OPEN_WORLD_TOOLS = frozenset({"refresh_classpath"})
 

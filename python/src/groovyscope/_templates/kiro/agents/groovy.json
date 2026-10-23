@@ -25,6 +25,7 @@
     "@groovyscope/find_unused",
     "@groovyscope/workspace_status",
     "@groovyscope/suggest_reuse",
+    "@groovyscope/class_design",
     "@groovyscope/read_symbol",
     "@groovyscope/find_code",
     "@groovyscope/find_duplicates",

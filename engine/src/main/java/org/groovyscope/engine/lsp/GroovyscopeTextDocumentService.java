@@ -409,6 +409,10 @@ final class GroovyscopeTextDocumentService implements TextDocumentService {
                     actions.add(Either.forRight(action));
                 }
             }
+            if (wanted(only, CodeActionKind.RefactorExtract, false)) {
+                RefactorRequests.extractAction(current, uri, params.getRange())
+                        .ifPresent(action -> actions.add(Either.forRight(action)));
+            }
             // Source actions are computed only when asked for: fixing a whole document can run the type checker.
             if (wanted(only, FIX_ALL_KIND, true)) {
                 List<org.groovyscope.engine.model.TextEdit> edits = current.quality().fixAll(uri);

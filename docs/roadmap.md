@@ -482,8 +482,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Verified from PyPI: 0.31.0 reports GS060 (3), GS061, GS062 (2), GS063, GS064 (3) and GS065 on the fixture's
   `Verbose.groovy`.
 
-- [ ] **Stage 28: lean tests, coverage at 80, integration tests in line** (edit plan Phase 5, branch
-  `feat/test-discipline`): `coverage` settings (`minimumPercent` 80, per changed class or `overall`, only a report
+- [x] **Stage 28: lean tests, coverage at 80, integration tests in line** — released in 0.33.0 (PR #139); edit
+  plan Phase 5: `coverage` settings (`minimumPercent` 80, per changed class or `overall`, only a report
   newer than the change counts) read by `verify --coverage` (exits 1 under the threshold, naming the classes and their
   missed lines), `review_changes` (a `coverage` block; a fresh report under the threshold makes the verdict blocking;
   a stale or missing one names the command), `coverage_gaps` (`threshold`, `below`) and an opt-in `hooks.coverageGate`
@@ -499,8 +499,9 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   positive; the fixture's 12 findings are all correct. Tool surface: test_plan adds 487 bytes.
   Done when: merged and released, verified from PyPI (the fixture's `SubjectSpec` reports GS044, GS046 and GS047; a
   JaCoCo report under 80% fails `verify --coverage` and blocks `review_changes`).
+  Verified from PyPI: 0.33.0 reports GS044 (4), GS045, GS046, GS047 and GS048 (2) on the fixture's `SubjectSpec`.
 
-- [ ] **Stage 26: value types** (edit plan Phase 3, branch `feat/types-gate`): GS070 (a literal of another kind
+- [x] **Stage 26: value types** — released in 0.34.0 (PR #141); edit plan Phase 3: GS070 (a literal of another kind
   assigned, compared, passed or returned), GS071 (one variable holding several kinds), GS072 (text used as a boolean),
   GS073 (returns of different kinds), GS074 (arrays and lists mixed, with a `size()` and an `as T[]` fix), GS075 (one
   map key, several kinds) and GS076 (an argument of another kind at a certain call site), each STATIC or INFERRED;
@@ -513,8 +514,10 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   3,268-line file under 1.2 s. Done when: merged and released, verified from PyPI (the fixture's `Types.groovy`
   reports GS070 to GS075 and GS077; a `preToolUse` write returning text from an `int` method under `@CompileStatic`
   is held back).
+  Verified from PyPI: 0.34.0 reports GS070, GS071, GS072 (2), GS073, GS074, GS075 and GS077 (2) on the fixture's
+  `Types.groovy`; the integration test holds back the `@CompileStatic` write.
 
-- [ ] **Stage 27: reuse before writing** (edit plan Phase 4, branch `feat/reuse-gate`): the engine's
+- [x] **Stage 27: reuse before writing** — released in 0.32.0 (PR #137); edit plan Phase 4: the engine's
   `groovyscope/similar` (a candidate text, an existing symbol, or a file's changed ranges; shape matches exact or
   similar from `CloneFinder` with a loose hash so a parsed text matches resolved code, signature matches by name stem
   and parameter types, and calls matches by the overlap of called APIs, common calls left out); `explain_code` gains
@@ -525,6 +528,28 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   correctly empty), 12 to 79 ms a query after a 250 to 310 ms index per snapshot. Tool surface: suggest_reuse adds 553
   bytes. Done when: merged and released, verified from PyPI (writing the fixture's copied block is held back naming
   `demo.Strings.slug`; `suggest_reuse` on it returns the original with a score).
+  Verified from PyPI: 0.32.0 refuses writing the fixture's `Copied.groovy` with `[GS080] repeat demo.Strings.slug`.
+
+- [ ] **Stage 29: object oriented edits and design findings** (edit plan Phase 6, branch `feat/design-edits`): the
+  engine's `groovyscope/changeSignature`, `extractMethod` and `moveMember` (edits for every static call site, one
+  exact replacement per file, refused on a call matched by name only, named or spread arguments, an argument with
+  side effects, an override, instance state or a private field the move would lose) and an `Extract method` code
+  action; `change_signature`, `extract_method` (it asks `suggest_reuse` first) and `move_member` gate the files of a
+  refactoring together in one preview, plan one Kiro `write` per file, or apply them after asking with a recompile
+  and rollback; every edit tool's dry run names the tests reaching the changed symbol. `groovyscope/design` and
+  `class_design`: responsibilities, cohesion (LCOM4, the groups that share fields, the separable ones), feature envy,
+  shared parameter lists, type switches, mutable state, size, and per finding the refactoring with the tool call that
+  performs it; GS090 (god class), GS091 (feature envy), GS092 (long parameter list), GS093 (type switch), GS094
+  (public mutable field or a getter handing out a mutable collection), GS095 (anemic data class), GS096 (primitive
+  obsession) and GS097 (a method using no instance state). Calibrated on CodeNarc's sources: every finding judged
+  correct after tuning (the first run had 8 of 9 GS091 and 7 of 9 GS094 false), GS097 142 findings with ten judged;
+  `class_design` on `CodeNarcRunner` names its plugin group as separable, its mutable plugin list and two stateless
+  methods, in 22 to 38 ms after the first request. Not done: `edit_symbol`'s
+  `doc: concise` (a Javadoc sentence built from facts): the agent writes that one sentence from `explain_code`
+  better than a template, and the steering says how. Tool surface: the three refactoring tools add 1,642 bytes and
+  `class_design` 389, to 19,241, over the plan's 18,500 by the design tool, kept as the plan decided.
+  Done when: merged and released, verified from PyPI (`change_signature` on a method with three call sites updates
+  them; `extract_method` leaves code that compiles).
 
 ## Owner checks still open
 
@@ -550,6 +575,8 @@ without them.
 - Stage 24: one `edit_symbol` dry run applied through Kiro's `write` (the diff prompt shown, `planned write
   applied` after it), and one write that adds a compile error with `hooks.preWrite.mode: block` (refused, the
   reason shown to the agent).
+- Stage 29: one `change_signature` and one `extract_method` in Kiro, applied through Kiro's `write` (one diff per
+  file).
 - Stage 25: one Kiro session that writes a heavily commented method, to see the gate's comment share message and
   GS060 to GS065 in the after-write block.
 - Repository settings: the `RELEASE_PLEASE_TOKEN` secret, "Allow auto-merge", and the decisions listed in

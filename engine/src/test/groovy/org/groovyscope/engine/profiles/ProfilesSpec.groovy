@@ -61,7 +61,7 @@ class ProfilesSpec extends Specification {
         services.quality().governing(uri(DEMO)).get().name() == 'demo-runtime'
         services.quality().governing(uri('plugins/demo/src/test/groovy/demo/DemoPluginTest.groovy')).empty
         services.quality().governing(uri('plugins/other/src/Util.groovy')).empty
-        services.quality().practices(uri('plugins/other/src/Util.groovy')).empty
+        services.quality().practices(uri('plugins/other/src/Util.groovy'))*.diagnostic()*.code() == ['GS097']
     }
 
     def 'runtime findings on a governed plugin'() {

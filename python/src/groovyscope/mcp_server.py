@@ -29,6 +29,7 @@ from groovyscope import (
     interaction,
     mcp_edit,
     mcp_merge,
+    mcp_refactor,
     mcp_reuse,
     mcp_search,
     mcp_testplan,
@@ -1401,6 +1402,7 @@ def build_tools(
         **mcp_merge.merge_tools(root, call, cap, output, confirm_policy=policy),
         **mcp_edit.edit_tools(root, call, output, confirm_policy=policy),
         **mcp_reuse.reuse_tools(root, call, cap, output),
+        **mcp_refactor.refactor_tools(root, call, cap, output, confirm_policy=policy),
     }
     verify_settings: Mapping[str, Any] = output.get("verify") or {}
     tools.update(

@@ -192,7 +192,7 @@ public final class SymbolReader {
      * declaration's span begins for {@code readSymbol} and for {@link SymbolEditor}, which replaces, moves or deletes
      * that span. A blank line ends the run.
      */
-    static int leadingStart(TextLines lines, int line) {
+    public static int leadingStart(TextLines lines, int line) {
         int start = line;
         while (start > 0) {
             String previous = lines.line(start - 1).trim();

@@ -385,3 +385,107 @@ line 10 and String from line 12), GS074 (18, `items.length`, fix `items.size()`)
 `Cannot call java.lang.String#compareTo(java.lang.String) with arguments [int]` and
 `No such property: length for class: java.util.List`. The other cases type check: the checker's flow typing accepts
 a `def` that changes kind, a `def` method's mixed returns, Groovy truth on text and a raw map's values.
+
+## Phase 6 calibration: design
+
+The design facts (`explain/DesignFacts.java`, read by `groovyscope/design` and by the checks GS090 to GS097 in
+`practices/DesignChecks.java`) were run with the default `design` settings (`maxMethods: 25`, `maxFields: 12`,
+`maxLines: 600`, `maxParameters: 4`, `envyMinUses: 3`) on the same CodeNarc 4.0.0 `src/main/` copy, compiled as one
+workspace in one JVM (544 compiled sources, the 529 Groovy files of `src/main/groovy` among them; 912 classes, 1,821
+methods and constructors). The facts need the resolved tree: feature envy and the anemic data class read the types of
+receivers, and a method uses no instance state only when every call in it resolves.
+
+Timings: the workspace compile took 11 to 12 s (paid once by any request). The first `groovyscope/design` request
+took 1.0 to 1.4 s, building the call graph `explainCode` also reads and the workspace index the facts keep per
+compilation (which classes read and write which fields, which methods subclasses declare again). After that a
+request answered in 22 to 38 ms for `CodeNarcRunner`, and a sweep over all 894 top level classes took 6 ms at the
+median, 9 to 11 ms at the 90th percentile and 58 to 99 ms at worst. The facts of all 912 classes took 109 to 112 ms in
+one pass; every practice check of the 544 sources, the design checks included, took 720 to 730 ms.
+
+`groovyscope/design` on `org.codenarc.CodeNarcRunner` (178 lines, 18 methods, 7 fields):
+
+- Responsibilities: `register` (`registerPlugin`, `registerPluginsForClassNames`), `execute`, `get` (`getPlugins`).
+- Cohesion: LCOM4 1, because `execute` calls every helper; with calls left out (`byFields`) three jobs show: the
+  plugins (`registerPlugin`, `getPlugins`, `initializePlugins`, `applyPluginsProcessRules`, the two
+  `applyPluginsProcessViolations*` methods and `writeReports`, over `plugins` and `reportWriters`), loading the rule
+  set (`execute` and the three `createInitialRuleSet*` methods, over `ruleSetFiles`, `ruleSetString` and
+  `sourceAnalyzer`), and configuring it (`buildRuleSet`, over `propertiesFilename` and `ruleSetConfigurer`). The
+  plugins group calls nothing outside itself, so it is `separable`.
+- Candidates: `getPlugins` hands out the mutable `plugins` list (GS094); `initializeRuleRegistry` and
+  `buildCountsText` use no instance state (GS097), and `buildCountsText` makes all its calls on `Results`.
+- Suggestions, each with its tool call: move the plugins group to a class of its own
+  (`move_member(symbol: "org.codenarc.CodeNarcRunner.registerPlugin", toClass: "org.codenarc.<NewClass>")`),
+  return `plugins.asImmutable()` (`edit_symbol ... replace_body`), make `initializeRuleRegistry` static, and move
+  `buildCountsText` to `org.codenarc.results.Results` (`move_member`). No feature envy, shared parameter list, type
+  switch, static mutable state, long parameter list or local in disguise is reported, and none is there.
+
+| Check | Findings | Files | Judged | Correct | False |
+|---|---|---|---|---|---|
+| GS090 god class | 5 | 5 | all 5 | 5 | 0 |
+| GS091 feature envy | 1 | 1 | all 1 | 1 | 0 |
+| GS092 long parameter list | 3 | 2 | all 3 | 3 | 0 |
+| GS093 chain of type tests | 7 | 7 | all 7 | 7 | 0 |
+| GS094 state anyone may change | 2 | 2 | all 2 | 2 | 0 |
+| GS095 anemic data class | 1 | 1 | all 1 | 1 | 0 |
+| GS096 primitive obsession | 0 | 0 | none | 0 | 0 |
+| GS097 method uses no instance state | 142 | 89 | 10 | 10 | 0 |
+
+How a finding was judged: correct when the code is what the check describes and its fix would apply (the method
+could be static or moved, the list could be handed out, the branches dispatch on a type); false when the code only
+looks so (a field made unmodifiable elsewhere, a method bound to a supertype, data that many classes consume).
+
+GS090, all correct by the limits: `CodeNarc` (18 fields, its command line options), `ant/CodeNarcTask` (13 fields),
+`rule/generic/IllegalClassMemberRule` (17 fields), `rule/size/CrapMetricRule` (13 fields) and
+`rule/formatting/IndentationRule`'s `IndentationAstVisitor` (29 methods). The first four hold configuration
+properties; past the limit is still past the limit, and the message names which.
+
+GS091: `rule/formatting/BracesForIfElseRule.groovy:92` `visitElse` reads the rule's settings five times and writes
+two of them (defaulting `elseOnSameLineAsClosingBrace` and `elseOnSameLineAsOpeningBrace` from `sameLine`): logic
+that belongs in the rule.
+
+GS092: `rule/AbstractRuleTestCase.groovy:112` and `:205` (`assertTwoViolations`, 5 and 7 parameters, a test base
+shipped in `src/main`) and `util/SourceCodeUtil.groovy:57` `sourceLinesBetween` (5).
+
+GS093, all seven dispatch on the type of one value with a branch per type: `DeadCodeRule.statementForcesMethodReturn`,
+`CouldBeSwitchStatementRule.isSameLeftExpressionAsPreviousIfStatement`, `BooleanMethodReturnsNullRule.checkReturnValues`
+(an else-if chain), `SpaceAroundOperatorRule.rightMostColumn`, `GetterMethodCouldBePropertyRule.createMessage`,
+`JUnitUtil.isLiteralWithValueThatEvaluatesTo` and `PropertyUtil.setPropertyFromString` (a `switch` on a `Class`
+value converting a String per type). Every type tested is a Groovy AST class or a JDK type, which the workspace
+cannot give a method, so the message offers a visitor or a map from type to handler instead of polymorphism.
+
+GS094: `CodeNarcRunner.getPlugins` and `results/DirectoryResults.getChildren` return a list the class creates with
+`[]` and adds to.
+
+GS095: `ClassConstraintsAndMapping` (in `rule/grails/GrailsDomainStringPropertyMaxSizeRule.groovy`), two fields that
+only `GrailsDomainStringPropertyMaxSizeAstVisitor` writes and reads, with the lookups over them in the visitor.
+
+GS097, every fourteenth finding from the eighth, all correct (each reads no field, calls no instance method and does
+not use `this`): `AbstractReportWriter.getDescriptionProperty`, `EmptyClassRule.hasAnnotation`,
+`IfStatementCouldBeTernaryRule.getReturnValue`, `CloneableWithoutCloneRule.hasCloneMethod`,
+`BracesForClassRule.definesAnnotationType`, `SpaceInsideParenthesesRule.startOfCommentIndex`,
+`AbstractImportRule.findLineNumberOfFirstClassDeclaration`, `UnsafeImplementationAsMapRule.getMethodsImplementedByCoercion`,
+`UnnecessaryGetterRule.hasClosureAsLastArgument` and `RuleRegistryInitializer.initializeRuleRegistry`. 142 of 1,821
+methods (7.8%) is many, but CodeNarc's rules are full of small private predicates over AST nodes, and each is a
+static helper in all but its modifier. It is information only.
+
+GS096 reports nothing here: no CodeNarc method takes three String identifiers. The specs cover it.
+
+What the first run found and what changed. The first run reported GS091 9 times, GS093 8 times, GS094 9 times and
+GS095 2 times; the counts of the others did not move.
+
+1. GS091 (8 of 9 false): six report writers and the test base read `Violation` or `FileResults` to format or assert
+   them, and `ClassEndsWithBlankLineRule.addViolation` built a `Violation` with four setters. Writes no longer count
+   as envy (setting another object's fields is building it), and data that three workspace classes or more read is
+   shared: no one reader envies it.
+2. GS094 (7 of 9 false): `ListRuleSet`, `XmlReaderRuleSet` and `JsonReaderRuleSet` make their list unmodifiable in
+   the constructor, `XmlFileRuleSet`, `JsonFileRuleSet` and `GroovyDslRuleSet` take it from a reader that did, and
+   `FileResults.getRawViolations` returns the list its caller passed in. A getter is now reported only when every
+   value the class gives the field (its initial value and each assignment) is a list or map literal or a new
+   collection; a getter of a property's own field is not reported, as properties are not.
+3. GS093 (1 of 8 false): `CouldBeSwitchStatementRule.isSupportedLeftExpressionType` lists three class cases that fall
+   through to one `return true`, a membership test. Only cases with code of their own count as branches.
+4. GS095 (1 of 2 false): `InlineViolationsParser.ParseResult`, a result holder nested in the parser that fills it. A
+   data class nested in its owner, or holding it, is the outer class's own business and is not reported.
+5. The split suggestion: LCOM4 alone gave `CodeNarcRunner` one group, since a coordinating method joins everything.
+   `byFields` and `separable` were added so the answer names the jobs it ties together and the one that can move.
+

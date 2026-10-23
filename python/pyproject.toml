@@ -96,6 +96,7 @@ ignore = [
 # functools.partial binds once per session; the client sees only the rest.
 "src/groovyscope/mcp_server.py" = ["PLR0917"]
 "src/groovyscope/mcp_edit.py" = ["PLR0917"]
+"src/groovyscope/mcp_refactor.py" = ["PLR0917"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["groovyscope"]
