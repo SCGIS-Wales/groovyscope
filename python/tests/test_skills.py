@@ -11,8 +11,10 @@ from groovyscope.tools_catalog import TOOL_INFO
 EXPECTED = (
     "groovy-catch-audit",
     "groovy-coverage",
+    "groovy-design",
     "groovy-duplicates",
     "groovy-dynamic",
+    "groovy-edit",
     "groovy-explain",
     "groovy-fix",
     "groovy-impact",
@@ -21,7 +23,9 @@ EXPECTED = (
     "groovy-profile",
     "groovy-quality",
     "groovy-rename",
+    "groovy-reuse",
     "groovy-review",
+    "groovy-tests",
     "groovy-unused",
 )
 

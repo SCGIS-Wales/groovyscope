@@ -36,10 +36,14 @@ classes then resolve and the GS100 warnings go away.
 | Can I use `<construct>` in this plugin | `profile_status` | 0.2 |
 | Resolve the merge conflicts | `merge_conflicts`, `resolve_conflicts`, `merge_review` | 0.3 per file |
 | What is unused in `<folder>`, and remove it | `find_unused`, then `fix` and hand edits | 0.2 to 0.5 |
+| Change `<Class.method>` to `<what>` | `edit_symbol` (dry run), then Kiro's `write` | 0.3 to 0.6 |
+| Which tests does `<Class.method>` need | `test_plan`, then `verify --coverage` | 0.3 to 0.8 |
+| Improve the design of `<Class>` | `class_design`, then the edit tools it names | 0.5 to 1.5 |
+| Is there already code that does `<this>` | `suggest_reuse`, `explain_code` helpers | 0.2 to 0.4 |
 
 "Run all" runs the first six and gives one combined summary. Every row is also a skill, `/groovy-<name>`
 (review, fix, quality, duplicates, catch-audit, dynamic, coverage, impact, rename, explain, naming, profile,
-merge, unused),
+merge, unused, edit, tests, design, reuse),
 and an MCP prompt of the same name; the skill body is this page's recipe, loaded only when it runs.
 
 ## 1. Review this branch as a merge request reviewer
@@ -283,6 +287,50 @@ arguments go at every call, which `impact_of` lists). The same findings lead eve
 `review_changes` carry an `unused` block and, when there is any, an `attention` line that sorts first in the
 answer, the review verdict and the merge request summary name them, and the after-write hook prints an `UNUSED:`
 line. `groovyscope unused --changed` exits 1 on them, for a pipeline.
+
+## 15. A planned edit
+
+```text
+Make OrderService.total round to the nearest penny.
+```
+
+`edit_symbol` plans the change of one declaration as a dry run: the diff, the gate's verdict on a preview of the
+file as it would be (new compile and type errors, comment share, a repeat of existing code), the tests that reach the
+method, and the exact `old_str` and `new_str`. The agent passes them to Kiro's `write`, so you see Kiro's diff and
+answer its prompt; the hook before the write recognises the plan, and the one after it says `planned write applied`.
+A write that adds errors is reported before it lands (`hooks.preWrite.mode: block` refuses it).
+
+## 16. The tests a change needs
+
+```text
+Which tests does OrderService.total need, and add only those.
+```
+
+`test_plan` lists the tests that already reach the method (unit apart from integration, with the Gradle command), the
+reaching tests that repeat another, and `needed`: from a fresh JaCoCo report the lines and branches no test runs,
+otherwise the untested method and its parameters' boundaries. The agent adds only those, extends a data table before
+adding a feature method, and `groovyscope verify --coverage` checks every changed class reaches 80% line coverage.
+
+## 17. Class design
+
+```text
+OrderService is too big: what should move out, and move it.
+```
+
+`class_design` names the class's responsibilities by verb, the groups of methods that share fields (a separable
+group is a class of its own), feature envy, shared parameter lists, type switches and mutable state, each with the
+refactoring and the tool call that performs it: `extract_method`, `move_member`, `change_signature`. Each runs as a
+dry run with one gated `write` per file.
+
+## 18. Reuse before writing
+
+```text
+I need to slugify page titles; is there already something?
+```
+
+`suggest_reuse` searches the workspace for code that already does what the draft does (the same shape, the same name
+and parameter types, or the same calls), and `explain_code`'s `helpers` lists the utilities in reach of the class.
+The edit gate holds back a write that repeats existing code (GS080).
 
 ## Glossary
 

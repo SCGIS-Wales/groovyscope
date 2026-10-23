@@ -48,7 +48,7 @@ To start again from scratch: `groovyscope checks prepare --force` (it only ever 
 /prompts
 ```
 
-Expect `groovyscope (groovy) - initialized`, groovyscope loaded with 33 tools, the fourteen `groovy-*` prompts,
+Expect `groovyscope (groovy) - initialized`, groovyscope loaded with 40 tools, the eighteen `groovy-*` prompts,
 and a welcome text with no tool count in it. Note the first line the agent printed (the start hook's checkup
 line), the `/tools` total for groovyscope (2.5k tokens in the first check) and the `/context show` figure for
 `steering/groovyscope.md`.
@@ -205,7 +205,7 @@ delete `<key>.state.json` next to the log path `daemon status` prints.
 ## K. Tool surface and `disabledTools` (stage 16, no credits)
 
 Add `"disabledTools": ["coverage_gaps"]` to the groovyscope entry in `~/.kiro/settings/mcp.json` and restart the
-chat. Expect 33 tools and a lower `/tools` figure. Run `groovyscope kiro repair --global`: it prints a short
+chat. Expect 40 tools and a lower `/tools` figure. Run `groovyscope kiro repair --global`: it prints a short
 summary per file now (`--diff` for the details), and the `disabledTools` line must still be there. Remove it
 afterwards.
 

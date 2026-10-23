@@ -137,12 +137,13 @@ which captures confirm the edit gate's assumptions.
 
 ## Skills and prompts
 
-`groovyscope kiro init` writes fourteen skills under `.kiro/skills/groovy-*/SKILL.md` (`~/.kiro/skills/` with
+`groovyscope kiro init` writes eighteen skills under `.kiro/skills/groovy-*/SKILL.md` (`~/.kiro/skills/` with
 `--global`), one per recipe of the [prompts cookbook](prompts.md): `groovy-review`, `groovy-fix`,
 `groovy-quality`, `groovy-duplicates`, `groovy-catch-audit`, `groovy-dynamic`, `groovy-coverage`,
-`groovy-impact`, `groovy-rename`, `groovy-explain`, `groovy-naming`, `groovy-profile`, `groovy-merge`, `groovy-unused`. Kiro loads only the name
+`groovy-impact`, `groovy-rename`, `groovy-explain`, `groovy-naming`, `groovy-profile`, `groovy-merge`, `groovy-unused`,
+`groovy-edit`, `groovy-tests`, `groovy-design`, `groovy-reuse`. Kiro loads only the name
 and description at start and the body when the skill runs, so the recipes cost nothing until used; each is a
-slash command (`/groovy-impact OrderService.place`). The MCP server serves the same fourteen as prompts
+slash command (`/groovy-impact OrderService.place`). The MCP server serves the same eighteen as prompts
 (`prompts/list`, one optional `arguments` string), which Kiro shows under `/` as well, so a client without
 Kiro's skills directory still has them. The steering file now keeps only the session rules and points at the
 skills, which is what cut its size by half. If a custom agent does not list the skills, add

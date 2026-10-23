@@ -25,6 +25,17 @@ profiles live in `config/codenarc/`.
 8. **Regex and parsing.** `@SafeRegex` (Groovy 6) on patterns applied to external input; secure-by-default XML.
 9. **Supply chain.** `@Grab` is off in tooling and banned in production code; dependencies through Gradle
    with verification metadata.
+10. **Every edit is gated.** A write that adds a syntax, compile or type error, repeats existing code, or is mostly
+    comment is reported before it lands (`hooks.preWrite.mode: block` refuses it); edits go through `edit_symbol`,
+    `change_signature`, `extract_method` and `move_member` so call sites change together.
+11. **Concise comments.** Why, never what; one line; Javadoc one sentence on public members (GS060 to GS065).
+12. **One kind per place.** Declared types, no mixed kinds in a variable, key, comparison, argument or return
+    (GS070 to GS077).
+13. **Lean tests, 80% coverage.** One test per behaviour, data tables before new feature methods, no repeated tests,
+    every changed class at 80% line coverage, integration tests updated with the signature they call (GS044 to
+    GS049).
+14. **State with its methods.** Small, cohesive classes; no feature envy, public mutable state or stateless
+    instance methods (GS090 to GS097).
 
 ## Profiles
 
