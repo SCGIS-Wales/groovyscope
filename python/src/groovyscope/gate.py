@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from groovyscope import config as config_module
+from groovyscope import mcp_reuse
 from groovyscope.source_lines import line_kinds
 
 Decision = Literal["block", "warn", "pass"]
@@ -54,6 +55,7 @@ class Verdict(TypedDict):
     introduced: list[dict[str, Any]]
     existing: int
     change: Change
+    advice: list[str]  # what the write should reconsider without being held back (GS081, GS082)
 
 
 def settings(effective: Mapping[str, Any]) -> GateSettings:
@@ -85,6 +87,14 @@ def comment_policy(effective: Mapping[str, Any]) -> CommentPolicy:
         "minAddedLines": int(value("minAddedLines")),
         "exemptPublicJavadoc": bool(value("exemptPublicJavadoc")),
     }
+
+
+def reuse_settings(effective: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What the gate's reuse check reads (``reuse``, ``duplicates``), or None when ``reuse.checkWrites`` is off."""
+    section: Mapping[str, Any] = effective.get("reuse") or {}
+    if not section.get("checkWrites", config_module.default("reuse", "checkWrites")):
+        return None
+    return {"reuse": dict(section), "duplicates": dict(effective.get("duplicates") or {})}
 
 
 def exempt_javadoc(after: str, added: set[int], javadoc: Sequence[tuple[int, int]], code: set[int]) -> int:
@@ -186,6 +196,7 @@ def evaluate(
         "introduced": found,
         "existing": max(0, len(candidate) - len(found)),
         "change": changed,
+        "advice": [],
     }
 
 
@@ -216,6 +227,7 @@ def check_candidate(
     after: str,
     mode: str,
     comments: CommentPolicy | None = None,
+    reuse: Mapping[str, Any] | None = None,
 ) -> Verdict:
     """The verdict on writing ``after`` to ``path``: the engine previews the candidate (nothing is written) and
     checks the current file, so only what the write introduces counts. Engine errors propagate."""
@@ -226,7 +238,7 @@ def check_candidate(
         checked = call("groovyscope/check", {"root": str(root), "uris": [uri], "include": INCLUDE})
         current = (checked.get("diagnostics") or {}).get(uri) or []
     found = (preview.get("results") or {}).get(uri) or {}
-    return evaluate(
+    verdict = evaluate(
         rows(found.get("diagnostics") or []),
         rows(current),
         syntax=found.get("syntax") or [],
@@ -235,6 +247,12 @@ def check_candidate(
         after=after,
         comments=comments,
     )
+    if reuse is None or found.get("syntax"):
+        return verdict
+    blocking, advice = mcp_reuse.write_findings(call, root, path, before=before, after=after, settings=reuse)
+    reasons = [*verdict["reasons"], *blocking]
+    decision: Decision = ("block" if mode == "block" else "warn") if reasons else "pass"
+    return {**verdict, "reasons": reasons, "decision": decision, "advice": advice}
 
 
 def render(verdict: Verdict, shown: str, *, planned: bool = False) -> str:
@@ -249,6 +267,7 @@ def render(verdict: Verdict, shown: str, *, planned: bool = False) -> str:
     lines += [f"  {reason}" for reason in verdict["reasons"][:SHOWN]]
     others = [row for row in verdict["introduced"] if int(row.get("level", 3)) > ERROR_LEVEL]
     lines += [f"  line {r.get('line')}: [{r.get('code')}] {r.get('message')}" for r in others[:SHOWN]]
+    lines += [f"  {item}" for item in verdict.get("advice", [])[:SHOWN]]
     hidden = len(verdict["reasons"]) + len(others) - min(SHOWN, len(verdict["reasons"])) - min(SHOWN, len(others))
     if hidden > 0:
         lines.append(f"  ... {hidden} more")

@@ -38,6 +38,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "fix": ("Apply safe fixes", False),
     "rename": ("Rename a symbol", False),
     "edit_symbol": ("Edit one declaration, gated", False),
+    "suggest_reuse": ("Existing code to reuse", True),
     "read_symbol": ("Read one declaration", True),
     "find_code": ("Structural code search", True),
     "find_duplicates": ("Find duplicated code", True),
@@ -103,6 +104,7 @@ DESCRIPTIONS: dict[str, str] = {
         "or [{hunk, text}]; SUGGESTED for the rest; parsed first; APPLY writes."
     ),
     "merge_review": "Declarations a merge lost or changes it dropped, in Groovy files both sides changed (or PATHS).",
+    "suggest_reuse": "Existing code doing what TEXT (or SYMBOL in PATH) does: same shape, name and types, or calls.",
 }
 
 

@@ -480,6 +480,18 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Done when: merged and released, verified from PyPI (the fixture's `Verbose.groovy` reports GS060, GS061 and GS065;
   a write adding five comment lines to ten code lines is held back).
 
+- [ ] **Stage 27: reuse before writing** (edit plan Phase 4, branch `feat/reuse-gate`): the engine's
+  `groovyscope/similar` (a candidate text, an existing symbol, or a file's changed ranges; shape matches exact or
+  similar from `CloneFinder` with a loose hash so a parsed text matches resolved code, signature matches by name stem
+  and parameter types, and calls matches by the overlap of called APIs, common calls left out); `explain_code` gains
+  `helpers`, the utilities in reach; the `reuse` settings. `suggest_reuse` on it; the edit gate searches every added
+  block (GS080 holds back a repeat, GS081 advises on a method like one that exists, GS082 on a private helper that only
+  delegates; `reuse.checkWrites`); `review_changes` lists `duplicatesAdded` and blocks on them with
+  `reuse.blockReview`. Calibrated on CodeNarc's sources: the report writers come back (9 of 10 queries useful or
+  correctly empty), 12 to 79 ms a query after a 250 to 310 ms index per snapshot. Tool surface: suggest_reuse adds 553
+  bytes. Done when: merged and released, verified from PyPI (writing the fixture's copied block is held back naming
+  `demo.Strings.slug`; `suggest_reuse` on it returns the original with a score).
+
 ## Owner checks still open
 
 These need a Kiro CLI install or the owner's account, so no session can close them; each stage above shipped

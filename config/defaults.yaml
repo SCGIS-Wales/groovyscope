@@ -121,6 +121,16 @@ profiles:
 duplicates:
   minLines: 6             # find_duplicates: smallest repeated block, in lines
   minStatements: 3        # ... and in statements
+reuse:                    # similar code and helpers; minLines, unset here, overrides duplicates.minLines for them
+  callOverlap: 0.6        # similar code: methods whose called APIs overlap this much (Jaccard) make the same calls
+  limit: 10               # similar code: matches answered when the request sets no limit
+  ignoreCalls: [println, print, printf, toString, size, get, set, put, add, each, eachWithIndex, collect, find,
+                findAll, any, every, equals, hashCode, length, isEmpty, contains, getAt, putAt, call, with, tap,
+                iterator, getClass, valueOf, debug, info, warn, error, trace]  # calls too common to compare methods by
+  helperMaxLines: 15      # explain_code helpers: the longest instance method listed (static methods: any length)
+  helpersLimit: 20        # explain_code helpers listed per class or member
+  blockReview: false      # review_changes: an added block that duplicates existing code blocks the verdict
+  checkWrites: true       # edit gate: an added block that repeats existing code is held back (GS080; GS081, GS082 advise)
 diagram:
   sharedHelperCallers: 5  # relationship_graph: a node called from this many others is drawn once ("called from N") and named inside its callers' boxes instead of a line each; 0 draws every line
 verify:
