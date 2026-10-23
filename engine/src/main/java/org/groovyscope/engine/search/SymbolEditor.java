@@ -191,7 +191,7 @@ public final class SymbolEditor {
      * The one declaration {@code symbol} names: by its full name ({@code Outer.Inner.member}) or a dotted suffix of
      * it, the package optional; {@code line} picks among several the one whose range contains it.
      */
-    static Declarations.Located resolve(List<Declarations.Located> all, String packagePrefix, String symbol,
+    public static Declarations.Located resolve(List<Declarations.Located> all, String packagePrefix, String symbol,
             Integer line) {
         String wanted = symbol == null ? "" : symbol.strip().replace('#', '.');
         if (!packagePrefix.isEmpty() && wanted.startsWith(packagePrefix)) {
@@ -610,45 +610,19 @@ public final class SymbolEditor {
         return new Change(start, end, String.join(eol, block) + (terminated(last) ? eol : ""), startLine, endLine);
     }
 
-    /**
-     * The new text, and the replacement for {@code str_replace}: the changed span widened to whole lines, then by
-     * one line of context on each side at a time until it occurs once in the original.
-     */
+    /** The new text, and the replacement for {@code str_replace} (see {@link ExactReplacement#of}). */
     private Result result(Change change, String symbol) {
         String text = source.substring(0, change.start()) + change.replacement() + source.substring(change.end());
-        int delta = text.length() - source.length();
-        int from = lineStart(lines.positionOf(change.start()).line());
-        int to = contentEnd(lines.positionOf(change.end()).line());
-        while (!(from == 0 && to == source.length())) {
-            String candidate = source.substring(from, to);
-            if (!candidate.isEmpty() && occursOnce(source, candidate)) {
-                break;
-            }
-            int above = lines.positionOf(from).line();
-            if (above > 0) {
-                from = lineStart(above - 1);
-            }
-            int below = lines.positionOf(to).line();
-            if (below + 1 < lines.lineCount()) {
-                to = contentEnd(below + 1);
-            } else {
-                to = source.length();
-            }
-        }
-        return new Result(text, source.substring(from, to), text.substring(from, to + delta), change.startLine(),
-                change.endLine(), symbol, change.start(), change.start() + change.replacement().length());
-    }
-
-    static boolean occursOnce(String text, String part) {
-        int first = text.indexOf(part);
-        return first >= 0 && text.indexOf(part, first + 1) < 0;
+        ExactReplacement replacement = ExactReplacement.of(source, text, change.start(), change.end());
+        return new Result(text, replacement.oldStr(), replacement.newStr(), change.startLine(), change.endLine(),
+                symbol, change.start(), change.start() + change.replacement().length());
     }
 
     /**
      * {@code text} as lines without the blank lines around it, dedented (the whitespace every line starts with
      * removed) and indented with {@code indent}; blank lines stay empty.
      */
-    static List<String> reindent(String text, String indent) {
+    public static List<String> reindent(String text, String indent) {
         List<String> raw = new ArrayList<>(Arrays.asList(text.replace("\r\n", "\n").replace('\r', '\n')
                 .split("\n", -1)));
         while (!raw.isEmpty() && raw.get(0).isBlank()) {
@@ -676,7 +650,7 @@ public final class SymbolEditor {
      * line has ({@value #DEFAULT_UNIT} spaces when none has any, or an unlikely width). Javadoc continuation lines
      * are left out.
      */
-    static String indentUnit(TextLines lines, int count) {
+    public static String indentUnit(TextLines lines, int count) {
         int smallest = 0;
         for (int i = 0; i < count; i++) {
             String line = lines.line(i);
@@ -698,7 +672,7 @@ public final class SymbolEditor {
      * The offset of the first opening brace in {@code [from, to)} outside parentheses, brackets, strings and comments:
      * the brace that opens a class body after its annotations, name, generics and supertypes.
      */
-    static int openBrace(String text, int from, int to) {
+    public static int openBrace(String text, int from, int to) {
         int depth = 0;
         for (int i = Math.max(0, from); i < to; i++) {
             char c = text.charAt(i);

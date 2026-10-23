@@ -120,7 +120,8 @@ class LspEditorFeaturesSpec extends spock.lang.Specification {
         capabilities.inlayHintProvider.getLeft()
         capabilities.documentRangeFormattingProvider.getLeft()
         capabilities.codeActionProvider.getRight().codeActionKinds ==
-                [CodeActionKind.QuickFix, 'source.fixAll.groovyscope', CodeActionKind.SourceOrganizeImports]
+                [CodeActionKind.QuickFix, 'source.fixAll.groovyscope', CodeActionKind.SourceOrganizeImports,
+                 CodeActionKind.RefactorExtract]
     }
 
     def 'implementation finds implementing methods and classes'() {

@@ -84,6 +84,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     private final ExplainGraphRequests explainGraph;
     private final SearchRequests search;
     private final ReuseRequests reuse;
+    private final RefactorRequests refactor;
     private volatile boolean shutdownRequested;
 
     /**
@@ -154,6 +155,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         this.explainGraph = new ExplainGraphRequests(requests, this::requireServices);
         this.search = new SearchRequests(requests, this::requireServices);
         this.reuse = new ReuseRequests(requests, this::requireServices);
+        this.refactor = new RefactorRequests(requests, this::requireServices);
     }
 
     /** The request lanes this server submits to (shared in the daemon). */
@@ -195,7 +197,8 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         capabilities.setFoldingRangeProvider(Boolean.TRUE);
         capabilities.setInlayHintProvider(Boolean.TRUE);
         capabilities.setCodeActionProvider(new CodeActionOptions(List.of(CodeActionKind.QuickFix,
-                GroovyscopeTextDocumentService.FIX_ALL_KIND, CodeActionKind.SourceOrganizeImports)));
+                GroovyscopeTextDocumentService.FIX_ALL_KIND, CodeActionKind.SourceOrganizeImports,
+                CodeActionKind.RefactorExtract)));
         capabilities.setDiagnosticProvider(new DiagnosticRegistrationOptions(false, false));
         capabilities.setCallHierarchyProvider(Boolean.TRUE);
         capabilities.setSemanticTokensProvider(new SemanticTokensWithRegistrationOptions(
@@ -312,6 +315,33 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     @JsonRequest("groovyscope/edit")
     public CompletableFuture<Map<String, Object>> edit(Map<String, Object> params) {
         return quality.edit(params);
+    }
+
+    /**
+     * A method's parameters and return type changed with every call site whose target is known, answered as edits
+     * and a {@code str_replace} per file, nothing written (see {@link RefactorRequests#changeSignature}).
+     */
+    @JsonRequest("groovyscope/changeSignature")
+    public CompletableFuture<Map<String, Object>> changeSignature(Map<String, Object> params) {
+        return refactor.changeSignature(params);
+    }
+
+    /**
+     * Whole statements turned into a new method and a call, answered as edits and a {@code str_replace}, nothing
+     * written (see {@link RefactorRequests#extractMethod}).
+     */
+    @JsonRequest("groovyscope/extractMethod")
+    public CompletableFuture<Map<String, Object>> extractMethod(Map<String, Object> params) {
+        return refactor.extractMethod(params);
+    }
+
+    /**
+     * A static method moved into another class with every call site whose target is known, answered as edits and a
+     * {@code str_replace} per file, nothing written (see {@link RefactorRequests#moveMember}).
+     */
+    @JsonRequest("groovyscope/moveMember")
+    public CompletableFuture<Map<String, Object>> moveMember(Map<String, Object> params) {
+        return refactor.moveMember(params);
     }
 
     /** Impact of changing a declaration (see {@link ExplainGraphRequests#impact}). */
