@@ -686,6 +686,7 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Closures | ImplicitClosureParameter (excluded) | `@DelegatesTo`, `@ClosureParams` | GS017: a public Closure parameter without either; GS029: a multi-line closure on `it`; GS037: `return` inside `each` acts as continue |
 | Mutable static state | NonFinalPublicField, StaticCalendarField and the other Static* rules | none | GS038: an instance, or an immutable value |
 | Jenkins pipeline code | jenkins rule set | none | GS030 to GS033: secrets in shell GStrings, steps in `@NonCPS`, unserialisable state across a step, `@CompileStatic` or `java.io.File` in CPS code |
+| Comments | none | none | GS060 to GS065: a comment restating the statement below it, a long comment block, Javadoc that adds nothing, commented out code, banners and unowned TODOs, more comment than code |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
 GS codes are groovyscope's own diagnostics (see the table in the README and `explain`); they are not an external standard.
@@ -779,6 +780,31 @@ tasks.register('hello') {
     doLast { println 'hello' }
 }
 ```
+
+## 21. Comments
+
+Comments say why, never what: one line, none on code that reads itself, and Javadoc of one sentence on public
+members only. Comments are not part of the syntax tree, so groovyscope finds them with a small lexer (strings,
+including triple quoted and slashy ones, are skipped, so `"// x"` is not a comment) and places them with the tree's
+methods, closures and statements. Thresholds live in `.groovyscope.yaml`:
+
+```yaml
+comments:
+  restateShare: 0.7      # GS060: share of a comment's words the statement below it must cover
+  maxBlockLines: 2       # GS061: consecutive comment lines allowed in a method body
+  maxJavadocLines: 5     # GS062: Javadoc text lines allowed on a method
+  todoNeedsOwner: true   # GS064: a TODO or FIXME needs TODO(name), TODO @name or a ticket such as ABC-123
+  maxDensity: 0.25       # GS065: comment lines over code lines in a method of five code lines or more
+```
+
+| Code | Checks | Fix |
+|---|---|---|
+| GS060 | A run of `//` lines in a method or closure whose words (stop words left out, identifiers split, crude stems) are covered by the identifiers, keywords and operators of the statement directly below it (`// increment the counter` above `counter++`); a comment giving a reason (`because`, `so that`, `may`, `e.g.`) or a list item is left alone | Remove the comment, applied only when the code is named |
+| GS061 | More than `maxBlockLines` consecutive comment lines in a method body, not counting commented out code and decoration | none |
+| GS062 | Javadoc on a private member; Javadoc over `maxJavadocLines` text lines on a method; a `@param` or `@return` whose description is empty, generic or the name again | Remove the tag line |
+| GS063 | Comment lines that read like code (an operator, a bracket or a closing `;`, mostly not words) and parse as Groovy; an example introduced by a colon or `e.g.` is left alone | Remove them, applied only when the code is named |
+| GS064 | A banner (`// -----`, `/* ***** */`), an empty comment, a TODO or FIXME without an owner or a ticket | Remove banner and empty lines |
+| GS065 | Comment lines over code lines above `maxDensity` in a method of five code lines or more, once per method; a comment that gives a reason is not counted (GS061 limits its length) | none |
 
 ## Caveats
 - **Release notes not fully retrieved:**

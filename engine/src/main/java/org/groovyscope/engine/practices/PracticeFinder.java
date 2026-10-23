@@ -49,8 +49,8 @@ import org.groovyscope.engine.semantics.Members;
 /**
  * groovyscope's own practice diagnostics (docs/practices.md, section 16): the entry point that builds one
  * {@link PracticeContext} per document and runs every group on it ({@link CoreScan} for GS001 to GS012,
- * {@link TestDoubleFinder} for GS013 to GS016, {@link NamingFinder} for GS020 to GS027, and the finders of the later
- * groups), plus the type helpers they share. Each one reports only
+ * {@link TestDoubleFinder} for GS013 to GS016, {@link NamingFinder} for GS020 to GS027, {@link CommentChecks} for
+ * GS060 to GS065, and the finders of the later groups), plus the type helpers they share. Each one reports only
  * when the tree says so for certain (a statically known type, a literal); untyped code is left alone rather than
  * guessed about. Where a mechanical fix is safe, the finding carries it as text edits.
  */
@@ -115,6 +115,7 @@ public final class PracticeFinder {
         JenkinsFinder.find(context);
         SpockFinder.find(context);
         GradleFinder.find(context);
+        CommentChecks.find(context);
         return out;
     }
 
