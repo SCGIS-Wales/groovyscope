@@ -126,3 +126,24 @@ def test_apply_rolls_back_new_compile_errors_and_unknown_operations_are_refused(
     assert (
         refused == {"edited": False, "reason": refused["reason"]} and "unknown operation rewrite" in refused["reason"]
     )
+
+
+def test_an_edit_that_leaves_types_undeclared_is_held_back(target: Path) -> None:
+    call = engine(target)
+
+    def untyped(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        answer = call(method, params)
+        if method == "groovyscope/edit":
+            return {**answer, "untyped": [
+                {"line": 2, "what": "parameter x", "inferred": "String"},
+                {"line": 2, "what": "return type of a", "inferred": None}]}  # fmt: skip
+        return answer
+
+    dry = tools(target.parent, untyped)("A.groovy", "a", "replace", text="def a(x) { x }")
+    assert dry["gate"]["decision"] == "block"
+    assert dry["gate"]["reasons"] == [
+        "line 2: parameter x has no declared type (it is String): declare it",
+        "line 2: return type of a has no declared type: declare it",
+    ]
+    applied = tools(target.parent, untyped)("A.groovy", "a", "replace", text="def a(x) { x }", apply=True)
+    assert applied["edited"] is False and target.read_text(encoding="utf-8") == BEFORE

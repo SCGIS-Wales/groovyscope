@@ -288,3 +288,100 @@ its own; GS046 then reads the class under test from disk beside the test, and th
 The fixture's `src/test/groovy/demo/SubjectSpec.groovy` reports GS044 (12, 17, 22, 35, naming `test1`), GS045 (27),
 GS046 (5, 39 lines for 8, 6 test methods), GS047 (22) and GS048 (7, 35); `src/it/groovy/demo/SubjectIT.groovy`
 reports nothing.
+
+## Phase 3 calibration
+
+The value type checks GS070 to GS076 (`practices/TypeMixChecks.java`) and the type preview GS077
+(`typecheck/TypePreview.java`) were run with the default `types` settings over the same CodeNarc 4.0.0 `src/main`,
+529 Groovy files. Unlike the comment checks, these need resolved types, so the corpus was compiled as a workspace (the
+engine's `LanguageServices`, as `check` does) with its libraries on `workspace.classpath` from the Gradle cache
+(groovy-xml, groovy-json, groovy-templates, groovy-ant and groovy-test 6.0.0, GMetrics 3.0.0, slf4j-api, JUnit 4,
+hamcrest-core, Ant). Two files stay unresolved (they import JUnit 5) and are left out by both, as `check` leaves them.
+GS077 ran on each file alone against the classes of the full compile, which is what the check after a write does.
+Machine: 4 cores (Xeon at 2.1 GHz), OpenJDK 21; timings vary by up to a third between runs, so ranges over runs are
+given.
+
+| Check | Findings | Files | Judged | Correct | False |
+|---|---|---|---|---|---|
+| GS070 literal of another kind | 0 | 0 | none to judge | | |
+| GS071 one variable, several kinds | 0 | 0 | none to judge | | |
+| GS072 text used as a boolean | 1 | 1 | all 1 | 1 | 0 |
+| GS073 returns of different kinds | 0 | 0 | none to judge | | |
+| GS074 arrays and lists mixed | 0 | 0 | none to judge | | |
+| GS075 one map key, several kinds | 0 | 0 | none to judge | | |
+| GS076 argument of another kind | 0 | 0 | none to judge | | |
+| GS077 would not type check | 251 | 116 | 10 | 10 | 0 |
+
+GS070, GS071 and GS073 to GS076 find nothing in CodeNarc: they report only what a literal or a declared type proves, or
+what every value a `def` local is assigned agrees on, and CodeNarc mixes no kinds where its code says what they are.
+The fixture and the specs (`TypeMixChecksSpec`) show each check firing, and their negatives (well typed and dynamic
+code, null assignments, a `def` assigned one kind, appends, a counter fed back to itself, overloads, varargs, calls in
+closures, classes with `methodMissing`) staying silent. The variables assigned more than one type, which Phase 0 could
+not count: GS071 finds none in this corpus.
+
+GS072, the one finding: `ruleset/RuleSetUtil.groovy:54`, `(System.getProperty(CLASS_LOADER_SYS_PROP) == 'true')`, a
+flag kept as text and compared with `'true'` (`Boolean.getBoolean` reads it): correct.
+
+GS077, every 25th finding, all correct (the checker's complaint holds for the declared types; the code works only
+through the runtime type, a conversion, or a private field Groovy reaches dynamically):
+
+| Where | The checker's words | Verdict |
+|---|---|---|
+| `CodeNarc.groovy:311` | No such property: writeToStandardOut for class: org.codenarc.report.ReportWriter | correct: the interface has no such property, its implementations do |
+| `rule/basic/BrokenNullCheckRule.groovy:56` | Cannot find matching method ...BrokenNullCheckAstVisitor#isComparisonWithNull(Expression, String) | correct: declared `Expression`, the method takes a subtype |
+| `rule/concurrency/DoubleCheckedLockingRule.groovy:73` | Cannot return value of type Statement for method returning SynchronizedStatement | correct: an implicit downcast |
+| `rule/convention/CouldBeSwitchStatementRule.groovy:123` | No such property: variable for class: org.codehaus.groovy.ast.expr.Expression | correct |
+| `rule/dry/DuplicateListLiteral.groovy:60` | Cannot call java.util.Collection#add(java.util.Map) with arguments [ListExpression] | correct: a `Collection<Map>` given list expressions |
+| `rule/generic/IllegalClassMemberRule.groovy:138` | Cannot find matching method ModifiersUtil#matchesAnyModifiers(int, Collection<Integer>) | correct: the method takes `(Integer, List<Integer>)` |
+| `rule/groovyism/ClosureAsLastMethodParameterRule.groovy:60` | No such property: ignoreCallsToMethodNames for class: org.codenarc.rule.Rule | correct |
+| `rule/junit/SpockIgnoreRestUsedRule.groovy:44` | No such property: specificationClassNames for class: org.codenarc.rule.Rule | correct |
+| `rule/security/InsecureRandomRule.groovy:64` | No such property: objectExpression for class: org.codehaus.groovy.ast.expr.Expression | correct |
+| `rule/unnecessary/UnnecessaryOverridingMethodRule.groovy:43` | No such property: statements for class: org.codehaus.groovy.ast.stmt.Statement | correct |
+
+How a GS077 finding was judged: correct when a real `@TypeChecked` compile of the class would report the same
+error for the same reason in the code; false when the error comes from the preview itself or says only that dynamic
+code is dynamic (a value nothing is known about, a variable or method a binding or a closure's delegate supplies).
+
+What the first runs found and what changed:
+
+1. GS077 first reported 600 findings in 163 files (10 a file at most). 320 named `java.lang.Object`, the type the
+   checker gives a value it knows nothing about (`def` locals, untyped parameters); 17 were variables a binding or a
+   delegate supplies (`The variable [x] is undeclared`); others were builder calls inside closures
+   (`HtmlReportWriter#h1` under a markup builder), properties of `groovy.xml.Namespace`, which Groovy reads through
+   its `get(String)`, and type parameters (`#T#trim()`). None of those is a mix of kinds: the code is dynamic and
+   nothing is known there. The preview now drops an error that names `Object` or a type parameter, an undeclared
+   variable, a computed property name, a member of the enclosing class asked for inside a closure (its delegate may
+   answer), and a member of a type that answers anything (a dispatch hook such as `getProperty`, `propertyMissing`,
+   `methodMissing` or `invokeMethod`, or a `get(String)`). That left 251.
+2. GS072 first reported 2; one was false: `rule/naming/PackageNameMatchesFilePathRule.groovy:42`, `return groupId` from
+   `boolean isReady()`, Groovy truth on an identifier on purpose. Text stored or returned as a boolean is now
+   reported only when the class also compares that variable with `'true'` or `'false'`, so it is a flag kept as text.
+3. A whole-workspace preview compiles every file at once and a file that does not resolve stopped the checker for
+   all of them (0 findings); the preview now drops the files that do not resolve and compiles the rest again, as the
+   type check does (258 findings in that mode).
+
+Timings (warm, the first four of fourteen rounds dropped):
+
+| Measure | Result |
+|---|---|
+| GS077 per corpus file, each alone against the full compile's classes | 510 files previewed; total 6.9 to 14.0 s; median 10 to 19 ms, 90th percentile 22 to 47 ms, max 235 to 507 ms |
+| GS077 alone on a 3,268 line file (eight renamed copies of `IndentationRule.groovy`, the corpus's largest file) | median 187 to 228 ms, 90th percentile 259 to 271 ms |
+| Check after a write to that file, `compile`, `lint`, `practices` without GS077 | median 951 to 1,452 ms, 90th percentile 1,098 to 1,696 ms |
+| The same check with GS077 | median 926 to 1,173 ms, 90th percentile 1,269 ms (one round of 2,045 ms while warming up) |
+| Whole workspace `check` of the type preview alone | 7.7 to 7.9 s for the 530 files |
+
+The check after a write lints the file on another thread while it compiles and runs the practices, and CodeNarc on a
+3,000 line file is the slower of the two, so the preview's second compile is mostly hidden: the check stays near one
+second, under the 2 second mark. Decision: GS077 runs by default with the practices in a `check` of named files (the
+check after a write, `review_changes`) and in `groovyscope/preview` (the edit gate), and `include: ["types"]` asks for it
+anywhere. A whole-workspace `check` runs it only when `types` is named, since there it adds a second compile of every
+file (7.5 s here). `types.preview: false` turns it off. The Python side needs to pass nothing for the default; to get
+the type errors of classes already static in the edit gate's preview, it adds `types` to its include list.
+
+The fixture's `demo/Types.groovy` reports GS070 (6, `age > 18` on a `String`), GS071 (12, `sum` holds Integer from
+line 10 and String from line 12), GS074 (18, `items.length`, fix `items.size()`), GS072 (23, `if (flag)`, and 26,
+`flag == 'true'`), GS073 (29, `status` returns Boolean on line 31 and String on line 33) and GS075 (39,
+`map.retries` holds Integer and String). GS077 says the same about lines 6 and 18 in the checker's words:
+`Cannot call java.lang.String#compareTo(java.lang.String) with arguments [int]` and
+`No such property: length for class: java.util.List`. The other cases type check: the checker's flow typing accepts
+a `def` that changes kind, a `def` method's mixed returns, Groovy truth on text and a raw map's values.

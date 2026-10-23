@@ -48,6 +48,8 @@ import org.groovyscope.engine.profiles.Contracts;
 import org.groovyscope.engine.profiles.Profile;
 import org.groovyscope.engine.profiles.ProfileArtefacts;
 import org.groovyscope.engine.profiles.ProfileFinder;
+import org.groovyscope.engine.typecheck.TypeCheckAnalyzer;
+import org.groovyscope.engine.typecheck.TypePreview;
 import org.groovyscope.engine.workspace.WorkspaceModel;
 
 /**
@@ -66,10 +68,26 @@ public final class QualityServices {
     public static final String INCLUDE_COMPILE = "compile";
     public static final String INCLUDE_TYPECHECK = "typecheck";
     public static final String INCLUDE_PRACTICES = "practices";
+    /**
+     * The type preview (GS077, {@link TypePreview}); in {@link #preview} it also reports the type errors of the classes
+     * already static, which the preview's own compile does not reach.
+     */
+    public static final String INCLUDE_TYPES = "types";
     public static final Set<String> ALL_INCLUDES = Set.of(INCLUDE_LINT, INCLUDE_COMPILE, INCLUDE_TYPECHECK,
             INCLUDE_PRACTICES);
     /** Includes accepted by {@link #preview}. */
-    public static final Set<String> PREVIEW_INCLUDES = Set.of(INCLUDE_COMPILE, INCLUDE_LINT, INCLUDE_PRACTICES);
+    public static final Set<String> PREVIEW_INCLUDES = Set.of(INCLUDE_COMPILE, INCLUDE_LINT, INCLUDE_PRACTICES,
+            INCLUDE_TYPES);
+    /** What {@link #preview} runs when no include is named. */
+    static final Set<String> PREVIEW_DEFAULTS = Set.of(INCLUDE_COMPILE, INCLUDE_LINT, INCLUDE_PRACTICES);
+    /**
+     * Whether {@link #preview} and a {@code check} of named files run the type preview (GS077) with the practices,
+     * not only when {@code types} is named: on, because the check after a write to a 3,000 line file stays near one
+     * second with it (docs/research/2026-10-23-edit-gate-facts.md, Phase 3 calibration). A whole-workspace check runs
+     * it only when {@code types} is named: it is a second compile of every file. {@code types.preview: false} turns
+     * it off everywhere.
+     */
+    static final boolean TYPES_WITH_PRACTICES = true;
     /** Most emulation results kept; each holds the findings of one profile's governed sources. */
     static final int EMULATION_CACHE_LIMIT = ProfileService.EMULATION_CACHE_LIMIT;
 
@@ -396,10 +414,12 @@ public final class QualityServices {
         CompletableFuture<Map<String, List<Diagnostic>>> linted = wanted.contains(INCLUDE_LINT)
                 ? CompletableFuture.supplyAsync(() -> lint.lintAll(targets, lintSources, profile), LINT)
                 : CompletableFuture.completedFuture(Map.of());
+        boolean types = wanted.contains(INCLUDE_TYPES) || TYPES_WITH_PRACTICES && wanted.contains(INCLUDE_PRACTICES)
+                && uris != null && !uris.isEmpty();
         // After a write only the written files changed: compile them alone against the last full compile's classes
         // (see LanguageServices.compileOnly) instead of the whole workspace.
         Optional<CompilationResult> alone = uris != null && !uris.isEmpty()
-                && (wanted.contains(INCLUDE_COMPILE) || wanted.contains(INCLUDE_PRACTICES))
+                && (wanted.contains(INCLUDE_COMPILE) || wanted.contains(INCLUDE_PRACTICES) || types)
                 ? quickCompile(targets) : Optional.empty();
         try {
             if (wanted.contains(INCLUDE_COMPILE)) {
@@ -415,6 +435,21 @@ public final class QualityServices {
                             ? practicesOf(uri, alone.get().modules().get(uri), alone.get().sources().get(uri))
                                     .stream().map(PracticeFinder.Practice::diagnostic).toList()
                             : practiceDiagnostics(uri));
+                }
+            }
+            if (types) {
+                Map<String, String> texts = new LinkedHashMap<>();
+                Set<String> unresolved = alone.isPresent() ? alone.get().unresolvedUris()
+                        : navigation.snapshot().result().unresolvedUris();
+                for (String uri : targets) {
+                    if (sources.containsKey(uri) && !scripts.containsKey(uri) && !unresolved.contains(uri)) {
+                        texts.put(uri, sources.get(uri));
+                    }
+                }
+                Map<String, ModuleNode> modules = alone.isPresent() ? alone.get().modules()
+                        : navigation.snapshot().result().modules();
+                for (Map.Entry<String, List<Diagnostic>> entry : typePreview(texts, modules, false).entrySet()) {
+                    result.get(entry.getKey()).addAll(entry.getValue());
                 }
             }
         } finally {
@@ -463,12 +498,15 @@ public final class QualityServices {
      * build script the compile does not read gets lint and the Gradle checks on its own tree.
      *
      * @param texts candidate text per document URI (the caller has checked that each one parses)
-     * @param include any of {@code compile}, {@code lint}, {@code practices}; empty means all three
+     * @param include any of {@code compile}, {@code lint}, {@code practices}, {@code types}; empty means the first
+     *     three. The type preview (GS077) runs with {@code practices} or {@code types}; {@code types} also reports the
+     *     type errors of the classes already static, which the canonicalization compile does not reach.
      * @return the findings per URI, in the order of {@code texts}, each list sorted by position
      */
     public Map<String, List<PreviewFinding>> preview(Map<String, String> texts, Set<String> include) {
-        Set<String> wanted = include == null || include.isEmpty() ? PREVIEW_INCLUDES : include;
+        Set<String> wanted = include == null || include.isEmpty() ? PREVIEW_DEFAULTS : include;
         boolean practicesOn = wanted.contains(INCLUDE_PRACTICES) && workspace.config().practices().enabled();
+        boolean typesOn = wanted.contains(INCLUDE_TYPES) || TYPES_WITH_PRACTICES && practicesOn;
         Map<String, List<PreviewFinding>> result = new LinkedHashMap<>();
         Map<String, String> compiled = new LinkedHashMap<>();
         Map<String, String> scripts = new LinkedHashMap<>();
@@ -485,7 +523,7 @@ public final class QualityServices {
         CompletableFuture<Map<String, List<Diagnostic>>> linted = wanted.contains(INCLUDE_LINT)
                 ? CompletableFuture.supplyAsync(() -> lint.lintAll(targets, texts, null), LINT)
                 : CompletableFuture.completedFuture(Map.of());
-        if (!compiled.isEmpty() && (wanted.contains(INCLUDE_COMPILE) || practicesOn)) {
+        if (!compiled.isEmpty() && (wanted.contains(INCLUDE_COMPILE) || practicesOn || typesOn)) {
             CompilationResult overlay = overlay(compiled);
             try {
                 if (wanted.contains(INCLUDE_COMPILE)) {
@@ -503,6 +541,16 @@ public final class QualityServices {
                                 overlay.modules().get(text.getKey()), text.getValue())) {
                             result.get(text.getKey())
                                     .add(new PreviewFinding(practice.diagnostic(), practice.fixable()));
+                        }
+                    }
+                }
+                if (typesOn) {
+                    Map<String, String> resolved = new LinkedHashMap<>(compiled);
+                    resolved.keySet().removeAll(overlay.unresolvedUris());
+                    for (Map.Entry<String, List<Diagnostic>> entry
+                            : typePreview(resolved, overlay.modules(), wanted.contains(INCLUDE_TYPES)).entrySet()) {
+                        for (Diagnostic diagnostic : entry.getValue()) {
+                            result.get(entry.getKey()).add(new PreviewFinding(diagnostic, false));
                         }
                     }
                 }
@@ -546,6 +594,87 @@ public final class QualityServices {
             org.groovyscope.engine.log.EngineLog.debug("candidate compile tried again: %s", e);
             return navigation.compileOverlay(texts);
         }
+    }
+
+    /**
+     * The type preview of {@code texts}, whose trees to canonicalization are {@code modules}: a GS077 warning, with
+     * {@code INFERRED} confidence, for each error of Groovy's static type checker in a class without static typing
+     * (at most {@code types.previewMaxPerFile} per file; none with {@code types.preview: false}), and, with
+     * {@code declaredErrors}, the type errors of the classes already static. Jenkins pipeline code, build scripts and
+     * files whose runtime profile blocks static compilation get no GS077. No compile runs when no text needs one.
+     */
+    Map<String, List<Diagnostic>> typePreview(Map<String, String> texts, Map<String, ModuleNode> modules,
+            boolean declaredErrors) {
+        EngineConfig config = workspace.config();
+        EngineConfig.Types settings = config.practices().types();
+        Diagnostic.Severity severity = settings.preview() && config.practices().enabled()
+                ? PracticeFinder.severity(TypePreview.CODE, config) : null;
+        Map<String, String> checked = new LinkedHashMap<>();
+        Set<String> speculative = new java.util.LinkedHashSet<>();
+        for (Map.Entry<String, String> text : texts.entrySet()) {
+            String uri = text.getKey();
+            if (WorkspaceModel.isJavaUri(uri)) {
+                continue;
+            }
+            Set<String> classes = severity == null || !mayPreview(uri) ? Set.of()
+                    : TypePreview.candidates(modules.get(uri));
+            if (!classes.isEmpty() || declaredErrors && TypeCheckAnalyzer.mayNeedTypeCheck(text.getValue())) {
+                checked.put(uri, text.getValue());
+                speculative.addAll(classes);
+            }
+        }
+        if (checked.isEmpty()) {
+            return Map.of();
+        }
+        org.groovyscope.engine.concurrent.Cancellation.checkpoint();
+        TypePreview.Outcome outcome = navigation.typePreview(checked, speculative, true, null);
+        Map<String, List<Diagnostic>> found = new LinkedHashMap<>();
+        for (Map.Entry<String, List<TypePreview.Error>> entry : outcome.errors().entrySet()) {
+            String uri = entry.getKey();
+            List<Diagnostic> list = new ArrayList<>();
+            int previewed = 0;
+            for (TypePreview.Error error : entry.getValue()) {
+                if (!error.speculative() && declaredErrors) {
+                    list.add(new Diagnostic(uri, error.range(), Diagnostic.Severity.ERROR, TypeCheckAnalyzer.SOURCE,
+                            TypeCheckAnalyzer.codeFor(error.message()), error.message()));
+                } else if (error.speculative() && severity != null && previewed < settings.previewMaxPerFile()) {
+                    previewed++;
+                    list.add(new Diagnostic(uri, error.range(), severity, PracticeFinder.SOURCE, TypePreview.CODE,
+                            TypePreview.PREFIX + error.message(), org.groovyscope.engine.model.Confidence.INFERRED));
+                }
+            }
+            found.put(uri, list);
+        }
+        return found;
+    }
+
+    /**
+     * The parameters, return types and fields that lines {@code from} to {@code to} (1-based, inclusive) of a
+     * document's new {@code text} declare without a type, each with the type Groovy's static type checker infers for
+     * it when it can tell: the {@code untyped} answer of {@code groovyscope/edit}. The text is checked alone against
+     * the classes of the last full compile (never starting one), so this is cheap enough for the light lane.
+     */
+    public List<org.groovyscope.engine.typecheck.UntypedDeclarations.Untyped> untyped(String uri, String text,
+            int from, int to) {
+        ModuleNode parsed = compiler.parseOnly(uri, text).orElse(null);
+        Set<String> owners = org.groovyscope.engine.typecheck.UntypedDeclarations.owners(parsed, from, to);
+        if (owners.isEmpty()) {
+            return List.of();
+        }
+        List<List<org.groovyscope.engine.typecheck.UntypedDeclarations.Untyped>> found = new ArrayList<>();
+        // The checker runs on the classes that hold them whatever dynamic features they use: only its inferences count.
+        navigation.typePreview(Map.of(uri, text), owners, false, modules -> found.add(
+                org.groovyscope.engine.typecheck.UntypedDeclarations.inferred(parsed, modules.get(uri), from, to)));
+        return found.isEmpty() ? org.groovyscope.engine.typecheck.UntypedDeclarations.declared(parsed, from, to)
+                : found.get(0);
+    }
+
+    /** Whether GS077 may speak about a file: ordinary code, not CPS code, a build script or code kept dynamic. */
+    private boolean mayPreview(String uri) {
+        if (!PROFILE_DEFAULT.equals(profileFor(uri))) {
+            return false;
+        }
+        return profiles.governing(uri).map(profile -> !profile.blocksStaticCompilation()).orElse(true);
     }
 
     private static Map<String, String> withScripts(Map<String, String> sources, Map<String, String> scripts) {

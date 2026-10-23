@@ -26,6 +26,7 @@ import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.groovyscope.engine.config.EngineConfig;
 import org.groovyscope.engine.index.AstRanges;
 import org.groovyscope.engine.index.TextLines;
+import org.groovyscope.engine.model.Confidence;
 import org.groovyscope.engine.model.Diagnostic.Severity;
 import org.groovyscope.engine.model.Range;
 import org.groovyscope.engine.model.TextEdit;
@@ -192,6 +193,24 @@ public record PracticeContext(String uri, ModuleNode module, TextLines lines, En
         }
     }
 
+    /**
+     * {@link #report} for a check that reasons about types, with how sure it is: {@code STATIC} when a declared type
+     * proves the finding, {@code INFERRED} when it rests on an inferred one. Nothing when the code is switched off.
+     */
+    public void report(String code, ASTNode node, String message, Confidence confidence, String fixTitle,
+            List<TextEdit> fix) {
+        report(code, AstRanges.rangeOf(node), message, confidence, fixTitle, fix);
+    }
+
+    /** {@link #report(String, ASTNode, String, Confidence, String, List)} at a text range rather than a node. */
+    public void report(String code, Range range, String message, Confidence confidence, String fixTitle,
+            List<TextEdit> fix) {
+        Severity severity = PracticeFinder.severity(code, config);
+        if (severity != null) {
+            add(code, range, severity, message, fixTitle, fix, List.of(), confidence);
+        }
+    }
+
     private void add(String code, ASTNode node, Severity severity, String message, String fixTitle,
             List<TextEdit> fix, List<PracticeFinder.Alternative> alternatives) {
         add(code, AstRanges.rangeOf(node), severity, message, fixTitle, fix, alternatives);
@@ -199,11 +218,16 @@ public record PracticeContext(String uri, ModuleNode module, TextLines lines, En
 
     private void add(String code, Range range, Severity severity, String message, String fixTitle,
             List<TextEdit> fix, List<PracticeFinder.Alternative> alternatives) {
+        add(code, range, severity, message, fixTitle, fix, alternatives, null);
+    }
+
+    private void add(String code, Range range, Severity severity, String message, String fixTitle,
+            List<TextEdit> fix, List<PracticeFinder.Alternative> alternatives, Confidence confidence) {
         if (range == null) {
             return;
         }
         String title = PracticeCatalog.bundled().find(code).map(PracticeCatalog.Entry::title).orElse(code);
         out.add(new PracticeFinder.Practice(new org.groovyscope.engine.model.Diagnostic(uri, range, severity,
-                PracticeFinder.SOURCE, code, title + ": " + message), fixTitle, fix, alternatives));
+                PracticeFinder.SOURCE, code, title + ": " + message, confidence), fixTitle, fix, alternatives));
     }
 }

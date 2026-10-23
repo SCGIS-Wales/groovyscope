@@ -299,10 +299,11 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param reuse the thresholds of the similar code search and of the helpers {@code explainCode} lists
      *     ({@code reuse.*})
      * @param tests the test bloat checks' settings ({@code tests.*}, GS044 to GS048)
+     * @param types the value type checks' settings ({@code types.*}, GS070 to GS077)
      */
     public record Practices(boolean enabled, Map<String, String> severities, Naming naming,
             List<String> secretsAllow, Comments comments, Reuse reuse,
-            Tests tests) {
+            Tests tests, Types types) {
         public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
@@ -312,12 +313,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             comments = comments == null ? Comments.DEFAULTS : comments;
             reuse = reuse == null ? Reuse.DEFAULTS : reuse;
             tests = tests == null ? Tests.DEFAULTS : tests;
+            types = types == null ? Types.DEFAULTS : types;
         }
 
-        /** Practices with the default reuse thresholds and test bloat settings. */
+        /** Practices with the default reuse, test bloat and value type settings. */
         public Practices(boolean enabled, Map<String, String> severities, Naming naming, List<String> secretsAllow,
                 Comments comments) {
-            this(enabled, severities, naming, secretsAllow, comments, Reuse.DEFAULTS, Tests.DEFAULTS);
+            this(enabled, severities, naming, secretsAllow, comments, Reuse.DEFAULTS, Tests.DEFAULTS, Types.DEFAULTS);
         }
 
         /** Practices with the default comment thresholds. */
@@ -435,6 +437,18 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             namePattern = namePattern == null || namePattern.isBlank() ? DEFAULT_NAME_PATTERN : namePattern;
             vagueNames = List.copyOf(vagueNames == null ? DEFAULT_VAGUE_NAMES : vagueNames);
         }
+    }
+
+    /**
+     * Value type checks (GS070 to GS077); the defaults mirror {@code defaults.yaml}.
+     *
+     * @param preview whether the type preview (GS077) runs Groovy's static type checker on dynamic classes
+     * @param previewMaxPerFile most GS077 findings reported per file
+     * @param declareOnEdit whether {@code groovyscope/edit} lists the parameters, return types and fields its text
+     *     leaves untyped, with the type the checker infers
+     */
+    public record Types(boolean preview, int previewMaxPerFile, boolean declareOnEdit) {
+        public static final Types DEFAULTS = new Types(true, 10, true);
     }
 
     /**
@@ -676,6 +690,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject tests = objectOrEmpty(document.get("tests"));
         JsonObject reuse = objectOrEmpty(document.get("reuse"));
         JsonObject duplicates = objectOrEmpty(document.get("duplicates"));
+        JsonObject types = objectOrEmpty(document.get("types"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
         JsonObject daemon = objectOrEmpty(document.get("daemon"));
         return new EngineConfig(
@@ -732,7 +747,10 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         new Tests(number(tests.get("maxTestToCodeRatio"), Tests.DEFAULTS.maxTestToCodeRatio()),
                                 integer(tests.get("maxMethodsPerSubject"), Tests.DEFAULTS.maxMethodsPerSubject()),
                                 string(tests.get("namePattern"), Tests.DEFAULT_NAME_PATTERN),
-                                strings(tests.get("vagueNames"), Tests.DEFAULT_VAGUE_NAMES))),
+                                strings(tests.get("vagueNames"), Tests.DEFAULT_VAGUE_NAMES)),
+                        new Types(bool(types.get("preview"), Types.DEFAULTS.preview()),
+                                integer(types.get("previewMaxPerFile"), Types.DEFAULTS.previewMaxPerFile()),
+                                bool(types.get("declareOnEdit"), Types.DEFAULTS.declareOnEdit()))),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),

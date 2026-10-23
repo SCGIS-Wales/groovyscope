@@ -22,7 +22,7 @@ from groovyscope.source_lines import line_kinds
 Decision = Literal["block", "warn", "pass"]
 ERROR_LEVEL = 1
 SHOWN = 8  # findings named in a verdict; the rest are counted
-INCLUDE = ["compile", "lint", "practices"]
+INCLUDE = ["compile", "lint", "practices", "types"]  # types: the static type check of the file
 EngineCall = Callable[[str, dict[str, Any]], Mapping[str, Any]]
 
 
@@ -232,7 +232,9 @@ def check_candidate(
     """The verdict on writing ``after`` to ``path``: the engine previews the candidate (nothing is written) and
     checks the current file, so only what the write introduces counts. Engine errors propagate."""
     uri = path.as_uri()
-    preview = call("groovyscope/preview", {"root": str(root), "texts": [{"uri": uri, "text": after}]})
+    preview = call(
+        "groovyscope/preview", {"root": str(root), "texts": [{"uri": uri, "text": after}], "include": INCLUDE}
+    )
     current: Sequence[Mapping[str, Any]] = []
     if path.is_file():
         checked = call("groovyscope/check", {"root": str(root), "uris": [uri], "include": INCLUDE})

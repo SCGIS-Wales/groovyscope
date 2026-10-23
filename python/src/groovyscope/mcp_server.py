@@ -365,6 +365,7 @@ def symbol_context(root: Path, call: Call, cap: int, path: str, line: int, col: 
         "confidence": found.get("confidence"),
         "hover": clip(raw_hover.get("markdown", ""), cap * 40) if raw_hover else None,
         "references": {"total": len(references), "byConfidence": by_confidence},
+        **({"inferredTypes": raw_hover["inferredTypes"][:cap]} if raw_hover.get("inferredTypes") else {}),
     }
 
 
@@ -387,7 +388,10 @@ def hover(root: Path, call: Call, cap: int, path: str, line: int, col: int) -> d
     raw = call("groovyscope/hover", position_params(root, path, line, col))
     if not raw:
         return {"found": False}
-    return {"found": True, "markdown": clip(raw.get("markdown", ""), cap * 80)}
+    answer: dict[str, Any] = {"found": True, "markdown": clip(raw.get("markdown", ""), cap * 80)}
+    if raw.get("inferredTypes"):
+        answer["inferredTypes"] = raw["inferredTypes"][:cap]  # a local assigned values of several kinds
+    return answer
 
 
 def type_definition(root: Path, call: Call, path: str, line: int, col: int) -> dict[str, Any]:

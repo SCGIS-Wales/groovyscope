@@ -629,6 +629,14 @@ public class GroovyCompiler {
             boolean crashed, GroovyClassLoader loader, CompilationUnit unit) {
     }
 
+    /**
+     * A resolver that answers the classes in {@code known} (by name) with the given trees and everything else as
+     * usual: what compiles a text alone against the classes of the last full compile.
+     */
+    public static ClassNodeResolver knownClasses(Map<String, ClassNode> known) {
+        return new KnownClasses(known);
+    }
+
     /** Resolves workspace classes to the trees of the last full compile; everything else as usual. */
     static final class KnownClasses extends ClassNodeResolver {
         private final Map<String, ClassNode> known;

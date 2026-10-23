@@ -1066,3 +1066,14 @@ def test_impact_lists_integration_tests_apart(tmp_path: Path) -> None:
     compact = mcp_server.compact_report(report, tmp_path, 5)
     assert [s["caller"]["location"]["path"] for s in compact["tests"]] == ["src/test/groovy/A.groovy"]
     assert [s["caller"]["location"]["path"] for s in compact["integrationTests"]] == ["src/it/groovy/AIT.groovy"]
+
+
+def test_hover_and_symbol_context_show_the_kinds_a_local_holds(tmp_path: Path) -> None:
+    kinds = [{"type": "Integer", "line": 10}, {"type": "String", "line": 12}]
+
+    def call(method: str, _params: dict[str, Any]) -> Any:
+        return {"markdown": "`def total`", "inferredTypes": kinds} if method == "groovyscope/hover" else {}
+
+    assert mcp_server.hover(tmp_path, call, 5, "A.groovy", 1, 1)["inferredTypes"] == kinds
+    assert mcp_server.symbol_context(tmp_path, call, 5, "A.groovy", 1, 1)["inferredTypes"] == kinds
+    assert "inferredTypes" not in mcp_server.hover(tmp_path, lambda _m, _p: {"markdown": "x"}, 5, "A.groovy", 1, 1)

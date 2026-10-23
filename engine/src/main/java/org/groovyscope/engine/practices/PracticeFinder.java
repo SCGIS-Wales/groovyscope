@@ -50,7 +50,8 @@ import org.groovyscope.engine.semantics.Members;
  * groovyscope's own practice diagnostics (docs/practices.md, section 16): the entry point that builds one
  * {@link PracticeContext} per document and runs every group on it ({@link CoreScan} for GS001 to GS012,
  * {@link TestDoubleFinder} for GS013 to GS016, {@link NamingFinder} for GS020 to GS027, {@link CommentChecks} for
- * GS060 to GS065, and the finders of the later groups), plus the type helpers they share. Each one reports only
+ * GS060 to GS065, {@link TypeMixChecks} for GS070 to GS076, and the finders of the later groups), plus the type
+ * helpers they share. Each one reports only
  * when the tree says so for certain (a statically known type, a literal); untyped code is left alone rather than
  * guessed about. Where a mechanical fix is safe, the finding carries it as text edits.
  */
@@ -117,7 +118,18 @@ public final class PracticeFinder {
         TestBloatChecks.find(context);
         GradleFinder.find(context);
         CommentChecks.find(context);
+        TypeMixChecks.find(context);
         return out;
+    }
+
+    /**
+     * Every value the local declared by {@code local} is assigned in {@code method} of {@code owner}, with its type
+     * when known, when it is assigned more than once; empty otherwise. Hover shows it, so the mixing is seen before an
+     * edit.
+     */
+    public static List<org.groovyscope.engine.model.Hover.InferredType> assignedTypes(ClassNode owner,
+            MethodNode method, VariableExpression local) {
+        return TypeMixChecks.assignedTypes(owner, method, local);
     }
 
     /** Severity for a code: the configured override, else the catalogue default; {@code null} when switched off. */

@@ -15,8 +15,19 @@
  */
 package org.groovyscope.engine.model;
 
-/** A problem reported for a document. */
-public record Diagnostic(String uri, Range range, Severity severity, String source, String code, String message) {
+/**
+ * A problem reported for a document.
+ *
+ * @param confidence how sure the finding is, for the checks that reason about types ({@code STATIC} when a declared
+ *     type proves it, {@code INFERRED} when it rests on an inferred one); {@code null} for every other finding
+ */
+public record Diagnostic(String uri, Range range, Severity severity, String source, String code, String message,
+        Confidence confidence) {
+
+    /** A finding without a confidence: what every check but the type checks reports. */
+    public Diagnostic(String uri, Range range, Severity severity, String source, String code, String message) {
+        this(uri, range, severity, source, code, message, null);
+    }
 
     /** Severities in LSP order. */
     public enum Severity {

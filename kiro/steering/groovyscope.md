@@ -36,6 +36,10 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
   `groovyscope.suggest_reuse` with the text: call what exists; `explain_code`'s `helpers` lists the utilities in
   reach. A write that repeats existing code is held back (GS080).
 
+- New classes carry `@CompileStatic` unless they need dynamic features, and then say why in one line. Declare every
+  field, parameter and return type; `List<String>`, not a raw `List`; arrays only at a Java boundary, converted
+  with `as`. GS070 to GS076 report mixed value types and GS077 what would not type check.
+
 ## After every write
 
 - After you write a Groovy, Gradle or Jenkinsfile file, a hook checks that file and a `groovyscope checked ...`

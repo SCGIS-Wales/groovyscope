@@ -78,12 +78,20 @@ final class Converters {
         return converted;
     }
 
-    /** A diagnostic whose {@code data} says {@code {"fixable": true}} when a quick fix exists for it. */
+    /**
+     * A diagnostic whose {@code data} says {@code {"fixable": true}} when a quick fix exists for it, and carries the
+     * finding's {@code confidence} ({@code STATIC} or {@code INFERRED}) when it has one.
+     */
     static Diagnostic toLsp(org.groovyscope.engine.model.Diagnostic diagnostic, boolean fixable) {
         Diagnostic converted = toLsp(diagnostic);
-        if (fixable) {
+        if (fixable || diagnostic.confidence() != null) {
             com.google.gson.JsonObject data = new com.google.gson.JsonObject();
-            data.addProperty("fixable", true);
+            if (fixable) {
+                data.addProperty("fixable", true);
+            }
+            if (diagnostic.confidence() != null) {
+                data.addProperty("confidence", diagnostic.confidence().name());
+            }
             converted.setData(data);
         }
         return converted;

@@ -276,7 +276,9 @@ final class QualityRequests {
      * The findings of candidate texts of workspace documents as if they were saved: nothing is written and the
      * snapshot is left as it is. Params: {@code root}, {@code texts} (a list of {@code {uri, text}}, at most
      * {@value #MAX_PARSE_TEXTS}; each uri inside the workspace, the file need not exist yet), {@code include} (any of
-     * {@code compile}, {@code lint}, {@code practices}; all three when absent or empty). Per uri: {@code syntax}, the
+     * {@code compile}, {@code lint}, {@code practices}, {@code types}; the first three when absent or empty; the
+     * type preview, GS077, runs with {@code practices} or {@code types}, and {@code types} also reports the type
+     * errors of classes already static). Per uri: {@code syntax}, the
      * first {@value #MAX_PARSE_ERRORS} syntax errors (1-based), and {@code diagnostics}, the LSP diagnostics
      * {@code check} would report (with {@code data.fixable}); a text with syntax errors gets no diagnostics, and a
      * text over {@code workspace.maxFileBytes} (UTF-8 bytes) only the syntax error {@code too large to preview}.
@@ -294,7 +296,7 @@ final class QualityRequests {
             Set<String> include = new LinkedHashSet<>(stringList(params.get("include")));
             for (String name : include) {
                 if (!QualityServices.PREVIEW_INCLUDES.contains(name)) {
-                    throw invalid("preview includes only compile, lint and practices, not " + name);
+                    throw invalid("preview includes only compile, lint, practices and types, not " + name);
                 }
             }
             LanguageServices current = services.apply(params);
@@ -392,8 +394,37 @@ final class QualityRequests {
             response.put("startLine", result.startLine());
             response.put("endLine", result.endLine());
             response.put("symbol", result.symbol());
+            if (current.workspace().config().practices().types().declareOnEdit()) {
+                response.put("untyped", untyped(current, uri, operation, result));
+            }
             return response;
         });
+    }
+
+    /**
+     * The {@code untyped} answer of {@code edit}: per parameter, return type or field that the inserted or replacing
+     * text declares without a type, {@code {line, what, inferred}} (line 1-based in the new text; {@code inferred} the
+     * type the static type checker infers, or null). Empty for a deletion or an import.
+     */
+    private static List<Map<String, Object>> untyped(LanguageServices current, String uri,
+            SymbolEditor.Operation operation, SymbolEditor.Result result) {
+        List<Map<String, Object>> list = new ArrayList<>();
+        if (operation == SymbolEditor.Operation.DELETE || operation == SymbolEditor.Operation.ADD_IMPORT
+                || result.insertedTo() <= result.insertedFrom()) {
+            return list;
+        }
+        org.groovyscope.engine.index.TextLines lines = new org.groovyscope.engine.index.TextLines(result.text());
+        int from = lines.positionOf(result.insertedFrom()).line() + 1;
+        int to = lines.positionOf(result.insertedTo() - 1).line() + 1;
+        for (org.groovyscope.engine.typecheck.UntypedDeclarations.Untyped untyped
+                : current.quality().untyped(uri, result.text(), from, to)) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("line", untyped.line());
+            item.put("what", untyped.what());
+            item.put("inferred", untyped.inferred());
+            list.add(item);
+        }
+        return list;
     }
 
     /**
