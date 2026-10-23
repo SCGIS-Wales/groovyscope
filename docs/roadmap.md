@@ -500,6 +500,20 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Done when: merged and released, verified from PyPI (the fixture's `SubjectSpec` reports GS044, GS046 and GS047; a
   JaCoCo report under 80% fails `verify --coverage` and blocks `review_changes`).
 
+- [ ] **Stage 26: value types** (edit plan Phase 3, branch `feat/types-gate`): GS070 (a literal of another kind
+  assigned, compared, passed or returned), GS071 (one variable holding several kinds), GS072 (text used as a boolean),
+  GS073 (returns of different kinds), GS074 (arrays and lists mixed, with a `size()` and an `as T[]` fix), GS075 (one
+  map key, several kinds) and GS076 (an argument of another kind at a certain call site), each STATIC or INFERRED;
+  GS077 runs Groovy's static type checker on dynamic classes (builders, dispatch hooks, `metaClass`, Spock and
+  profile-governed files skipped) for the files a check names and in the preview, so the edit gate now catches a type
+  error under `@CompileStatic` (the Stage 24 gap); `edit_symbol` holds back an edit that leaves a new parameter or
+  return type undeclared (`types.declareOnEdit`), naming what the checker infers; `hover` and `symbol_context` show the
+  kinds a local is assigned. Calibrated on CodeNarc's sources: GS072 one correct finding, GS077 251 findings in 116
+  files with ten judged correct after the first run's 600 were filtered; GS077 keeps the after-write check of a
+  3,268-line file under 1.2 s. Done when: merged and released, verified from PyPI (the fixture's `Types.groovy`
+  reports GS070 to GS075 and GS077; a `preToolUse` write returning text from an `int` method under `@CompileStatic`
+  is held back).
+
 - [ ] **Stage 27: reuse before writing** (edit plan Phase 4, branch `feat/reuse-gate`): the engine's
   `groovyscope/similar` (a candidate text, an existing symbol, or a file's changed ranges; shape matches exact or
   similar from `CloneFinder` with a loose hash so a parsed text matches resolved code, signature matches by name stem

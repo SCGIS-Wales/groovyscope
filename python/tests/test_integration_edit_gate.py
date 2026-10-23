@@ -142,3 +142,32 @@ def test_writing_a_copy_of_existing_code_is_held_back(
         assert found["matches"][0]["symbol"] == "demo.Strings.slug" and found["matches"][0]["score"] > 0.8
     finally:
         runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])
+
+
+@pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
+def test_a_type_error_under_compile_static_is_caught_before_the_write(
+    tmp_path: Path, short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "ws"
+    source = workspace / "src" / "main" / "groovy" / "demo" / "Counter.groovy"
+    source.parent.mkdir(parents=True)
+    text = (
+        "package demo\n\nimport groovy.transform.CompileStatic\n\n"
+        "@CompileStatic\nclass Counter {\n    int count() {\n        return 1\n    }\n}\n"
+    )
+    source.write_text(text, encoding="utf-8")
+    (workspace / ".groovyscope.yaml").write_text("hooks:\n  preWrite:\n    mode: block\n", encoding="utf-8")
+    monkeypatch.setenv(daemon.SOCKET_DIR_ENV, str(short_dir))
+    monkeypatch.setenv(daemon.CACHE_DIR_ENV, str(tmp_path / "cache"))
+    monkeypatch.setenv("GROOVYSCOPE_DAEMON__IDLETIMEOUTMINUTES", "1")
+    runner = CliRunner()
+    obj = {"config_path": None, "root": workspace.resolve(), "log_level": "WARNING", "log_file": None}
+    try:
+        common.daemon_socket_for(obj)
+        broken = {"path": str(source), "command": "str_replace", "old_str": "return 1", "new_str": "return 'one'"}
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "write", "tool_input": broken}
+        blocked = runner.invoke(cli.main, ["--root", str(workspace), "hook"], input=json.dumps(payload))
+        assert blocked.exit_code == 2, blocked.output
+        assert "BLOCKED" in blocked.stderr and "String" in blocked.stderr
+    finally:
+        runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])

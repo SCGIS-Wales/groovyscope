@@ -9,7 +9,7 @@ from __future__ import annotations
 import difflib
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -49,6 +49,16 @@ def unified(before: str, after: str, shown: str) -> list[str]:
             before.splitlines(), after.splitlines(), f"a/{shown}", f"b/{shown}", n=DIFF_CONTEXT, lineterm=""
         )
     )
+
+
+def untyped_reasons(untyped: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The declarations an edit's text leaves without a type (``types.declareOnEdit``), with what the static type
+    checker infers when it can tell."""
+    return [
+        f"line {item.get('line')}: {item.get('what')} has no declared type"
+        + (f" (it is {item['inferred']}): declare it" if item.get("inferred") else ": declare it")
+        for item in untyped
+    ]
 
 
 def gate_summary(verdict: gate.Verdict) -> dict[str, Any]:
@@ -111,6 +121,9 @@ def edit_symbol(
         comments=comments,
         reuse=gate.reuse_settings(settings),
     )
+    untyped = untyped_reasons(raw.get("untyped") or [])
+    if untyped:  # types.declareOnEdit: the new text declares its types, or the edit is held back
+        verdict = {**verdict, "reasons": [*verdict["reasons"], *untyped], "decision": "block"}
     diff = unified(before, after, shown)
     result: dict[str, Any] = {
         "symbol": raw.get("symbol", symbol),
