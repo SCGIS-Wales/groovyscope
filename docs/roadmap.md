@@ -482,6 +482,24 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   Verified from PyPI: 0.31.0 reports GS060 (3), GS061, GS062 (2), GS063, GS064 (3) and GS065 on the fixture's
   `Verbose.groovy`.
 
+- [ ] **Stage 28: lean tests, coverage at 80, integration tests in line** (edit plan Phase 5, branch
+  `feat/test-discipline`): `coverage` settings (`minimumPercent` 80, per changed class or `overall`, only a report
+  newer than the change counts) read by `verify --coverage` (exits 1 under the threshold, naming the classes and their
+  missed lines), `review_changes` (a `coverage` block; a fresh report under the threshold makes the verdict blocking;
+  a stale or missing one names the command), `coverage_gaps` (`threshold`, `below`) and an opt-in `hooks.coverageGate`
+  on `Stop` that reads the report and never runs Gradle; `test_plan` (the tests reaching a method, unit apart from
+  integration with their commands, repeated tests, and `needed`: the lines and branches a fresh report says no test
+  runs, else the untested method and its parameters' boundaries); the engine's GS044 (tests the same but for
+  literals, with a `where:` table fix for Spock), GS045 (trivial tests), GS046 (test class too large for its
+  subject), GS047 (same inputs and assertions) and GS048 (a name that says no behaviour; two words such as
+  `chargesTax` suffice); GS049 in `review_changes` (a changed signature whose integration tests the branch left
+  alone); `impact_of` lists `integrationTests` apart; `verify --integration` runs `verify.integrationTasks` unless
+  `verify.integrationNeeds` says what they need; a test with the real engine shows a break in `src/it` in the
+  after-write block and in `check`. Calibrated on the engine's own 575 Spock features: no finding, so no false
+  positive; the fixture's 12 findings are all correct. Tool surface: test_plan adds 487 bytes.
+  Done when: merged and released, verified from PyPI (the fixture's `SubjectSpec` reports GS044, GS046 and GS047; a
+  JaCoCo report under 80% fails `verify --coverage` and blocks `review_changes`).
+
 ## Owner checks still open
 
 These need a Kiro CLI install or the owner's account, so no session can close them; each stage above shipped

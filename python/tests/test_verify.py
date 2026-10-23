@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from groovyscope import changes, cli, verify, workspace_init
 from groovyscope.cli import common as cli_common
+from groovyscope.cli import quality
 from groovyscope.cli import quality as cli_quality
 
 BUILD = """
@@ -417,17 +418,14 @@ def test_integration_tests_left_behind_by_a_signature_change_are_gs049() -> None
     assert verify.integration_out_of_line([(declaration, report)], both) == []  # the branch updated it too
     body_only = {"src/main/groovy/app/Store.groovy": [[7, 8]]}
     assert verify.integration_out_of_line([(declaration, report)], body_only) == []
-    tests = verify.affected_tests([{"tests": [], "integrationTests": [
-        {"caller": {"name": "stores", "container": "app.StoreIT", "location": {"path": "src/it/groovy/app/StoreIT.groovy"}}}
-    ]}], [], verify.is_test_path)  # fmt: skip
+    caller = {"name": "stores", "container": "app.StoreIT", "location": {"path": "src/it/groovy/app/StoreIT.groovy"}}
+    tests = verify.affected_tests([{"tests": [], "integrationTests": [{"caller": caller}]}], [], verify.is_test_path)
     assert tests == [
         {"className": "app.StoreIT", "method": "stores", "path": "src/it/groovy/app/StoreIT.groovy", "sourceSet": "it"}
     ]
 
 
 def test_verify_integration_runs_the_integration_tasks_or_says_what_they_need(tmp_path: Path) -> None:
-    from groovyscope.cli import quality
-
     added, needs = quality.with_integration({"verify": {"runTasks": ["test"]}})
     assert added["verify"]["runTasks"] == ["test", "integrationTest"] and needs == []
     kept, needs = quality.with_integration({"verify": {"integrationNeeds": ["credentials"]}})

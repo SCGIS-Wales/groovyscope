@@ -831,12 +831,27 @@
       "why": "A test named `test1`, `testMethod` or `shouldWork` says nothing when it fails: the reader has to open it to learn what broke. A name that states the behaviour and the expectation is the first line of the failure report.",
       "bad": "def test1() { ... }\ndef shouldWork() { ... }\nvoid testSquare() { ... }",
       "good": "def 'the square of a negative number is positive'() { ... }\nvoid squareOfNegativeIsPositive() { ... }",
-      "fix": "Name the behaviour and what is expected: a sentence for a Spock feature, three words or more for a JUnit method. `tests.namePattern` (what a good name matches) and `tests.vagueNames` (words that alone say nothing) tune the check.",
+      "fix": "Name the behaviour and what is expected: a sentence for a Spock feature, two words or more for a JUnit method (`chargesTax`). `tests.namePattern` (what a good name matches) and `tests.vagueNames` (words that alone say nothing) tune the check.",
       "safety": "none",
       "groovy": "both",
       "enforcedBy": [],
       "section": "101-lean-tests",
       "severity": "info"
+    },
+    {
+      "code": "GS049",
+      "kind": "groovyscope",
+      "group": "tests",
+      "title": "Integration tests left behind by a change",
+      "why": "A changed public signature whose integration tests the branch did not touch breaks them where nobody runs them: integration tests often run only in the pipeline, so the break shows after the merge.",
+      "bad": "// the branch changes Store.save(String) to save(String, boolean)\n// src/it/groovy/app/StoreIT.groovy still calls store.save('a')",
+      "good": "// the same change updates StoreIT in the branch, and says which integration tests it could not run",
+      "fix": "Update the integration tests that call the changed declaration in the same change; `groovyscope verify --integration` runs them when they need nothing a laptop lacks.",
+      "safety": "none",
+      "groovy": "both",
+      "enforcedBy": [],
+      "section": "101-lean-tests",
+      "severity": "error"
     },
     {
       "code": "GS050",
