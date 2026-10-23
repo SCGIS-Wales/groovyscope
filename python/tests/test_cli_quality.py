@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
-from groovyscope import changes, cli, hooks, process
+from groovyscope import changes, cli, hooks, plans, process
 from groovyscope import daemon as daemon_lifecycle
 from groovyscope.cli import common as cli_common
 from groovyscope.config import load_config
@@ -713,3 +714,90 @@ def test_hook_capture_saves_the_raw_payload_privately_and_never_fails(
     assert (
         hooks.capture_name("pre/Tool Use", 7) == "preToolUse-7.json" and hooks.capture_name("", 1) == "unknown-1.json"
     )
+
+
+def test_the_pre_write_gate_previews_the_candidate_and_blocks_only_in_block_mode(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
+    target = tmp_path / "A.groovy"
+    target.write_text("class A {\n    int a() { 1 }\n}\n", encoding="utf-8")
+    uri = target.resolve().as_uri()
+    error = diagnostic(1, 1, "groovyc", "error", "cannot return String")
+    calls: list[str] = []
+
+    def fake_rpc(_socket: Path, method: str, params: dict[str, Any], _timeout: float) -> dict[str, Any]:
+        calls.append(method)
+        if method == "groovyscope/preview":
+            assert params["texts"] == [{"uri": uri, "text": "class A {\n    int a() { 'x' }\n}\n"}]
+            return {"results": {uri: {"syntax": [], "diagnostics": [error]}}}
+        return {"diagnostics": {uri: []}}
+
+    monkeypatch.setattr(cli_common, "_RPC", fake_rpc)
+    monkeypatch.setattr(cli_common, "_PROBE", lambda _socket: {"engine": "x"})
+    monkeypatch.setattr(cli_common, "daemon_socket_for", lambda _obj: pytest.fail("a hook must never start the engine"))
+    tool_input = {"path": str(target), "command": "str_replace", "old_str": "{ 1 }", "new_str": "{ 'x' }"}
+    payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "write", "tool_input": tool_input})
+    warned = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert warned.exit_code == 0 and "would be blocked in block mode" in warned.output
+    assert calls == ["groovyscope/preview", "groovyscope/check"]
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  preWrite:\n    mode: block\n")
+    blocked = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert blocked.exit_code == 2 and "BLOCKED" in blocked.stderr and "cannot return String" in blocked.stderr
+
+    monkeypatch.setattr(cli_common, "_RPC", lambda *_a: (_ for _ in ()).throw(RuntimeError("timed out")))
+    failed = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert failed.exit_code == 0 and "not checked (timed out)" in failed.output
+    monkeypatch.setattr(cli_common, "_PROBE", lambda _socket: None)
+    down = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert down.exit_code == 0 and "daemon is not running" in down.output
+
+    unknown = {**tool_input, "old_str": "nothing"}
+    payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "write", "tool_input": unknown})
+    vague = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload)
+    assert vague.exit_code == 0 and "not checked (old_str occurs 0 times in the file)" in vague.output
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  preWrite:\n    enabled: false\n")
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=payload).output == ""
+
+
+def test_a_planned_write_is_trusted_and_its_outcome_reported(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(cli_common, "_PROBE", lambda _socket: None)
+    target = tmp_path / "A.groovy"
+    before, after = "class A {\n    int a() { 1 }\n}\n", "class A {\n    int a() { 2 }\n}\n"
+    target.write_text(before, encoding="utf-8")
+    store = cli.quality.plan_store(tmp_path)
+    plan = plans.make(target, before, after, old_str="{ 1 }", new_str="{ 2 }", now=time.time())
+    plans.save(store, plan, kept=5, clock=time.time, ttl_minutes=120)
+    tool_input = {"path": str(target), "command": "str_replace", "old_str": "{ 1 }", "new_str": "{ 2 }"}
+    pre = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "write", "tool_input": tool_input})
+    trusted = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=pre)
+    assert trusted.exit_code == 0 and f"planned write to A.groovy (plan {plan['plan_id'][:12]}" in trusted.output
+
+    target.write_text(after, encoding="utf-8")
+    post = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "write", "tool_input": {"path": str(target)}})
+    applied = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=post)
+    assert applied.output.startswith("groovyscope: planned write applied to A.groovy")
+    target.write_text("class A {}\n", encoding="utf-8")
+    drifted = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=post)
+    assert "planned write drifted: A.groovy" in drifted.output
+
+    big = "\n".join(f"// {n}" for n in range(50)) + "\nclass B {}\n"
+    (tmp_path / "B.groovy").write_text(big, encoding="utf-8")
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  preWrite:\n    requirePlan: true\n")
+    unplanned = {"path": str(tmp_path / "B.groovy"), "command": "append", "new_str": "class C {}\n"}
+    pre = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "write", "tool_input": unplanned})
+    refused = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=pre)
+    assert refused.exit_code == 2 and "has 51 lines; plan the change with groovyscope.edit_symbol" in refused.stderr
+
+
+def test_a_groovy_prompt_gets_the_edit_policy(runner: CliRunner, tmp_path: Path) -> None:
+    prompt = json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": "Refactor the Gradle build"})
+    shown = runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=prompt)
+    assert shown.exit_code == 0 and shown.output.startswith("groovyscope edit policy")
+    other = json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": "write a haiku"})
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=other).output == ""
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  userPrompt: false\n")
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=prompt).output == ""
