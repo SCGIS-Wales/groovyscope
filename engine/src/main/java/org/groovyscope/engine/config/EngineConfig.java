@@ -295,15 +295,22 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param severities per-code overrides: {@code error}, {@code warning}, {@code info} or {@code off}
      * @param secretsAllow regular expressions ({@code secrets.allow}); a literal whose value or name matches one is
      *     never reported as a hardcoded secret (GS019)
+     * @param comments the comment checks' thresholds ({@code comments.*}, GS060 to GS065)
      */
     public record Practices(boolean enabled, Map<String, String> severities, Naming naming,
-            List<String> secretsAllow) {
+            List<String> secretsAllow, Comments comments) {
         public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
             severities = Map.copyOf(severities == null ? Map.of() : severities);
             naming = naming == null ? Naming.DEFAULTS : naming;
             secretsAllow = List.copyOf(secretsAllow == null ? List.of() : secretsAllow);
+            comments = comments == null ? Comments.DEFAULTS : comments;
+        }
+
+        /** Practices with the default comment thresholds. */
+        public Practices(boolean enabled, Map<String, String> severities, Naming naming, List<String> secretsAllow) {
+            this(enabled, severities, naming, secretsAllow, Comments.DEFAULTS);
         }
 
         /** Practices with the default naming settings. */
@@ -336,6 +343,23 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             allowedAbbreviations = List.copyOf(allowedAbbreviations == null ? List.of() : allowedAbbreviations);
             vocabulary = Map.copyOf(vocabulary == null ? Map.of() : vocabulary);
         }
+    }
+
+    /**
+     * Comment checks (GS060 to GS065) and the edit gate's comment policy; the defaults mirror {@code defaults.yaml}.
+     *
+     * @param restateShare the share of a comment's words that the statement below it must cover for the comment to
+     *     restate the code (GS060)
+     * @param maxBlockLines consecutive comment lines allowed in a method body (GS061)
+     * @param maxJavadocLines Javadoc text lines allowed on a method, delimiter lines not counted (GS062)
+     * @param todoNeedsOwner whether a TODO or FIXME needs an owner or a ticket (GS064)
+     * @param maxDensity comment lines over code lines allowed in a method of five code lines or more (GS065)
+     * @param maxAddedShare the share of a write's added lines that may be comments (the edit gate)
+     * @param exemptPublicJavadoc whether the edit gate leaves one Javadoc line per public member out of that share
+     */
+    public record Comments(double restateShare, int maxBlockLines, int maxJavadocLines, boolean todoNeedsOwner,
+            double maxDensity, double maxAddedShare, boolean exemptPublicJavadoc) {
+        public static final Comments DEFAULTS = new Comments(0.7, 2, 5, true, 0.25, 0.2, true);
     }
 
     /**
@@ -573,6 +597,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject practices = objectOrEmpty(document.get("practices"));
         JsonObject naming = objectOrEmpty(document.get("naming"));
         JsonObject secrets = objectOrEmpty(document.get("secrets"));
+        JsonObject comments = objectOrEmpty(document.get("comments"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
         JsonObject daemon = objectOrEmpty(document.get("daemon"));
         return new EngineConfig(
@@ -610,7 +635,14 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                         new Naming(bool(naming.get("enabled"), Naming.DEFAULTS.enabled()),
                                 strings(naming.get("allowedAbbreviations"), List.of()),
                                 stringMap(naming.get("vocabulary"))),
-                        strings(secrets.get("allow"), List.of())),
+                        strings(secrets.get("allow"), List.of()),
+                        new Comments(number(comments.get("restateShare"), Comments.DEFAULTS.restateShare()),
+                                integer(comments.get("maxBlockLines"), Comments.DEFAULTS.maxBlockLines()),
+                                integer(comments.get("maxJavadocLines"), Comments.DEFAULTS.maxJavadocLines()),
+                                bool(comments.get("todoNeedsOwner"), Comments.DEFAULTS.todoNeedsOwner()),
+                                number(comments.get("maxDensity"), Comments.DEFAULTS.maxDensity()),
+                                number(comments.get("maxAddedShare"), Comments.DEFAULTS.maxAddedShare()),
+                                bool(comments.get("exemptPublicJavadoc"), Comments.DEFAULTS.exemptPublicJavadoc()))),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),
@@ -700,6 +732,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
     private static int integer(JsonElement element, int fallback) {
         if (element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
             return element.getAsInt();
+        }
+        return fallback;
+    }
+
+    private static double number(JsonElement element, double fallback) {
+        if (element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
+            return element.getAsDouble();
         }
         return fallback;
     }

@@ -39,7 +39,7 @@ class TypingVerdictSpec extends Specification {
 
         then:
         fixed.contains('@CompileStatic\nclass Good')
-        fixed.contains('@CompileDynamic // TODO justify why this class stays dynamic (it does not type-check)\nclass Bad')
+        fixed.contains('@CompileDynamic // dynamic: it does not type-check; say here why it must stay so\nclass Bad')
         result.left()[uri('Mixed.groovy')] == [CompileStatic: 1]
     }
 
@@ -62,7 +62,7 @@ class TypingVerdictSpec extends Specification {
 
         then:
         !fixed.contains('@CompileStatic')
-        fixed.contains('@CompileDynamic // TODO justify why this class stays dynamic (it does not type-check)\nclass Outer')
+        fixed.contains('@CompileDynamic // dynamic: it does not type-check; say here why it must stay so\nclass Outer')
     }
 
     def 'a document the type checker could not check gets no annotation'() {

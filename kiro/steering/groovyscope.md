@@ -29,6 +29,8 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
   the diff. Use `apply: true` only when the user asks groovyscope to write.
 - A `groovyscope gate:` line before a write names the errors the write would introduce; fix the text and
   write again. A `BLOCKED` write did not happen.
+- Comments say why, never what; one line; none on code that reads itself; Javadoc one sentence on public
+  members only (GS060 to GS065 report the rest, and a write that is mostly comment is held back).
 
 ## After every write
 

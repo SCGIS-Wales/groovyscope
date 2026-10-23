@@ -239,7 +239,7 @@ pushed diagnostics, the default; `workspace` for every file; `none` to pull only
 build scripts), `lint.licenceHeader` (a header every file must carry, off by default), `typecheck.configScript`
 (the project's compiler configuration script, run only in a trusted workspace), `secrets.allow` (values or names
 the hardcoded secret check leaves alone), `workspace.gitignore` (whether `.groovyscope/` goes into the
-repository's `.gitignore`) `merge.sideLines` / `merge.boundaryLines` for the merge conflict tools, and `hooks.preWrite` (the edit gate's `mode`, `warn` or `block`) with `edits` for `edit_symbol`'s plans. Runtime profiles live in `~/.groovyscope/profiles/` or
+repository's `.gitignore`) `merge.sideLines` / `merge.boundaryLines` for the merge conflict tools, `hooks.preWrite` (the edit gate's `mode`, `warn` or `block`) with `edits` for `edit_symbol`'s plans, and `comments` (the GS060 to GS065 thresholds and the share of a write that may be comment). Runtime profiles live in `~/.groovyscope/profiles/` or
 `<workspace>/.groovyscope/profiles/`; the workspace folder is kept out of git by default, so set
 `workspace.gitignore: false` (and remove the entry) to commit a team profile there. See
 [docs/profiles.md](docs/profiles.md).

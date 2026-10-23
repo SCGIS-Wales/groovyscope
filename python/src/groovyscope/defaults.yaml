@@ -106,6 +106,15 @@ naming:
   enabled: true           # GS020 to GS027: names that say what things are and do (docs/practices.md, section 18)
   allowedAbbreviations: []  # words the team reads fluently, never reported by GS024, e.g. [cfg, svc]
   vocabulary: {}          # the verb to use per family of synonyms, e.g. {fetch: get, retrieve: get, remove: delete}
+comments:
+  restateShare: 0.7       # GS060: share of a comment's words the statement below it covers for it to restate the code
+  maxBlockLines: 2        # GS061: consecutive comment lines allowed in a method body
+  maxJavadocLines: 5      # GS062: Javadoc text lines allowed on a method (the /** and */ lines not counted)
+  todoNeedsOwner: true    # GS064: a TODO or FIXME needs an owner or a ticket: TODO(name), TODO @name, TODO ABC-123
+  maxDensity: 0.25        # GS065: comment lines over code lines allowed in a method of five code lines or more
+  maxAddedShare: 0.2      # edit gate: share of a write's added lines that may be comment lines
+  minAddedLines: 10       # edit gate: the share applies to writes that add this many lines or more
+  exemptPublicJavadoc: true  # edit gate: one Javadoc line per public member is left out of that share
 profiles:
   paths: []              # runtime profile files or directories (YAML/JSON), see docs/profiles.md
   discover: true         # also load <root>/.groovyscope/profiles/ and ~/.groovyscope/profiles/

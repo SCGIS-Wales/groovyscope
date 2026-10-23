@@ -42,6 +42,21 @@ class EngineConfigSpec extends Specification {
         config.trust()
     }
 
+    def 'the comment thresholds are read from the comments section, each missing key keeping its default'() {
+        when:
+        def tuned = EngineConfig.fromJson('''
+            {"comments": {"restateShare": 0.8, "maxBlockLines": 4, "maxJavadocLines": 7, "todoNeedsOwner": false,
+                          "maxDensity": 0.5, "maxAddedShare": 0.3, "exemptPublicJavadoc": false}}
+        ''').practices().comments()
+        def partial = EngineConfig.fromJson('{"comments": {"maxDensity": 1, "maxBlockLines": "x"}}').practices().comments()
+
+        then:
+        tuned == new EngineConfig.Comments(0.8, 4, 7, false, 0.5, 0.3, false)
+        partial == new EngineConfig.Comments(0.7, 2, 5, true, 1.0, 0.2, true)
+        EngineConfig.DEFAULTS.practices().comments() == EngineConfig.Comments.DEFAULTS
+        new EngineConfig.Practices(true, [:], null, null, null).comments() == EngineConfig.Comments.DEFAULTS
+    }
+
     def 'each lint profile takes its own rule set path'() {
         when:
         def lint = EngineConfig.fromJson('''

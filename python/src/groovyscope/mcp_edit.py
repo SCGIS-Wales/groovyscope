@@ -98,7 +98,8 @@ def edit_symbol(
     after = str(raw["text"])
     shown = relative_path(uri, root)
     mode = gate.settings({"hooks": settings.get("hooks") or {}})["mode"]
-    verdict = gate.check_candidate(call, root, target, before=before, after=after, mode="block")
+    comments = gate.comment_policy({"comments": settings.get("comments") or {}})
+    verdict = gate.check_candidate(call, root, target, before=before, after=after, mode="block", comments=comments)
     diff = unified(before, after, shown)
     result: dict[str, Any] = {
         "symbol": raw.get("symbol", symbol),

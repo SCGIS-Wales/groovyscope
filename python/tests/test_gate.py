@@ -32,6 +32,7 @@ def test_change_counts_added_code_and_comment_lines() -> None:
         "addedCodeLines": 1,
         "addedCommentLines": 1,
         "addedComments": [2],
+        "exemptJavadocLines": 0,
     }
     assert gate.change(AFTER, BEFORE)["removedLines"] == 2
 
@@ -76,3 +77,33 @@ def test_policy_summary_follows_the_configuration() -> None:
     summary = gate.policy_summary(strict)
     assert "block it" in summary and "over 10 lines need an edit_symbol plan" in summary
     assert "gated" not in gate.policy_summary({"hooks": {"preWrite": {"enabled": False}}})
+
+
+POLICY: gate.CommentPolicy = {"maxAddedShare": 0.2, "minAddedLines": 10, "exemptPublicJavadoc": True}
+
+
+def test_a_write_that_is_mostly_comment_is_held_back() -> None:
+    code = "".join(f"    int v{n} = {n}\n" for n in range(10))
+    noisy = "".join(f"    // note {n}\n" for n in range(5))
+    before, after = "class A {\n}\n", "class A {\n" + noisy + code + "}\n"
+    verdict = gate.evaluate([], [], syntax=[], mode="block", before=before, after=after, comments=POLICY)
+    assert verdict["decision"] == "block"
+    assert verdict["reasons"] == [
+        "5 of the 15 added lines are comments (33%, at most 20%, comments.maxAddedShare) at lines 2, 3, 4, 5, 6: "
+        "say why in one line, or nothing"
+    ]
+    small = "class A {\n" + noisy + "    int v = 1\n}\n"
+    assert gate.evaluate([], [], syntax=[], mode="block", before=before, after=small, comments=POLICY)["reasons"] == []
+    assert gate.evaluate([], [], syntax=[], mode="block", before=before, after=after)["decision"] == "pass"
+
+
+def test_one_javadoc_line_per_public_member_is_exempt() -> None:
+    body = "".join(f"        int v{n} = {n}\n" for n in range(7))
+    doc = "    /** Counts things. */\n    @Deprecated\n    int count() {\n" + body + "    }\n"
+    after = "class A {\n" + doc + "    /** Hidden. */\n    private int hidden() { 1 }\n}\n"
+    found = gate.change("class A {\n}\n", after)
+    assert found["addedCommentLines"] == 2 and found["exemptJavadocLines"] == 1
+    assert gate.comment_share_reason(found, POLICY) is None  # 1 of 13 counted
+    strict: gate.CommentPolicy = {**POLICY, "maxAddedShare": 0.1, "exemptPublicJavadoc": False}
+    assert gate.comment_share_reason(found, strict) is not None
+    assert gate.comment_policy({"comments": {"minAddedLines": 3}})["minAddedLines"] == 3

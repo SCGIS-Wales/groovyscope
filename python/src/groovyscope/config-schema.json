@@ -616,6 +616,44 @@
         }
       }
     },
+    "comments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "restateShare": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "maxBlockLines": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxJavadocLines": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "todoNeedsOwner": {
+          "type": "boolean"
+        },
+        "maxDensity": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maxAddedShare": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "minAddedLines": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "exemptPublicJavadoc": {
+          "type": "boolean"
+        }
+      }
+    },
     "mcp": {
       "type": "object",
       "additionalProperties": false,
