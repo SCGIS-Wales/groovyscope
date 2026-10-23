@@ -58,8 +58,8 @@ import org.groovyscope.engine.workspace.WorkspaceModel;
 /**
  * The LSP front end. {@code initialize} picks the workspace root and builds the {@link LanguageServices};
  * requests are delegated to the document and workspace services, and the {@code groovyscope/*} requests to
- * {@link StatusRequests}, {@link QualityRequests}, {@link ExplainGraphRequests} and {@link SearchRequests}. The
- * engine API behind this package stays free of LSP4J types.
+ * {@link StatusRequests}, {@link QualityRequests}, {@link ExplainGraphRequests}, {@link SearchRequests} and
+ * {@link ReuseRequests}. The engine API behind this package stays free of LSP4J types.
  */
 public final class GroovyscopeLanguageServer implements LanguageServer, LanguageClientAware {
 
@@ -83,6 +83,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     private final QualityRequests quality;
     private final ExplainGraphRequests explainGraph;
     private final SearchRequests search;
+    private final ReuseRequests reuse;
     private volatile boolean shutdownRequested;
 
     /**
@@ -152,6 +153,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         this.quality = new QualityRequests(requests, this::requireServices);
         this.explainGraph = new ExplainGraphRequests(requests, this::requireServices);
         this.search = new SearchRequests(requests, this::requireServices);
+        this.reuse = new ReuseRequests(requests, this::requireServices);
     }
 
     /** The request lanes this server submits to (shared in the daemon). */
@@ -388,6 +390,12 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     @JsonRequest("groovyscope/duplicates")
     public CompletableFuture<Map<String, Object>> duplicates(Map<String, Object> params) {
         return search.duplicates(params);
+    }
+
+    /** Existing code a candidate text, declaration or added lines could reuse (see {@link ReuseRequests#similar}). */
+    @JsonRequest("groovyscope/similar")
+    public CompletableFuture<Map<String, Object>> similar(Map<String, Object> params) {
+        return reuse.similar(params);
     }
 
     /** Sizes of the workspace by package, file and class, test files and untested classes. */

@@ -165,3 +165,71 @@ changed:
 The fixture's `demo/Verbose.groovy` reports GS060 (lines 23, 25, 33), GS061 (28, 4 lines), GS062 (14, Javadoc on a
 private method; 16, `@return the counter` on a method returning `counter`), GS063 (35, two lines), GS064 (8 and 10,
 banners; 37, a bare TODO) and GS065 (22, 10 comment lines to 8 code lines).
+
+## Phase 4 calibration
+
+`groovyscope/similar` (`search/ReuseFinder.java`) was run with the default settings (`reuse.callOverlap: 0.6`, the
+default `reuse.ignoreCalls`, `duplicates.minLines: 6`, `duplicates.minStatements: 3`) on the same CodeNarc 4.0.0
+`src/main` copy, 529 Groovy files, compiled as one workspace in one JVM. Each query names an existing method by
+`uri` and `symbol`, so the method itself is never reported.
+
+Timings: the workspace compile took 12 to 14 s (it is not part of `similar`; any request pays it once). The first
+`similar` builds the workspace facts (statement hashes, name stems, parameter types and calls of every method) in
+250 to 310 ms; they are kept per snapshot, so a later query costs only the search. Each query then answered in 12 to
+79 ms, and the slowest of a sweep over 334 methods took 120 ms: well inside the 2 s budget, with no further index.
+
+| # | Query | Top matches | Judged | ms |
+|---|---|---|---|---|
+| 1 | `XmlReportWriter.writeReport` | calls 0.53 `BaselineXmlReportWriter.writeReport` (8 of 12 calls) | useful: the sibling writer, the same body but for two statements | 79 |
+| 2 | `XmlReportWriter.buildPackageAttributeMap` | exact 1.0 `JsonReportWriter.buildPackageAttributeMap` (also calls 0.80, signature 0.70) | useful: a verbatim copy | 42 |
+| 3 | `XmlReportWriter.isRoot` | signature 0.7 `JsonReportWriter.isRoot` | useful: the same one line helper in a sibling | 37 |
+| 4 | `JsonReportWriter.buildPackageElements` | signature 0.7 `XmlReportWriter.buildPackageElements`; calls 0.53 `XmlReportWriter.buildPackageElement` | useful: the sibling's walk over packages | 37 |
+| 5 | `TextReportWriter.writeFileViolations` | none | missed: see below | 40 |
+| 6 | `HtmlReportWriter.buildBodySection` | calls 0.48 `SortableHtmlReportWriter.buildBodySection` (6 of 10 calls) | useful: the other HTML writer's page body | 78 |
+| 7 | `BaselineXmlReportWriter.buildFileElement` (line 99) | signature 0.7 `JsonReportWriter.buildFileElement` and `XmlReportWriter.buildFileElement` (also calls 0.53) | useful as siblings; each builds its own format | 12 |
+| 8 | `SarifReportWriter.buildSarifResults` | none | correct: no other writer builds SARIF results | 12 |
+| 9 | `JUnitUtil.isSetUpMethod` | similar 0.9 `JUnitUtil.isTearDownMethod` | useful: the same condition with other literals | 27 |
+| 10 | `XmlReportUtil.removeIllegalCharacters` | none | correct: nothing else does it | 17 |
+
+The report writers come back: every query on a writer that has a sibling returned it, except query 5.
+`CompactTextReportWriter.writeFileViolations` overrides it with a body that differs in two of its four statements and
+inside the closure; an override of the same name is left out of signature matches on purpose (polymorphism, not a
+copy), shape matching compares whole statements, and the calls left after `reuse.ignoreCalls` (`find`, `findAll`,
+`each` and `println` are all ignored) are too few to compare.
+
+The text form was checked on the same corpus: lines 94 to 106 of `XmlReportWriter.groovy` (the whole of
+`buildPackageAttributeMap`) sent as `text` returned both copies, the Json one and the Xml one, as exact at 1.0, in 48 ms.
+
+To see what the defaults let through, every method of `report`, `rule/junit`, `rule/basic` and `util` (334 methods) was
+queried. They returned 117 matches: 65 calls, 34 signature, 16 similar and 2 exact.
+
+1. Shape (18): all real copies or near copies, mostly template visitors whose bodies differ in literals
+   (`BooleanGetBooleanAstVisitor`, `ThreadYieldAstVisitor` and `SystemExitAstVisitor.visitMethodCallExpression`;
+   `JUnitSetUpCallsSuperAstVisitor` and `JUnitTearDownCallsSuperAstVisitor.visitMethod`;
+   `UseAssertTrueInsteadOfNegationAstVisitor` and `UseAssertFalseInsteadOfNegationAstVisitor`), and
+   `ConsecutiveUtils.isJoinableType`, copied into `ConsecutiveStringConcatenationAstVisitor`.
+2. Signature (34): the writers' parallel builders (`buildReportElement`, `buildProjectElement`, `buildFileElement`,
+   `buildViolationElement`, `buildRulesElement` in the Json, Xml and baseline writers) and two helpers that two Spock
+   visitors each declare (`updateCurrentLabel`, `visitIfInSpockClass`). Useful to know; the writers' builders produce
+   different formats, so they are siblings to follow rather than methods to call.
+3. Calls (65): 30 are one family, six `visit` methods of `SpockMissingAssertAstVisitor` making the same three calls (a
+   real template copy inside one class); 4 are noise (`ImportUtil.packageNameForImport` matched to a constructor by
+   `lastIndexOf` and `endsWith`, `MathRandomTracker` matched to two unrelated classes by `pop` and `push`, and one
+   `isTrue` and `isFalse` pair); the rest are siblings or copies.
+
+What the first run found and what changed:
+
+1. A text parsed on its own and the workspace's resolved trees normalised differently (`String` against
+   `java.lang.String`, `Math` as a name against a class expression, `helper(x)` against a static call), so no text
+   ever matched. `CloneFinder.looseHash` hashes both alike: simple type names, a class used as a receiver or operand
+   as a name, a static call without receiver as a plain call. `find_duplicates` keeps the strict hash.
+2. Calls matched 317 times in the sweep, nearly all rule visitors sharing framework calls (`addViolation`,
+   `AstUtil.isMethodCall`). Calls that more than 2% of the workspace's methods make (and more than 20 methods) are now
+   left out of the comparison on their own, as are calls on `super` (how an override joins its parent): 65 remain.
+3. One statement methods such as `isSetUpMethod` could never match a window of three statements. A member of
+   `minLines` or more whose body is shorter than a window now matches whole bodies of the same shape, and nothing else.
+4. A script's generated `main` is marked as script body too and was read as code (`InvokerHelper.runScript` among its
+   calls); only `run` is.
+
+The fixture's `demo/Copied.groovy`: its method `pageName` sent as text returns `demo.Strings.slug` as exact, score 1.0,
+lines 6 to 9; sent by symbol, or as the added range 5 to 10, it returns the same without itself.
