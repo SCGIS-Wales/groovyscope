@@ -152,8 +152,10 @@ def test_jacoco_gaps_and_summary(tmp_path: Path) -> None:
 
 
 def test_reports_settings_defaults() -> None:
-    assert reports.reports_settings({}) == {"sarif": [], "jacoco": None}
-    assert reports.reports_settings({"reports": {"sarif": ["a.sarif"], "jacoco": "j.xml"}}) == {
+    assert reports.reports_settings({}) == {"sarif": [], "jacoco": None, "reuse": {}, "duplicates": {}}
+    assert reports.reports_settings({"reports": {"sarif": ["a.sarif"], "jacoco": "j.xml"}, "reuse": {"limit": 3}}) == {
         "sarif": ["a.sarif"],
         "jacoco": "j.xml",
+        "reuse": {"limit": 3},
+        "duplicates": {},
     }

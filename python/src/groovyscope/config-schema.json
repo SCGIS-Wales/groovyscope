@@ -554,6 +554,9 @@
         },
         "blockReview": {
           "type": "boolean"
+        },
+        "checkWrites": {
+          "type": "boolean"
         }
       }
     },

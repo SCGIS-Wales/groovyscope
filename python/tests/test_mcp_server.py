@@ -198,6 +198,7 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "document_symbols",
         "rename",
         "edit_symbol",
+        "suggest_reuse",
         "read_symbol",
         "find_code",
         "find_duplicates",
@@ -848,7 +849,7 @@ def test_review_changes_composes_findings_impact_and_risky_sites(
     monkeypatch.setattr(mcp_server.changes, "changed_files", refuse)
     assert tools["review_changes"]() == {"error": "git is not installed"}
     assert mcp_server.TOOL_INFO["review_changes"][1] is True
-    assert len(mcp_server.TOOL_INFO) == 34
+    assert len(mcp_server.TOOL_INFO) == 35
 
 
 SARIF_LOG = {

@@ -130,6 +130,7 @@ reuse:                    # similar code and helpers; minLines, unset here, over
   helperMaxLines: 15      # explain_code helpers: the longest instance method listed (static methods: any length)
   helpersLimit: 20        # explain_code helpers listed per class or member
   blockReview: false      # review_changes: an added block that duplicates existing code blocks the verdict
+  checkWrites: true       # edit gate: an added block that repeats existing code is held back (GS080; GS081, GS082 advise)
 diagram:
   sharedHelperCallers: 5  # relationship_graph: a node called from this many others is drawn once ("called from N") and named inside its callers' boxes instead of a line each; 0 draws every line
 verify:

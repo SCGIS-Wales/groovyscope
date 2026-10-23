@@ -5,7 +5,7 @@ needs to judge whether a name says what the thing does)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +83,8 @@ def compact_class(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
     externals = sorted({e for m in item.get("methods", []) for e in (m.get("externals") or [])})
     if externals:
         entry["externals"] = externals
+    if item.get("helpers"):
+        entry["helpers"] = compact_helpers(item["helpers"], root)
     return entry
 
 
@@ -96,6 +98,8 @@ def compact_explanation(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
             entry["path"] = relative_path(str(item["uri"]), root)
         if item.get("testing"):
             entry["testing"] = compact_testing(item["testing"], root)
+        if item.get("helpers"):
+            entry["helpers"] = compact_helpers(item["helpers"], root)
         return entry
     if kind in {"field", "property"}:
         return {
@@ -108,6 +112,18 @@ def compact_explanation(item: Mapping[str, Any], root: Path) -> dict[str, Any]:
             "static": item.get("static"),
         }
     return compact_class(item, root)
+
+
+def compact_helpers(helpers: Sequence[Mapping[str, Any]], root: Path) -> list[dict[str, Any]]:
+    """The utilities a class or method could call instead of writing its own, with workspace paths."""
+    return [
+        {
+            "symbol": h.get("symbol"),
+            "signature": h.get("signature"),
+            "at": f"{relative_path(str(h.get('uri') or ''), root)}:{int(h.get('line', 0)) + 1}",
+        }
+        for h in helpers
+    ]
 
 
 def compact_testing(testing: Mapping[str, Any], root: Path) -> dict[str, Any]:

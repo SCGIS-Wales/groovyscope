@@ -32,6 +32,10 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
 - Comments say why, never what; one line; none on code that reads itself; Javadoc one sentence on public
   members only (GS060 to GS065 report the rest, and a write that is mostly comment is held back).
 
+- Before writing a helper, a parser, a retry loop, a formatter or any method of six lines or more,
+  `groovyscope.suggest_reuse` with the text: call what exists; `explain_code`'s `helpers` lists the utilities in
+  reach. A write that repeats existing code is held back (GS080).
+
 ## After every write
 
 - After you write a Groovy, Gradle or Jenkinsfile file, a hook checks that file and a `groovyscope checked ...`
