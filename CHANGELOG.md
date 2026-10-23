@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.35.0...v0.36.0) (2026-10-23)
+
+
+### Features
+
+* skills, steering and documentation for the edit intelligence plan ([#145](https://github.com/SCGIS-Wales/groovyscope/issues/145)) ([9a93f20](https://github.com/SCGIS-Wales/groovyscope/commit/9a93f209552f56a5de709f54c026c8f3ab082527))
+
 ## [0.35.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.34.0...v0.35.0) (2026-10-23)
 
 
