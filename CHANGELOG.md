@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.31.0...v0.32.0) (2026-10-23)
+
+
+### Features
+
+* reuse before writing, suggest_reuse and GS080 to GS082 ([#137](https://github.com/SCGIS-Wales/groovyscope/issues/137)) ([c7d4ca5](https://github.com/SCGIS-Wales/groovyscope/commit/c7d4ca554493ab68a8884ef44849c4f81b41cdd7))
+
 ## [0.31.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.30.0...v0.31.0) (2026-10-23)
 
 
