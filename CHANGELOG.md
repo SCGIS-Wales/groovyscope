@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.29.0...v0.30.0) (2026-10-23)
+
+
+### Features
+
+* edit gate, planned writes and edit_symbol ([#133](https://github.com/SCGIS-Wales/groovyscope/issues/133)) ([2954471](https://github.com/SCGIS-Wales/groovyscope/commit/29544711eed4c81ec0a85bdb1346565a2a38ebce))
+
 ## [0.29.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.28.1...v0.29.0) (2026-10-23)
 
 
