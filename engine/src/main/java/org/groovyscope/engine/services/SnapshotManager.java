@@ -566,18 +566,40 @@ final class SnapshotManager {
                 || changed.keySet().stream().anyMatch(WorkspaceModel::isJavaUri)) {
             return Optional.empty();
         }
+        long started = System.nanoTime();
+        CompilationResult result = compiler.compile(changed, workspace.classpath(), workspace.config().trust(),
+                knownClasses(last, changed.keySet()));
+        EngineLog.debug("compiled %d changed file(s) of %s alone in %d ms",
+                changed.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000);
+        return Optional.of(result);
+    }
+
+    /**
+     * {@code texts} (candidate contents of workspace documents, new files included) compiled on their own against
+     * the classes of the last full compile, as {@link #compileOnly} does but with the texts as given rather than
+     * what changed on disk. When nothing has compiled yet, the first full compile runs here (shared, as every
+     * request shares it). The snapshot is left as it is, and the caller closes the result.
+     */
+    CompilationResult compileOverlay(Map<String, String> texts) {
+        Snapshot last = hasCompiled() ? snapshot : snapshot();
+        long started = System.nanoTime();
+        CompilationResult result = compiler.compile(texts, workspace.classpath(), workspace.config().trust(),
+                knownClasses(last, texts.keySet()));
+        EngineLog.debug("compiled %d candidate text(s) of %s over the snapshot in %d ms",
+                texts.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000);
+        return result;
+    }
+
+    /** The classes of {@code last} by name, minus those of {@code replaced} documents and of unresolved ones. */
+    private static Map<String, ClassNode> knownClasses(Snapshot last, Collection<String> replaced) {
         Map<String, ClassNode> known = new HashMap<>();
         for (Map.Entry<String, ModuleNode> module : last.result().modules().entrySet()) {
-            if (!changed.containsKey(module.getKey()) && !last.result().unresolvedUris().contains(module.getKey())) {
+            if (!replaced.contains(module.getKey()) && !last.result().unresolvedUris().contains(module.getKey())) {
                 for (ClassNode classNode : module.getValue().getClasses()) {
                     known.put(classNode.getName(), classNode);
                 }
             }
         }
-        long started = System.nanoTime();
-        CompilationResult result = compiler.compile(changed, workspace.classpath(), workspace.config().trust(), known);
-        EngineLog.debug("compiled %d changed file(s) of %s alone in %d ms",
-                changed.size(), workspace.root(), (System.nanoTime() - started) / 1_000_000);
-        return Optional.of(result);
+        return known;
     }
 }

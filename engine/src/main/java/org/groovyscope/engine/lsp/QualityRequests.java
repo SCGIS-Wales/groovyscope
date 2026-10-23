@@ -19,10 +19,13 @@ import static org.groovyscope.engine.lsp.RequestParams.flag;
 import static org.groovyscope.engine.lsp.RequestParams.invalid;
 import static org.groovyscope.engine.lsp.RequestParams.lineRanges;
 import static org.groovyscope.engine.lsp.RequestParams.noneInside;
+import static org.groovyscope.engine.lsp.RequestParams.number;
 import static org.groovyscope.engine.lsp.RequestParams.outside;
 import static org.groovyscope.engine.lsp.RequestParams.requireHeadroom;
 import static org.groovyscope.engine.lsp.RequestParams.stringList;
 import static org.groovyscope.engine.lsp.RequestParams.targets;
+import static org.groovyscope.engine.lsp.RequestParams.text;
+import static org.groovyscope.engine.lsp.RequestParams.uriOf;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,13 +43,15 @@ import org.groovyscope.engine.index.Declarations;
 import org.groovyscope.engine.model.CheckResult;
 import org.groovyscope.engine.model.Diagnostic;
 import org.groovyscope.engine.model.TextEdit;
+import org.groovyscope.engine.search.SymbolEditor;
 import org.groovyscope.engine.services.LanguageServices;
 import org.groovyscope.engine.services.QualityServices;
 
 /**
  * The quality requests: {@code groovyscope/check}, {@code fix} and {@code format} over documents or the whole
- * workspace, {@code parse} over candidate texts that are not workspace documents, and the runtime profile's
- * {@code contracts} and {@code profile}.
+ * workspace, {@code parse} over candidate texts that are not workspace documents, the edit gate's {@code preview}
+ * (findings of candidate texts of workspace documents) and {@code edit} (one declaration edited as an object), and
+ * the runtime profile's {@code contracts} and {@code profile}.
  */
 final class QualityRequests {
 
@@ -235,26 +240,12 @@ final class QualityRequests {
     }
 
     private static Map<String, Object> tooLarge() {
-        Map<String, Object> error = new LinkedHashMap<>();
-        error.put("line", 1);
-        error.put("column", 1);
-        error.put("message", "too large to parse");
-        return error;
+        return error(1, 1, "too large to parse");
     }
 
     /** One text's result: the first errors and, when asked for, its declarations. */
     static Map<String, Object> parsed(GroovyCompiler.Parsed parsed, boolean declarations) {
-        List<Map<String, Object>> errors = new ArrayList<>();
-        for (Diagnostic diagnostic : parsed.errors()) {
-            if (errors.size() >= MAX_PARSE_ERRORS) {
-                break;
-            }
-            Map<String, Object> error = new LinkedHashMap<>();
-            error.put("line", diagnostic.range().start().line() + 1);
-            error.put("column", diagnostic.range().start().column() + 1);
-            error.put("message", diagnostic.message());
-            errors.add(error);
-        }
+        List<Map<String, Object>> errors = errorList(parsed);
         List<Map<String, Object>> found = null;
         if (declarations) {
             found = new ArrayList<>();
@@ -279,6 +270,162 @@ final class QualityRequests {
             result.put("declarations", declarations);
         }
         return result;
+    }
+
+    /**
+     * The findings of candidate texts of workspace documents as if they were saved: nothing is written and the
+     * snapshot is left as it is. Params: {@code root}, {@code texts} (a list of {@code {uri, text}}, at most
+     * {@value #MAX_PARSE_TEXTS}; each uri inside the workspace, the file need not exist yet), {@code include} (any of
+     * {@code compile}, {@code lint}, {@code practices}; all three when absent or empty). Per uri: {@code syntax}, the
+     * first {@value #MAX_PARSE_ERRORS} syntax errors (1-based), and {@code diagnostics}, the LSP diagnostics
+     * {@code check} would report (with {@code data.fixable}); a text with syntax errors gets no diagnostics, and a
+     * text over {@code workspace.maxFileBytes} (UTF-8 bytes) only the syntax error {@code too large to preview}.
+     */
+    CompletableFuture<Map<String, Object>> preview(Map<String, Object> params) {
+        return requests.heavy(cancel -> {
+            long started = System.nanoTime();
+            if (params == null || !(params.get("texts") instanceof List<?> items)) {
+                throw invalid("preview needs texts (a list of {uri, text})");
+            }
+            if (items.size() > MAX_PARSE_TEXTS) {
+                throw new ResponseErrorException(new ResponseError(ResponseErrorCode.InvalidRequest,
+                        "preview takes at most " + MAX_PARSE_TEXTS + " texts, got " + items.size(), null));
+            }
+            Set<String> include = new LinkedHashSet<>(stringList(params.get("include")));
+            for (String name : include) {
+                if (!QualityServices.PREVIEW_INCLUDES.contains(name)) {
+                    throw invalid("preview includes only compile, lint and practices, not " + name);
+                }
+            }
+            LanguageServices current = services.apply(params);
+            Map<String, String> texts = new LinkedHashMap<>();
+            for (Object item : items) {
+                if (!(item instanceof Map<?, ?> entry) || !(entry.get("uri") instanceof String uri)
+                        || !(entry.get("text") instanceof String text)) {
+                    throw invalid("preview needs texts (a list of {uri, text})");
+                }
+                if (outside(current, uri)) {
+                    throw invalid("preview: " + uri + " is outside the workspace");
+                }
+                texts.put(uri, text);
+            }
+            long limit = current.workspace().config().maxFileBytes();
+            Map<String, List<Map<String, Object>>> syntax = new LinkedHashMap<>();
+            Map<String, String> candidates = new LinkedHashMap<>();
+            for (Map.Entry<String, String> text : texts.entrySet()) {
+                cancel.checkCanceled();
+                List<Map<String, Object>> errors;
+                if (limit > 0 && utf8Length(text.getValue()) > limit) {
+                    errors = List.of(error(1, 1, "too large to preview"));
+                } else {
+                    errors = syntaxErrors(current.quality().parse(virtualName(text.getKey()), text.getValue()));
+                }
+                syntax.put(text.getKey(), errors);
+                if (errors.isEmpty()) {
+                    candidates.put(text.getKey(), text.getValue());
+                }
+            }
+            Map<String, List<QualityServices.PreviewFinding>> found = candidates.isEmpty() ? Map.of()
+                    : current.quality().preview(candidates, include);
+            Map<String, Object> results = new LinkedHashMap<>();
+            for (Map.Entry<String, List<Map<String, Object>>> entry : syntax.entrySet()) {
+                List<org.eclipse.lsp4j.Diagnostic> diagnostics = new ArrayList<>();
+                for (QualityServices.PreviewFinding finding : found.getOrDefault(entry.getKey(), List.of())) {
+                    diagnostics.add(Converters.toLsp(finding.diagnostic(), finding.fixable()));
+                }
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("syntax", entry.getValue());
+                result.put("diagnostics", diagnostics);
+                results.put(entry.getKey(), result);
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("results", results);
+            response.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);
+            return response;
+        });
+    }
+
+    /**
+     * One declaration of a document edited as an object; nothing is written. Params: {@code root}, {@code uri},
+     * {@code symbol}, {@code operation} (see {@link SymbolEditor.Operation}), {@code text} (for every operation but
+     * {@code delete}), {@code position} ({@code add_member}: {@code start}, {@code end} or {@code after:<member>}),
+     * {@code line} (1-based; picks among declarations of the same name). Answers the whole new text, an exact
+     * {@code oldStr} and {@code newStr} for an editor's {@code str_replace}, the original lines it touched and the
+     * declaration's full name.
+     */
+    CompletableFuture<Map<String, Object>> edit(Map<String, Object> params) {
+        return requests.lightAbout(uriOf(params), cancel -> {
+            if (params == null || params.get("uri") == null) {
+                throw invalid("edit needs a uri, a symbol and an operation");
+            }
+            SymbolEditor.Operation operation = SymbolEditor.Operation.of(String.valueOf(params.get("operation")))
+                    .orElseThrow(() -> invalid("edit: operation must be one of " + SymbolEditor.Operation.labels()));
+            LanguageServices current = services.apply(params);
+            String uri = params.get("uri").toString();
+            if (outside(current, uri)) {
+                throw invalid("edit: " + uri + " is outside the workspace");
+            }
+            String source = current.workspace().text(uri);
+            if (source == null) {
+                throw invalid("edit: " + uri + " cannot be read (missing, or over workspace.maxFileBytes)");
+            }
+            GroovyCompiler.Parsed parsed = current.quality().parse(virtualName(uri), source);
+            if (!parsed.ok()) {
+                Diagnostic first = parsed.errors().isEmpty() ? null : parsed.errors().get(0);
+                throw invalid("does not parse: " + (first == null ? "syntax error"
+                        : first.message() + " (line " + (first.range().start().line() + 1) + ")"));
+            }
+            Object given = params.get("text");
+            Object symbol = params.get("symbol");
+            SymbolEditor.Result result;
+            try {
+                result = SymbolEditor.edit(source, parsed.module().orElse(null), new SymbolEditor.Request(
+                        symbol == null ? null : symbol.toString(), operation, given == null ? null : given.toString(),
+                        text(params, "position"), number(params, "line")));
+            } catch (IllegalArgumentException e) {
+                throw invalid(e.getMessage());
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("text", result.text());
+            response.put("oldStr", result.oldStr());
+            response.put("newStr", result.newStr());
+            response.put("startLine", result.startLine());
+            response.put("endLine", result.endLine());
+            response.put("symbol", result.symbol());
+            return response;
+        });
+    }
+
+    /**
+     * The first {@value #MAX_PARSE_ERRORS} syntax errors of a parsed text (1-based), as {@code parse} reports them;
+     * a text that failed without naming an error gets one at its start.
+     */
+    static List<Map<String, Object>> syntaxErrors(GroovyCompiler.Parsed parsed) {
+        List<Map<String, Object>> errors = errorList(parsed);
+        if (errors.isEmpty() && !parsed.ok()) {
+            errors.add(error(1, 1, "does not parse"));
+        }
+        return errors;
+    }
+
+    private static List<Map<String, Object>> errorList(GroovyCompiler.Parsed parsed) {
+        List<Map<String, Object>> errors = new ArrayList<>();
+        for (Diagnostic diagnostic : parsed.errors()) {
+            if (errors.size() >= MAX_PARSE_ERRORS) {
+                break;
+            }
+            errors.add(error(diagnostic.range().start().line() + 1, diagnostic.range().start().column() + 1,
+                    diagnostic.message()));
+        }
+        return errors;
+    }
+
+    private static Map<String, Object> error(int line, int column, String message) {
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("line", line);
+        error.put("column", column);
+        error.put("message", message);
+        return error;
     }
 
     /** Contract items of every profile-governed document, for {@code groovyscope baseline save}. Params: {@code root}. */

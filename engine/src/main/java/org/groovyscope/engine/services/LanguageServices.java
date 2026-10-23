@@ -327,6 +327,15 @@ public final class LanguageServices {
         return snapshots.compileOnly(targets);
     }
 
+    /**
+     * Candidate texts of documents compiled on their own against the classes of the last full compile (running the
+     * first one when there is none yet); the snapshot is untouched and the caller closes the result (see
+     * {@link SnapshotManager#compileOverlay}).
+     */
+    public CompilationResult compileOverlay(Map<String, String> texts) {
+        return snapshots.compileOverlay(texts);
+    }
+
     /** Adds one {@code GS101} warning on the first document when the budget left files out; else {@code base}. */
     Map<String, List<Diagnostic>> withBudgetWarning(Map<String, List<Diagnostic>> base, Set<String> uris) {
         List<java.nio.file.Path> omitted = workspace.omitted();
