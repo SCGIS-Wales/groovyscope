@@ -70,7 +70,7 @@ class EngineConfigSpec extends Specification {
         tuned == new EngineConfig.Tests(2.5, 12, '^should.*', ['test', 'check'])
         partial == new EngineConfig.Tests(4.0, 40, defaults.namePattern(), defaults.vagueNames())
         EngineConfig.DEFAULTS.practices().tests() == defaults
-        new EngineConfig.Practices(true, [:], null, null, null, null).tests() == defaults
+        new EngineConfig.Practices(true, [:], null, null, null, null, null).tests() == defaults
         'should work' ==~ defaults.namePattern()
         'returnsEmptyListForBlankQuery' ==~ defaults.namePattern()
         'test_blank_query_gives_nothing' ==~ defaults.namePattern()

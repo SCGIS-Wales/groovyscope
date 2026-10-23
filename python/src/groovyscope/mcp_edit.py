@@ -56,6 +56,8 @@ def gate_summary(verdict: gate.Verdict) -> dict[str, Any]:
     summary: dict[str, Any] = {"decision": verdict["decision"]}
     if verdict["reasons"]:
         summary["reasons"] = verdict["reasons"][: gate.SHOWN]
+    if verdict["advice"]:
+        summary["advice"] = verdict["advice"][: gate.SHOWN]
     others = [row for row in verdict["introduced"] if int(row.get("level", 3)) > gate.ERROR_LEVEL]
     if others:
         summary["introduced"] = [f"line {r['line']}: [{r['code']}] {r['message']}" for r in others[: gate.SHOWN]]
@@ -99,7 +101,16 @@ def edit_symbol(
     shown = relative_path(uri, root)
     mode = gate.settings({"hooks": settings.get("hooks") or {}})["mode"]
     comments = gate.comment_policy({"comments": settings.get("comments") or {}})
-    verdict = gate.check_candidate(call, root, target, before=before, after=after, mode="block", comments=comments)
+    verdict = gate.check_candidate(
+        call,
+        root,
+        target,
+        before=before,
+        after=after,
+        mode="block",
+        comments=comments,
+        reuse=gate.reuse_settings(settings),
+    )
     diff = unified(before, after, shown)
     result: dict[str, Any] = {
         "symbol": raw.get("symbol", symbol),

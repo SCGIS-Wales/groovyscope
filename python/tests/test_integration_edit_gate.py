@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -104,5 +105,40 @@ def test_integration_sources_are_compiled_with_the_change(
         assert "src/it/groovy/demo/ShapeIT.groovy" in after.output and "Shape" in after.output
         checked = runner.invoke(cli.main, ["--root", str(workspace), "check", "--include", "compile"])
         assert checked.exit_code == 1 and "ShapeIT.groovy" in checked.output
+    finally:
+        runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])
+
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "edit-gate"
+
+
+@pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
+def test_writing_a_copy_of_existing_code_is_held_back(
+    tmp_path: Path, short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "ws"
+    shutil.copytree(FIXTURE, workspace)
+    copied = workspace / "src" / "main" / "groovy" / "demo" / "Copied.groovy"
+    text = copied.read_text(encoding="utf-8")
+    copied.unlink()  # the agent is about to write it
+    (workspace / ".groovyscope.yaml").write_text("hooks:\n  preWrite:\n    mode: block\n", encoding="utf-8")
+    monkeypatch.setenv(daemon.SOCKET_DIR_ENV, str(short_dir))
+    monkeypatch.setenv(daemon.CACHE_DIR_ENV, str(tmp_path / "cache"))
+    monkeypatch.setenv("GROOVYSCOPE_DAEMON__IDLETIMEOUTMINUTES", "1")
+    runner = CliRunner()
+    obj = {"config_path": None, "root": workspace.resolve(), "log_level": "WARNING", "log_file": None}
+    try:
+        socket_file, _ = common.daemon_socket_for(obj)
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "write",
+            "tool_input": {"path": str(copied), "file_text": text},
+        }
+        blocked = runner.invoke(cli.main, ["--root", str(workspace), "hook"], input=json.dumps(payload))
+        assert blocked.exit_code == 2, blocked.output
+        assert "[GS080] repeat demo.Strings.slug" in blocked.stderr
+        tools = common.workspace_tools(obj, socket_file, load_config(obj["root"], None, {}))
+        found = tools["suggest_reuse"](text=text.split("class Copied {", 1)[1].rsplit("}", 1)[0])
+        assert found["matches"][0]["symbol"] == "demo.Strings.slug" and found["matches"][0]["score"] > 0.8
     finally:
         runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])

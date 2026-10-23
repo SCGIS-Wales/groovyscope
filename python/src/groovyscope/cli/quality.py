@@ -304,6 +304,7 @@ def gate_with_engine(
             after=str(intent["after"]),
             mode=settings["mode"],
             comments=gate.comment_policy(effective),
+            reuse=gate.reuse_settings(effective),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"groovyscope gate: write to {shown} not checked ({exc})")

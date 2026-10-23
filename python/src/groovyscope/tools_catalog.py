@@ -38,6 +38,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "fix": ("Apply safe fixes", False),
     "rename": ("Rename a symbol", False),
     "edit_symbol": ("Edit one declaration, gated", False),
+    "suggest_reuse": ("Existing code to reuse", True),
     "read_symbol": ("Read one declaration", True),
     "find_code": ("Structural code search", True),
     "find_duplicates": ("Find duplicated code", True),
@@ -108,6 +109,7 @@ DESCRIPTIONS: dict[str, str] = {
         "For SYMBOL (Class.method) or every method the branch changed: the tests reaching it, repeated tests, and "
         "`needed`: the gaps to test, nothing else."
     ),
+    "suggest_reuse": "Existing code doing what TEXT (or SYMBOL in PATH) does: same shape, name and types, or calls.",
 }
 
 

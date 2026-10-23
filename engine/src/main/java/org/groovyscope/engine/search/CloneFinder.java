@@ -289,6 +289,18 @@ public final class CloneFinder {
         return normaliser.hash;
     }
 
+    /**
+     * The normalised hash of one statement, alike whether its tree was only parsed or also resolved: types by their
+     * simple names, a class named as a receiver or an operand like a name, and a static call without a receiver
+     * like any call without one. A candidate text parsed on its own then compares with the workspace's trees.
+     */
+    static long looseHash(Statement statement) {
+        Normaliser normaliser = new Normaliser();
+        normaliser.loose = true;
+        statement.visit(normaliser);
+        return normaliser.hash;
+    }
+
     /** The normalised token sequence of one statement, for tests and debugging. */
     static List<String> tokens(Statement statement) {
         Normaliser normaliser = new Normaliser();
@@ -404,6 +416,7 @@ public final class CloneFinder {
 
         long hash = 0xcbf29ce484222325L;
         List<String> tokens;
+        boolean loose;
 
         private void token(String token) {
             if (tokens != null) {
@@ -414,7 +427,12 @@ public final class CloneFinder {
         }
 
         private void type(ClassNode type) {
-            token(type == null || ClassHelper.isDynamicTyped(type) ? "def" : type.getName());
+            if (type == null || ClassHelper.isDynamicTyped(type)) {
+                token("def");
+            } else {
+                String name = type.getName();
+                token(loose ? name.substring(Math.max(name.lastIndexOf('.'), name.lastIndexOf('$')) + 1) : name);
+            }
         }
 
         @Override
@@ -541,6 +559,13 @@ public final class CloneFinder {
 
         @Override
         public void visitStaticMethodCallExpression(StaticMethodCallExpression call) {
+            if (loose) {
+                token("call");
+                token(call.getMethod());
+                token("this");
+                call.getArguments().visit(this);
+                return;
+            }
             token("scall");
             type(call.getOwnerType());
             token(call.getMethod());
@@ -699,6 +724,10 @@ public final class CloneFinder {
 
         @Override
         public void visitClassExpression(ClassExpression expression) {
+            if (loose) {
+                token("ID");
+                return;
+            }
             token("class");
             type(expression.getType());
         }

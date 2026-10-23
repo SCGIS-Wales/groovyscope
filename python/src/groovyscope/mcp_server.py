@@ -29,6 +29,7 @@ from groovyscope import (
     interaction,
     mcp_edit,
     mcp_merge,
+    mcp_reuse,
     mcp_search,
     mcp_testplan,
     mcp_understanding,
@@ -1233,6 +1234,7 @@ def review_changes(
         }
     )
     result.update(coverage_review(root, settings, [str(f["path"]) for f in existing], str(result["verdict"])))
+    result.update(reuse_review(root, call, settings, existing, str(result["verdict"]), limit))
     comments = changes.draft_comments(buckets, risky[:limit], uncovered[:limit], limit=limit * COMMENTS_PER_TOP)
     result["comments"] = comments
     result["summaryComment"] = changes.summary_comment(
@@ -1306,6 +1308,23 @@ def coverage_review(root: Path, settings: Mapping[str, Any], changed: Sequence[s
     return {"coverage": assessed}
 
 
+def reuse_review(
+    root: Path, call: Call, settings: Mapping[str, Any], existing: Sequence[Mapping[str, Any]], verdict: str, limit: int
+) -> dict[str, Any]:
+    """The ``duplicatesAdded`` block of review_changes: added blocks that repeat existing code; with
+    ``reuse.blockReview`` they make the verdict blocking."""
+    found = mcp_reuse.duplicates_added(root, call, existing, mcp_reuse.min_lines(settings), limit)
+    if not found:
+        return {}
+    entries: dict[str, Any] = {"duplicatesAdded": found}
+    if (settings.get("reuse") or {}).get("blockReview", config.default("reuse", "blockReview")):
+        repeated = f"{len(found)} added block(s) repeat existing code"
+        entries["verdict"] = (
+            f"{verdict}, and {repeated}" if verdict.startswith("request changes") else f"request changes: {repeated}"
+        )
+    return entries
+
+
 def unused_review(
     inside: Sequence[Mapping[str, Any]], elsewhere: Sequence[Mapping[str, Any]], cap: int
 ) -> dict[str, Any]:
@@ -1377,6 +1396,7 @@ def build_tools(
         **test_tools(root, cap),
         **mcp_merge.merge_tools(root, call, cap, output, confirm_policy=policy),
         **mcp_edit.edit_tools(root, call, output, confirm_policy=policy),
+        **mcp_reuse.reuse_tools(root, call, cap, output),
     }
     verify_settings: Mapping[str, Any] = output.get("verify") or {}
     tools.update(

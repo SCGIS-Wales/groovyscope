@@ -239,7 +239,11 @@ def filter_gaps(gaps: Sequence[Gap], paths: Sequence[str]) -> list[Gap]:
 
 def reports_settings(config: Mapping[str, Any]) -> dict[str, Any]:
     section = config.get("reports")
-    coverage = dict(config.get("coverage") or {})
+    review = {
+        "coverage": dict(config.get("coverage") or {}),
+        "reuse": dict(config.get("reuse") or {}),
+        "duplicates": dict(config.get("duplicates") or {}),
+    }
     if not isinstance(section, Mapping):
-        return {"sarif": [], "jacoco": None, "coverage": coverage}
-    return {"sarif": list(section.get("sarif") or []), "jacoco": section.get("jacoco"), "coverage": coverage}
+        return {"sarif": [], "jacoco": None, **review}
+    return {"sarif": list(section.get("sarif") or []), "jacoco": section.get("jacoco"), **review}

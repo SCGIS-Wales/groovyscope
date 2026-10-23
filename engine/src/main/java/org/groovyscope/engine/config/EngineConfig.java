@@ -296,10 +296,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param secretsAllow regular expressions ({@code secrets.allow}); a literal whose value or name matches one is
      *     never reported as a hardcoded secret (GS019)
      * @param comments the comment checks' thresholds ({@code comments.*}, GS060 to GS065)
+     * @param reuse the thresholds of the similar code search and of the helpers {@code explainCode} lists
+     *     ({@code reuse.*})
      * @param tests the test bloat checks' settings ({@code tests.*}, GS044 to GS048)
      */
     public record Practices(boolean enabled, Map<String, String> severities, Naming naming,
-            List<String> secretsAllow, Comments comments, Tests tests) {
+            List<String> secretsAllow, Comments comments, Reuse reuse,
+            Tests tests) {
         public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
@@ -307,13 +310,14 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             naming = naming == null ? Naming.DEFAULTS : naming;
             secretsAllow = List.copyOf(secretsAllow == null ? List.of() : secretsAllow);
             comments = comments == null ? Comments.DEFAULTS : comments;
+            reuse = reuse == null ? Reuse.DEFAULTS : reuse;
             tests = tests == null ? Tests.DEFAULTS : tests;
         }
 
-        /** Practices with the default test bloat settings. */
+        /** Practices with the default reuse thresholds and test bloat settings. */
         public Practices(boolean enabled, Map<String, String> severities, Naming naming, List<String> secretsAllow,
                 Comments comments) {
-            this(enabled, severities, naming, secretsAllow, comments, Tests.DEFAULTS);
+            this(enabled, severities, naming, secretsAllow, comments, Reuse.DEFAULTS, Tests.DEFAULTS);
         }
 
         /** Practices with the default comment thresholds. */
@@ -368,6 +372,38 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
     public record Comments(double restateShare, int maxBlockLines, int maxJavadocLines, boolean todoNeedsOwner,
             double maxDensity, double maxAddedShare, boolean exemptPublicJavadoc) {
         public static final Comments DEFAULTS = new Comments(0.7, 2, 5, true, 0.25, 0.2, true);
+    }
+
+    /**
+     * The similar code search ({@code groovyscope/similar}) and the helpers {@code explainCode} lists; the defaults
+     * mirror {@code defaults.yaml}.
+     *
+     * @param callOverlap the Jaccard overlap of two methods' called APIs from which they count as making the same
+     *     calls ({@code reuse.callOverlap})
+     * @param limit matches answered when the request sets none ({@code reuse.limit})
+     * @param ignoreCalls method names too common to say what a method does ({@code reuse.ignoreCalls})
+     * @param helperMaxLines the most lines an instance method may span to be listed as a helper
+     *     ({@code reuse.helperMaxLines})
+     * @param helpersLimit helpers listed per class or member ({@code reuse.helpersLimit})
+     * @param minLines the fewest lines a candidate needs for shape matches ({@code reuse.minLines}, else
+     *     {@code duplicates.minLines})
+     * @param minStatements the fewest statements a matching run holds ({@code duplicates.minStatements})
+     */
+    public record Reuse(double callOverlap, int limit, List<String> ignoreCalls, int helperMaxLines, int helpersLimit,
+            int minLines, int minStatements) {
+        public static final Reuse DEFAULTS = new Reuse(0.6, 10, List.of("println", "print", "printf", "toString",
+                "size", "get", "set", "put", "add", "each", "eachWithIndex", "collect", "find", "findAll", "any",
+                "every", "equals", "hashCode", "length", "isEmpty", "contains", "getAt", "putAt", "call", "with",
+                "tap", "iterator", "getClass", "valueOf", "debug", "info", "warn", "error", "trace"), 15, 20, 6, 3);
+
+        public Reuse {
+            ignoreCalls = List.copyOf(ignoreCalls == null ? List.of() : ignoreCalls);
+            limit = Math.max(1, limit);
+            helperMaxLines = Math.max(1, helperMaxLines);
+            helpersLimit = Math.max(0, helpersLimit);
+            minLines = Math.max(1, minLines);
+            minStatements = Math.max(1, minStatements);
+        }
     }
 
     /**
@@ -638,6 +674,8 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject secrets = objectOrEmpty(document.get("secrets"));
         JsonObject comments = objectOrEmpty(document.get("comments"));
         JsonObject tests = objectOrEmpty(document.get("tests"));
+        JsonObject reuse = objectOrEmpty(document.get("reuse"));
+        JsonObject duplicates = objectOrEmpty(document.get("duplicates"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
         JsonObject daemon = objectOrEmpty(document.get("daemon"));
         return new EngineConfig(
@@ -683,6 +721,14 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                                 number(comments.get("maxDensity"), Comments.DEFAULTS.maxDensity()),
                                 number(comments.get("maxAddedShare"), Comments.DEFAULTS.maxAddedShare()),
                                 bool(comments.get("exemptPublicJavadoc"), Comments.DEFAULTS.exemptPublicJavadoc())),
+                        new Reuse(number(reuse.get("callOverlap"), Reuse.DEFAULTS.callOverlap()),
+                                integer(reuse.get("limit"), Reuse.DEFAULTS.limit()),
+                                strings(reuse.get("ignoreCalls"), Reuse.DEFAULTS.ignoreCalls()),
+                                integer(reuse.get("helperMaxLines"), Reuse.DEFAULTS.helperMaxLines()),
+                                integer(reuse.get("helpersLimit"), Reuse.DEFAULTS.helpersLimit()),
+                                integer(reuse.get("minLines"),
+                                        integer(duplicates.get("minLines"), Reuse.DEFAULTS.minLines())),
+                                integer(duplicates.get("minStatements"), Reuse.DEFAULTS.minStatements())),
                         new Tests(number(tests.get("maxTestToCodeRatio"), Tests.DEFAULTS.maxTestToCodeRatio()),
                                 integer(tests.get("maxMethodsPerSubject"), Tests.DEFAULTS.maxMethodsPerSubject()),
                                 string(tests.get("namePattern"), Tests.DEFAULT_NAME_PATTERN),
