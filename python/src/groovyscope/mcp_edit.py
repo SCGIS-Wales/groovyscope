@@ -61,6 +61,25 @@ def untyped_reasons(untyped: Sequence[Mapping[str, Any]]) -> list[str]:
     ]
 
 
+def reaching_tests(call: Call, root: Path, symbol: str, cap: int = 10) -> list[str]:
+    """The tests that reach SYMBOL (``Class.member``) through the call graph, as ``Class.method``: the advice that
+    names what to run, and what to update, after the edit. Empty when the engine cannot tell."""
+    owner, _, member = symbol.rpartition(".")
+    target = f"{owner}#{member}" if owner and member and member[:1].islower() else symbol
+    try:
+        reports = call("groovyscope/impact", {"root": str(root), "symbol": target, "change": "behaviour"})
+    except (OSError, RuntimeError, ValueError):
+        return []
+    names: list[str] = []
+    for report in (reports if isinstance(reports, list) else [])[:1]:
+        for site in report.get("tests") or []:
+            caller = site.get("caller") or {}
+            name = f"{caller.get('containerName') or caller.get('container') or ''}.{caller.get('name')}".lstrip(".")
+            if name not in names:
+                names.append(name)
+    return names[:cap]
+
+
 def gate_summary(verdict: gate.Verdict) -> dict[str, Any]:
     """The verdict as the tool reports it: the decision, why, and what the edit adds."""
     summary: dict[str, Any] = {"decision": verdict["decision"]}
@@ -125,6 +144,7 @@ def edit_symbol(
     if untyped:  # types.declareOnEdit: the new text declares its types, or the edit is held back
         verdict = {**verdict, "reasons": [*verdict["reasons"], *untyped], "decision": "block"}
     diff = unified(before, after, shown)
+    tests = reaching_tests(call, root, str(raw.get("symbol", symbol))) if operation != "add_import" else []
     result: dict[str, Any] = {
         "symbol": raw.get("symbol", symbol),
         "operation": operation,
@@ -132,6 +152,8 @@ def edit_symbol(
         "gate": gate_summary(verdict),
         "diff": "\n".join(diff),
     }
+    if tests:
+        result["tests"] = tests
     limits = edit_settings(settings)
     if not apply:
         plan = plans.make(target, before, after, old_str=str(raw["oldStr"]), new_str=str(raw["newStr"]), now=clock())

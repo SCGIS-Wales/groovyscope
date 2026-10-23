@@ -15,7 +15,7 @@ from typing import Any
 
 from groovyscope import gate, interaction, mcp_reuse, plans
 from groovyscope.edits import FileEdit, apply_verified, changed_line_count, read_document
-from groovyscope.mcp_edit import edit_settings, gate_summary, unified
+from groovyscope.mcp_edit import edit_settings, gate_summary, reaching_tests, unified
 from groovyscope.paths import Call, relative_path, to_uri, uri_to_path
 
 Clock = Callable[[], float]
@@ -82,6 +82,10 @@ def refactor(
             }
         )
     result["files"] = files
+    if params.get("symbol"):
+        tests = reaching_tests(call, root, str(params["symbol"]))
+        if tests:
+            result["tests"] = tests
     if not apply:
         store = plans.store_for(root, dict(os.environ))
         for entry, edit, item in zip(files, changed, raw.get("files") or [], strict=True):
