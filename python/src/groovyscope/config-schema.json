@@ -563,6 +563,32 @@
         }
       }
     },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxMethods": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxFields": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxLines": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxParameters": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "envyMinUses": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "diagram": {
       "type": "object",
       "additionalProperties": false,

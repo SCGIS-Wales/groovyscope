@@ -150,6 +150,12 @@ reuse:                    # similar code and helpers; minLines, unset here, over
   helpersLimit: 20        # explain_code helpers listed per class or member
   blockReview: false      # review_changes: an added block that duplicates existing code blocks the verdict
   checkWrites: true       # edit gate: an added block that repeats existing code is held back (GS080; GS081, GS082 advise)
+design:
+  maxMethods: 25          # GS090: methods a class may declare before it counts as a god class
+  maxFields: 12           # GS090: fields a class may declare before it counts as a god class
+  maxLines: 600           # GS090: lines a class may span before it counts as a god class
+  maxParameters: 4        # GS092: parameters a method may take before its list counts as long
+  envyMinUses: 3          # GS091: the fewest uses of another class's fields or getters that make feature envy
 diagram:
   sharedHelperCallers: 5  # relationship_graph: a node called from this many others is drawn once ("called from N") and named inside its callers' boxes instead of a line each; 0 draws every line
 verify:

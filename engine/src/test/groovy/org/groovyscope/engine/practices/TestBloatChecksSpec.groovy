@@ -70,7 +70,7 @@ class Shop {
     private static EngineConfig with(EngineConfig.Tests tests) {
         EngineConfig.DEFAULTS.toBuilder().practices(new EngineConfig.Practices(true, [:], EngineConfig.Naming.DEFAULTS,
                 [], EngineConfig.Comments.DEFAULTS, EngineConfig.Reuse.DEFAULTS, tests,
-                EngineConfig.Types.DEFAULTS)).build()
+                EngineConfig.Types.DEFAULTS, EngineConfig.Design.DEFAULTS)).build()
     }
 
     def "the edit gate fixture's oversized spec reports GS044, GS046 and GS047, its trivial test and its vague names"() {

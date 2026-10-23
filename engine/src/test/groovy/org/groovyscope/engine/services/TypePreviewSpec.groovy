@@ -42,7 +42,8 @@ class TypePreviewSpec extends Specification {
 
     private static EngineConfig withTypes(EngineConfig.Types types, Map<String, String> severities = [:]) {
         EngineConfig.DEFAULTS.toBuilder().practices(new EngineConfig.Practices(true, severities,
-                EngineConfig.Naming.DEFAULTS, [], EngineConfig.Comments.DEFAULTS, EngineConfig.Reuse.DEFAULTS, EngineConfig.Tests.DEFAULTS, types)).build()
+                EngineConfig.Naming.DEFAULTS, [], EngineConfig.Comments.DEFAULTS, EngineConfig.Reuse.DEFAULTS, EngineConfig.Tests.DEFAULTS, types,
+                EngineConfig.Design.DEFAULTS)).build()
     }
 
     /** The type preview of {@code text} as {@code relative} in a fresh workspace under {@code temp}. */

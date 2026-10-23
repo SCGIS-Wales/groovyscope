@@ -58,8 +58,8 @@ import org.groovyscope.engine.workspace.WorkspaceModel;
 /**
  * The LSP front end. {@code initialize} picks the workspace root and builds the {@link LanguageServices};
  * requests are delegated to the document and workspace services, and the {@code groovyscope/*} requests to
- * {@link StatusRequests}, {@link QualityRequests}, {@link ExplainGraphRequests}, {@link SearchRequests} and
- * {@link ReuseRequests}. The engine API behind this package stays free of LSP4J types.
+ * {@link StatusRequests}, {@link QualityRequests}, {@link ExplainGraphRequests}, {@link SearchRequests},
+ * {@link ReuseRequests} and {@link DesignRequests}. The engine API behind this package stays free of LSP4J types.
  */
 public final class GroovyscopeLanguageServer implements LanguageServer, LanguageClientAware {
 
@@ -85,6 +85,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     private final SearchRequests search;
     private final ReuseRequests reuse;
     private final RefactorRequests refactor;
+    private final DesignRequests design;
     private volatile boolean shutdownRequested;
 
     /**
@@ -156,6 +157,7 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         this.search = new SearchRequests(requests, this::requireServices);
         this.reuse = new ReuseRequests(requests, this::requireServices);
         this.refactor = new RefactorRequests(requests, this::requireServices);
+        this.design = new DesignRequests(requests, this::requireServices);
     }
 
     /** The request lanes this server submits to (shared in the daemon). */
@@ -444,6 +446,12 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
     @JsonRequest("groovyscope/graph")
     public CompletableFuture<Map<String, Object>> graph(Map<String, Object> params) {
         return explainGraph.graph(params);
+    }
+
+    /** How a class is designed, with a refactor for each finding (see {@link DesignRequests#design}). */
+    @JsonRequest("groovyscope/design")
+    public CompletableFuture<Map<String, Object>> design(Map<String, Object> params) {
+        return design.design(params);
     }
 
     static final int DEFAULT_FIND_LIMIT = SearchRequests.DEFAULT_FIND_LIMIT;

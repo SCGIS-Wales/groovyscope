@@ -300,10 +300,11 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      *     ({@code reuse.*})
      * @param tests the test bloat checks' settings ({@code tests.*}, GS044 to GS048)
      * @param types the value type checks' settings ({@code types.*}, GS070 to GS077)
+     * @param design the design checks' thresholds ({@code design.*}, GS090 to GS097)
      */
     public record Practices(boolean enabled, Map<String, String> severities, Naming naming,
             List<String> secretsAllow, Comments comments, Reuse reuse,
-            Tests tests, Types types) {
+            Tests tests, Types types, Design design) {
         public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
@@ -314,12 +315,14 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             reuse = reuse == null ? Reuse.DEFAULTS : reuse;
             tests = tests == null ? Tests.DEFAULTS : tests;
             types = types == null ? Types.DEFAULTS : types;
+            design = design == null ? Design.DEFAULTS : design;
         }
 
         /** Practices with the default reuse, test bloat and value type settings. */
         public Practices(boolean enabled, Map<String, String> severities, Naming naming, List<String> secretsAllow,
                 Comments comments) {
-            this(enabled, severities, naming, secretsAllow, comments, Reuse.DEFAULTS, Tests.DEFAULTS, Types.DEFAULTS);
+            this(enabled, severities, naming, secretsAllow, comments, Reuse.DEFAULTS, Tests.DEFAULTS, Types.DEFAULTS,
+                    Design.DEFAULTS);
         }
 
         /** Practices with the default comment thresholds. */
@@ -449,6 +452,27 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      */
     public record Types(boolean preview, int previewMaxPerFile, boolean declareOnEdit) {
         public static final Types DEFAULTS = new Types(true, 10, true);
+    }
+
+    /**
+     * Design checks (GS090 to GS097) and {@code groovyscope/design}; the defaults mirror {@code defaults.yaml}.
+     *
+     * @param maxMethods methods a class may declare before it counts as a god class (GS090)
+     * @param maxFields fields a class may declare before it counts as a god class (GS090)
+     * @param maxLines lines a class may span before it counts as a god class (GS090)
+     * @param maxParameters parameters a method may take before its list counts as long (GS092)
+     * @param envyMinUses the fewest uses of another class's fields or accessors that make feature envy (GS091)
+     */
+    public record Design(int maxMethods, int maxFields, int maxLines, int maxParameters, int envyMinUses) {
+        public static final Design DEFAULTS = new Design(25, 12, 600, 4, 3);
+
+        public Design {
+            maxMethods = Math.max(1, maxMethods);
+            maxFields = Math.max(1, maxFields);
+            maxLines = Math.max(1, maxLines);
+            maxParameters = Math.max(1, maxParameters);
+            envyMinUses = Math.max(1, envyMinUses);
+        }
     }
 
     /**
@@ -691,6 +715,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject reuse = objectOrEmpty(document.get("reuse"));
         JsonObject duplicates = objectOrEmpty(document.get("duplicates"));
         JsonObject types = objectOrEmpty(document.get("types"));
+        JsonObject design = objectOrEmpty(document.get("design"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
         JsonObject daemon = objectOrEmpty(document.get("daemon"));
         return new EngineConfig(
@@ -750,7 +775,12 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                                 strings(tests.get("vagueNames"), Tests.DEFAULT_VAGUE_NAMES)),
                         new Types(bool(types.get("preview"), Types.DEFAULTS.preview()),
                                 integer(types.get("previewMaxPerFile"), Types.DEFAULTS.previewMaxPerFile()),
-                                bool(types.get("declareOnEdit"), Types.DEFAULTS.declareOnEdit()))),
+                                bool(types.get("declareOnEdit"), Types.DEFAULTS.declareOnEdit())),
+                        new Design(integer(design.get("maxMethods"), Design.DEFAULTS.maxMethods()),
+                                integer(design.get("maxFields"), Design.DEFAULTS.maxFields()),
+                                integer(design.get("maxLines"), Design.DEFAULTS.maxLines()),
+                                integer(design.get("maxParameters"), Design.DEFAULTS.maxParameters()),
+                                integer(design.get("envyMinUses"), Design.DEFAULTS.envyMinUses()))),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),

@@ -37,8 +37,14 @@ class PracticeFinderSpec extends Specification {
         Fixtures.uri('practices-sample', (name.endsWith('Spec.groovy') ? 'src/test/groovy/sample/' : 'src/main/groovy/sample/') + name)
     }
 
+    /** The design checks (GS090 to GS097) judge these small demo classes too; DesignChecksSpec covers them. */
+    private static List<PracticeFinder.Practice> withoutDesign(List<PracticeFinder.Practice> practices) {
+        practices.findAll { !it.diagnostic().code().startsWith('GS09') }
+    }
+
     private List<List> found(String file) {
-        services.quality().practices(uri(file)).collect { [it.diagnostic().code(), it.diagnostic().range().start().line() + 1] }
+        withoutDesign(services.quality().practices(uri(file)))
+                .collect { [it.diagnostic().code(), it.diagnostic().range().start().line() + 1] }
     }
 
     private String fixed(String file, String code) {
@@ -61,7 +67,7 @@ class PracticeFinderSpec extends Specification {
 
     def 'Elvis on text or a collection is information; safe navigation into a primitive is found in returns, never for boolean'() {
         when:
-        def practices = services.quality().practices(uri('Truth.groovy'))
+        def practices = withoutDesign(services.quality().practices(uri('Truth.groovy')))
 
         then:
         practices.collect { [it.diagnostic().code(), it.diagnostic().range().start().line() + 1, it.diagnostic().severity()] } == [
@@ -134,7 +140,7 @@ class PracticeFinderSpec extends Specification {
 
         expect:
         found('Modern.groovy') == [['GS010', 3], ['GS010', 7]]
-        services6.quality().practices(uri('Modern.groovy')).empty
+        withoutDesign(services6.quality().practices(uri('Modern.groovy'))).empty
     }
 
     def 'Spock .with {} in then: is found and rewritten; @Grab in tests is allowed'() {
@@ -155,7 +161,8 @@ class PracticeFinderSpec extends Specification {
         def disabledServices = new LanguageServices(new WorkspaceModel(Fixtures.project('practices-sample'), disabled), new GroovyCompiler())
 
         expect:
-        tunedServices.quality().practices(uri('Numbers.groovy')).collect { [it.diagnostic().code(), it.diagnostic().severity()] } ==
+        withoutDesign(tunedServices.quality().practices(uri('Numbers.groovy')))
+                .collect { [it.diagnostic().code(), it.diagnostic().severity()] } ==
             [['GS002', Diagnostic.Severity.INFORMATION], ['GS003', Diagnostic.Severity.WARNING]]
         disabledServices.quality().practices(uri('Numbers.groovy')).empty
         EngineConfig.fromJson('{"practices": {"enabled": false, "severity": {"GS005": "off"}}}').practices() ==
@@ -172,7 +179,7 @@ class PracticeFinderSpec extends Specification {
         def actions = services.quality().codeActions(numbers, new Range(new Position(4, 0), new Position(4, 1)))
 
         then:
-        checked.diagnostics()[numbers]*.code().findAll { it != 'GS077' } == ['GS001', 'GS002', 'GS003']
+        checked.diagnostics()[numbers]*.code().findAll { it != 'GS077' && !it.startsWith('GS09') } == ['GS001', 'GS002', 'GS003']
         // a check of named files runs the type preview with the practices: int / int is a BigDecimal
         checked.diagnostics()[numbers].findAll { it.code() == 'GS077' }*.range()*.start()*.line() == [5, 46, 47, 48, 50]
         published*.code().containsAll(['GS001', 'GS002', 'GS003'])

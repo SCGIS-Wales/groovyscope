@@ -717,6 +717,7 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Jenkins pipeline code | jenkins rule set | none | GS030 to GS033: secrets in shell GStrings, steps in `@NonCPS`, unserialisable state across a step, `@CompileStatic` or `java.io.File` in CPS code |
 | Comments | none | none | GS060 to GS065: a comment restating the statement below it, a long comment block, Javadoc that adds nothing, commented out code, banners and unowned TODOs, more comment than code |
 | Value types | none | `@CompileStatic`, `@TypeChecked` (GS077 runs the checker speculatively) | GS070 to GS076: a literal of another kind, one variable or map key holding several kinds, text used as a boolean, returns of different kinds, arrays and lists mixed, an argument of another kind; GS077: what the static type checker would say about a dynamic class |
+| Class design | none | none | GS090 to GS097: a god class, feature envy, a long parameter list, a chain of type tests, state anyone may change, an anemic data class, primitive obsession, a method that needs no instance |
 | Missing dependencies | none | unresolved class errors | GS100: one warning per file; run `groovyscope classpath` or set `workspace.classpath` |
 
 GS codes are groovyscope's own diagnostics (see the table in the README and `explain`); they are not an external standard.
@@ -943,3 +944,33 @@ reports the type errors of the classes already static, which its compile to cano
 45. [Compiling Groovy](https://docs.groovy-lang.org/latest/html/documentation/tools-groovyc.html)
 46. [CompilerConfiguration (Groovy 6.0.0)](https://docs.groovy-lang.org/latest/html/api/org/codehaus/groovy/control/CompilerConfiguration.html)
 47. [\[jira\] \[Resolved\] (GROOVY-12312) Add a compact, machine-readable diagnostic output format to groovyc](http://www.mail-archive.com/notifications@groovy.apache.org/msg53645.html)
+
+## 23. Design
+
+State lives with the methods that use it: a class does one job, its methods share its fields, and nothing outside
+changes them behind its back. groovyscope reads the design from the resolved tree of main sources (tests, Spock
+specifications, scripts, interfaces and anonymous classes are left alone): which fields each method reads and
+writes, which methods of its class it calls, and which fields and accessors of other workspace classes it uses.
+Anything it cannot resolve counts as using the instance, so a method is never called stateless on a guess.
+`class_design` (the engine's `groovyscope/design`) answers the same facts per class, with the refactor and the edit
+tool call for each. Thresholds live in `.groovyscope.yaml`:
+
+```yaml
+design:
+  maxMethods: 25      # GS090: methods a class may declare before it counts as a god class
+  maxFields: 12       # GS090: fields a class may declare before it counts as a god class
+  maxLines: 600       # GS090: lines a class may span before it counts as a god class
+  maxParameters: 4    # GS092: parameters a method may take before its list counts as long
+  envyMinUses: 3      # GS091: the fewest uses of another class's fields or getters that make feature envy
+```
+
+| Code | Checks | Fix |
+|---|---|---|
+| GS090 | A class declaring more than `maxMethods` methods (constructors not counted), or more than `maxFields` fields and properties (static final constants not counted), or spanning more than `maxLines` lines; once per class, at its name, naming each limit it passes | Split it by responsibility; `class_design` lists its groups of methods |
+| GS091 | A method reading one other workspace class's fields and getters (`order.price`, `order.getPrice()`) at least `envyMinUses` times and more often than its own class's; writes are building, not envy; supertypes, subtypes and outer classes count as its own; overrides are left alone, and so is data that three workspace classes or more read (a value many classes format or check, each its own way) | Move it to that class (`move_member`) |
+| GS092 | A method or constructor taking more than `maxParameters` parameters; overrides are left alone | A parameter object (`change_signature`) |
+| GS093 | Three or more `instanceof` tests on the same value in one if chain (else if, or consecutive ifs without else), or a `switch` with three or more class cases that have code of their own (cases falling through to one branch are one branch); once per method | Polymorphism: one method per type; for types the workspace cannot change, a visitor or a map from type to handler |
+| GS094 | A public field that is neither final nor a property; a public method without parameters whose only statement returns a List, Set or Map field (not a property) itself, when every value the class gives that field is a list or map literal or a new collection (a value from a parameter or another object may already be unmodifiable) | Final or a property; return `asImmutable()` or a copy |
+| GS095 | A class of fields, accessors and at most `equals`, `hashCode`, `toString` and `compareTo`, with two fields or more, whose fields exactly one other workspace class writes and also reads (`a.balance = a.balance - x`); a named argument constructor is not a write, so values built and then only read are not reported, nor are records, `@Immutable` classes and holders nested in their owner | Move that class's logic over the fields into the data class (`move_member`) |
+| GS096 | A method or constructor with three or more String parameters named `id`, `path`, `code`, `key`, `name`, `uri`, `url`, `email` or ending in `Id`, `Path`, `Code`, `Key`; overrides are left alone | A value type per concept (`change_signature`) |
+| GS097 | An instance method that reads and writes no instance field, calls no instance method of its class or its supertypes and does not use `this` or `super`; overrides, methods a workspace subclass declares again, accessors, methods called by name (`call`, `run`, `methodMissing` and the like), annotated, abstract, empty and throw only methods, and methods of inner classes are left alone; the message names the workspace class most of its calls go to | Make it static, or move it to that class (`move_member`) |
