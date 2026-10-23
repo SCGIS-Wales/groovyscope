@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.33.0...v0.34.0) (2026-10-23)
+
+
+### Features
+
+* value types, GS070 to GS077 and a type checked edit gate ([#141](https://github.com/SCGIS-Wales/groovyscope/issues/141)) ([806257f](https://github.com/SCGIS-Wales/groovyscope/commit/806257ffeda48611594b89b7f30357962d14a7a6))
+
 ## [0.33.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.32.0...v0.33.0) (2026-10-23)
 
 
