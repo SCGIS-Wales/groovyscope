@@ -447,7 +447,22 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   offered on the edit tools with the steering preferring Kiro's own `write`. Phase 0 (branch
   `feat/edit-gate-baseline`): `groovyscope hook --capture`, the facts and baseline numbers in
   [research/2026-10-23-edit-gate-facts.md](research/2026-10-23-edit-gate-facts.md) (the owner's capture of
-  Kiro's payloads is pending), `scripts/edit_gate_metrics.py`, and the `edit-gate` fixture.
+  Kiro's payloads is pending), `scripts/edit_gate_metrics.py`, and the `edit-gate` fixture; released in 0.29.0
+  (PR #131).
+- [ ] **Stage 24: the edit gate** (edit plan Phase 1, branch `feat/edit-gate`): the engine's `groovyscope/preview`
+  (compile, lint and practices on candidate texts, nothing written, the snapshot untouched) and `groovyscope/edit`
+  (one declaration replaced, its body replaced, text inserted around it, deleted, a member or an import added,
+  re-indented, with an `oldStr` unique in the file); `gate.py` (only introduced findings count, by code and
+  message), `plans.py` (planned writes kept privately under the cache) and `source_lines.py`; the `preToolUse` hook
+  rebuilds the text a write would leave and previews it (`hooks.preWrite.mode`, `warn` by default, `block` exits
+  2), trusts a write that applies a fresh plan and refuses unplanned large writes when `requirePlan` is on; the
+  `postToolUse` hook says whether a planned write landed; the `userPromptSubmit` hook prints the edit policy on a
+  Groovy prompt; `edit_symbol` (dry run: diff, verdict and the exact `old_str`/`new_str` for Kiro's `write`;
+  `apply`: asked, written, recompiled, rolled back on new errors); `apply_verified` moved to `edits.py` and shared
+  with `rename`; both hooks in the agent template, `kiro attach` adds them and `doctor` names agents without them
+  and the gate's mode. Tool surface: 15,455 bytes, plus 715 for `edit_symbol`; the budget goes from 15,500 to
+  16,200. Done when: merged and released, verified from PyPI (`groovyscope hook` on a `preToolUse` payload that
+  adds a compile error reports it; `doctor` shows the edit gate line).
 
 ## Owner checks still open
 
@@ -470,6 +485,9 @@ without them.
 - Stage 23: one `review_changes` in Kiro that opens with the unused code, and `groovy-unused` on a real file.
 - Edit plan, Phase 0: one session with `groovyscope hook --capture` on the `preToolUse` and `userPromptSubmit`
   hooks (create, `str_replace`, `insert`, one prompt), files sent so the research doc's table is confirmed.
+- Stage 24: one `edit_symbol` dry run applied through Kiro's `write` (the diff prompt shown, `planned write
+  applied` after it), and one write that adds a compile error with `hooks.preWrite.mode: block` (refused, the
+  reason shown to the agent).
 - Repository settings: the `RELEASE_PLEASE_TOKEN` secret, "Allow auto-merge", and the decisions listed in
   section 13 of the improvement plan (ruleset, `pypi` environment tag rule, GitHub App, Scorecard, lockfiles,
   code owner review).
