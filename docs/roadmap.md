@@ -439,6 +439,15 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   452 for `find_unused`; the budget goes from 15,100 to 15,500.
   Done when: merged and released (0.28.0, verified from PyPI: `groovyscope unused` lists the items and exits 1,
   `groovyscope review` opens with them); the owner's next review in Kiro is listed under the owner checks.
+- [ ] **Edit intelligence plan** — [docs/edit-intelligence-plan.md](edit-intelligence-plan.md), from 2026-10-23,
+  one stage per phase (Stages 24 to 30): the edit gate, concise comments, value types, reuse, lean tests with
+  coverage at 80%, object oriented edits, and the Kiro assets. Decisions taken with the plan's suggestions: the tool
+  budget is raised rather than tools dropped, the gate starts in `warn` mode for one release, `requirePlan` is off
+  by default, coverage is per changed class, GS077's place is decided from its timing in Stage 26, and `apply` is
+  offered on the edit tools with the steering preferring Kiro's own `write`. Phase 0 (branch
+  `feat/edit-gate-baseline`): `groovyscope hook --capture`, the facts and baseline numbers in
+  [research/2026-10-23-edit-gate-facts.md](research/2026-10-23-edit-gate-facts.md) (the owner's capture of
+  Kiro's payloads is pending), `scripts/edit_gate_metrics.py`, and the `edit-gate` fixture.
 
 ## Owner checks still open
 
@@ -459,6 +468,8 @@ without them.
 - Stage 21: the retest of the failed checks.
 - Stage 22: one conflicted merge resolved in Kiro with `groovy-merge` (approvals asked, hook lines, review).
 - Stage 23: one `review_changes` in Kiro that opens with the unused code, and `groovy-unused` on a real file.
+- Edit plan, Phase 0: one session with `groovyscope hook --capture` on the `preToolUse` and `userPromptSubmit`
+  hooks (create, `str_replace`, `insert`, one prompt), files sent so the research doc's table is confirmed.
 - Repository settings: the `RELEASE_PLEASE_TOKEN` secret, "Allow auto-merge", and the decisions listed in
   section 13 of the improvement plan (ruleset, `pypi` environment tag rule, GitHub App, Scorecard, lockfiles,
   code owner review).

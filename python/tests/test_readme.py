@@ -116,8 +116,8 @@ def test_configuration_keys_links_and_paths_exist() -> None:
     assert missing_paths(body) == []
 
 
-# Plans and dated research describe the repository as it was; examples name files a user would create.
-HISTORICAL = frozenset({"roadmap.md", "improvement-plan.md"})
+# Plans and dated research describe the repository as it was or will be; examples name files a user would create.
+HISTORICAL = frozenset({"roadmap.md", "improvement-plan.md", "edit-intelligence-plan.md"})
 EXAMPLES = frozenset({"docs/classes.drawio"})
 
 

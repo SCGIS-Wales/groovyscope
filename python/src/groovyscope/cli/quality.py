@@ -16,6 +16,7 @@ from typing import Any
 import click
 
 from groovyscope import (
+    atomic,
     changes,
     gitignore,
     hooks,
@@ -115,21 +116,42 @@ def check(
 
 @common.main.command("hook")
 @click.option("--event", default=None, help="The Kiro hook event when stdin does not name it (tests, scripts).")
+@click.option(
+    "--capture",
+    is_flag=True,
+    help="Also save the raw hook JSON under <cache>/hooks/ (to learn what this Kiro sends); never fails.",
+)
 @click.pass_obj
-def hook_command(obj: dict[str, Any], event: str | None) -> None:
+def hook_command(obj: dict[str, Any], event: str | None, *, capture: bool) -> None:
     """What Kiro's hooks run: reads the hook JSON from stdin. After a write (PostToolUse) the Groovy file just
     written is checked and the findings printed for the agent; on Stop, with hooks.stopGate on, the turn is refused
     while changed Groovy files have compile errors. Never fails the session."""
+    text = sys.stdin.read()
+    if capture:
+        hook_capture(text, event)
     try:
-        run_hook(obj, event)
+        run_hook(obj, event, text)
     except Exception as exc:  # a broken .groovyscope.yaml or anything else: logged, and the session goes on
         common.LOG.warning("hook failed: %s", exc, exc_info=True)
         common.LOG.warning(f"groovyscope: hook skipped ({exc})")
 
 
-def run_hook(obj: dict[str, Any], event: str | None) -> None:
+def hook_capture(text: str, event: str | None) -> None:
+    """The raw payload saved as ``<cache>/hooks/<event>-<timestamp>.json`` (readable by the user only); a failure
+    is logged, never raised."""
+    try:
+        name = hooks.event_name(hooks.parse_payload(text), event) or "unknown"
+        target = daemon_lifecycle.cache_dir(dict(os.environ)) / "hooks" / hooks.capture_name(name, time.time_ns())
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic.write_text(target, text, mode=atomic.PRIVATE_MODE)
+        common.LOG.info("hook payload captured in %s", target)
+    except Exception as exc:  # the capture is a diagnostic; the hook itself must still run
+        common.LOG.warning("hook payload not captured: %s", exc)
+
+
+def run_hook(obj: dict[str, Any], event: str | None, text: str) -> None:
     """The body of ``groovyscope hook`` (see hook_command)."""
-    payload = hooks.parse_payload(sys.stdin.read())
+    payload = hooks.parse_payload(text)
     name = hooks.event_name(payload, event)
     if name == "sessionStart":
         session_baseline(obj)

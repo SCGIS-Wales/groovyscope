@@ -692,3 +692,24 @@ def test_testing_lines_show_seams_and_tests() -> None:
         "  tested in app.ATest (src/test/ATest.groovy): helpers none",
     ]
     assert cli.testing_lines({}) == []
+
+
+def test_hook_capture_saves_the_raw_payload_privately_and_never_fails(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(cache))
+    payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "write", "tool_input": {"command": "create"}})
+    result = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--capture"], input=payload)
+    assert result.exit_code == 0, result.output
+    (saved,) = (cache / "hooks").glob("preToolUse-*.json")
+    assert json.loads(saved.read_text()) == json.loads(payload) and (saved.stat().st_mode & 0o777) == 0o600
+    (cache / "hooks").chmod(0o500)  # unwritable: the capture is skipped, the hook still answers
+    try:
+        again = runner.invoke(cli.main, ["--root", str(tmp_path), "hook", "--capture"], input="not json")
+    finally:
+        (cache / "hooks").chmod(0o700)
+    assert again.exit_code == 0
+    assert (
+        hooks.capture_name("pre/Tool Use", 7) == "preToolUse-7.json" and hooks.capture_name("", 1) == "unknown-1.json"
+    )
