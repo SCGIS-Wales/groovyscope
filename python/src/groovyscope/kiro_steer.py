@@ -3,13 +3,15 @@
 An agent gets groovyscope by four parts: the MCP server (its own ``mcpServers`` entry, or the ``mcp.json`` files it
 includes), the steering (``groovyscope.md`` in its ``resources``, without which it greps and reads whole files where
 one groovyscope call answers), the read-only groovyscope tools in ``allowedTools`` (no prompt for each lookup), and
-the hooks (the checkup at start, findings after each write and at the end of a turn). ``groovyscope kiro attach``
+the hooks (the checkup at start, the edit policy on a Groovy prompt, the gate before each write, findings after it
+and at the end of a turn). ``groovyscope kiro attach``
 merges exactly these parts into the agents a user names, keeping everything else and the agent's format; ``doctor``
 names the agents that call groovyscope with a part missing.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -21,7 +23,6 @@ STEERING_FILE = "groovyscope.md"
 WORKSPACE_STEERING = f"file://.kiro/steering/{STEERING_FILE}"
 SERVER = "groovyscope"
 TOOL_PREFIX = f"@{SERVER}"
-HOOK_COMMANDS = ("groovyscope checkup --agent", "groovyscope hook")
 
 
 def steering_resources(global_home: Path) -> list[str]:
@@ -54,18 +55,24 @@ def reaches_groovyscope(agent: Mapping[str, Any], configured: Sequence[str]) -> 
     return agent.get("includeMcpJson") is True and SERVER in configured
 
 
-def hook_commands(agent: Mapping[str, Any]) -> set[str]:
-    """Every hook command the agent runs, whatever the event."""
+def hook_pairs(agent: Mapping[str, Any]) -> set[tuple[str, str]]:
+    """``(event, command)`` for every hook the agent runs."""
     hooks = agent.get("hooks")
     if not isinstance(hooks, Mapping):
         return set()
     return {
-        str(entry.get("command"))
-        for entries in hooks.values()
+        (str(event), str(entry.get("command")))
+        for event, entries in hooks.items()
         if isinstance(entries, list)
         for entry in entries
         if isinstance(entry, Mapping) and entry.get("command")
     }
+
+
+@functools.cache
+def required_hooks() -> frozenset[tuple[str, str]]:
+    """The hooks of the ``groovy`` agent template: every agent that calls groovyscope should run them."""
+    return frozenset(hook_pairs(json.loads(kiro.load_template("agents/groovy.json"))))
 
 
 def missing_parts(agent: Mapping[str, Any], configured: Sequence[str]) -> list[str]:
@@ -73,7 +80,7 @@ def missing_parts(agent: Mapping[str, Any], configured: Sequence[str]) -> list[s
     missing = [] if reaches_groovyscope(agent, configured) else ["server"]
     if not loads_steering(agent):
         missing.append("steering")
-    if not set(HOOK_COMMANDS) <= hook_commands(agent):
+    if not required_hooks() <= hook_pairs(agent):
         missing.append("hooks")
     return missing
 

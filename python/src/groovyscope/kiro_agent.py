@@ -39,6 +39,7 @@ UNION_PATHS: tuple[tuple[str, ...], ...] = (
     ("toolsSettings", "shell", "allowedCommands"),
     ("hooks", "agentSpawn"),
     ("hooks", "userPromptSubmit"),
+    ("hooks", "preToolUse"),
     ("hooks", "postToolUse"),
     ("hooks", "stop"),
 )

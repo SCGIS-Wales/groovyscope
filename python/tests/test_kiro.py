@@ -340,7 +340,8 @@ def test_agent_hooks_merge_as_a_union_and_reach_v3_agents() -> None:
     assert [h["command"] for h in merged["hooks"]["agentSpawn"]] == ["echo hi", "groovyscope checkup --agent"]
     v3 = {"name": "groovy", "permissions": {"rules": []}, "hooks": {"userPromptSubmit": [{"command": "x"}]}}
     merged_v3 = json.loads(kiro_agent.merge_agent(json.dumps(v3), template, requested="auto", run=None)["text"])
-    assert merged_v3["hooks"]["userPromptSubmit"] == [{"command": "x"}]
+    assert merged_v3["hooks"]["userPromptSubmit"] == [{"command": "x"}, {"command": "groovyscope hook"}]
+    assert merged_v3["hooks"]["preToolUse"] == [{"matcher": "write", "command": "groovyscope hook"}]
     assert merged_v3["hooks"]["agentSpawn"][0]["command"] == "groovyscope checkup --agent"
     assert merged_v3["welcomeMessage"].startswith("Groovy agent ready")
     assert "tools" not in merged_v3
@@ -355,6 +356,7 @@ def test_approval_rules_follow_the_tool_catalogue() -> None:
     assert ask["effect"] == "ask" and set(ask["match"]) == {
         "groovyscope/fix",
         "groovyscope/rename",
+        "groovyscope/edit_symbol",
         "groovyscope/format",
         "groovyscope/refresh_classpath",
         "groovyscope/relationship_graph",

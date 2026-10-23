@@ -97,6 +97,34 @@ finishing. Whether Kiro V3 honours a blocking `Stop` answer is documented both w
 Settings: `hooks.afterWrite` (default true), `hooks.afterWriteInclude`, `hooks.afterWriteMaxFindings` (12),
 `hooks.stopGate` (false), `hooks.timeoutSeconds` (25).
 
+## Before every write: the edit gate
+
+The agent's `hooks.preToolUse` entry (matcher `write`) runs `groovyscope hook` before each file write. For a Groovy,
+Gradle or Jenkinsfile file inside the workspace it rebuilds the text the write would leave (`create` gives it
+whole; `str_replace`, `insert` and `append` are applied to the file on disk), asks the daemon to preview that text
+(`groovyscope/preview`: compile, lint and practices on the candidate, nothing written, the snapshot untouched) and
+compares the findings with those of the file as it is. Only what the write introduces counts, by code and
+message, so a file that already has errors never locks the agent out of fixing them. A syntax error or a new
+compile error is reported; with `hooks.preWrite.mode: block` the hook exits 2 and Kiro refuses the write, with the
+reasons on stderr for the agent. The default is `warn` until the owner's capture confirms how this Kiro treats
+exit 2. When the write cannot be rebuilt (an `old_str` that is not unique) or the daemon is down, the hook says
+so in one line and lets the write through; it never starts the engine.
+
+`groovyscope.edit_symbol` is the preferred way to change Groovy code. Its dry run plans the edit of one
+declaration (`replace`, `replace_body`, `insert_before`, `insert_after`, `delete`, `add_member`, `add_import`),
+gates a preview of the result and returns the diff, the verdict and the exact `old_str` and `new_str` to pass to
+Kiro's `write`, so the user still sees Kiro's own diff and answers its prompt. The plan is kept privately under
+the cache (`edits.plansKept` per file, for `edits.planTtlMinutes`); a write that applies it passes the gate at
+once (`hooks.preWrite.trustPlans`), and after it the `postToolUse` hook says `planned write applied` or that the
+file drifted from the plan. With `apply` the tool writes the edit itself, after asking with the first
+`edits.diffLinesInQuestion` lines of the diff, recompiles and rolls back on new compile errors.
+`hooks.preWrite.requirePlan: true` refuses unplanned writes to files over `hooks.preWrite.requirePlanAboveLines`
+lines.
+
+The `hooks.userPromptSubmit` entry prints the edit policy, one line per rule with the configured mode, when a
+prompt mentions Groovy, Gradle, Jenkinsfile or Spock (`hooks.userPrompt`, default true). `groovyscope kiro attach`
+adds both hooks to an agent; `doctor` names agents that lack them.
+
 To see exactly what this Kiro sends a hook, add `--capture` to a hook command (`groovyscope hook --capture`):
 every payload is saved under `<cache>/hooks/<event>-<timestamp>.json`, readable by you only, and the hook
 runs as usual. The research note [2026-10-23-edit-gate-facts](research/2026-10-23-edit-gate-facts.md) says

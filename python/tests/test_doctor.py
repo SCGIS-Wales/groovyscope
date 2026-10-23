@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from groovyscope import daemon
+from groovyscope import daemon, doctor
 from groovyscope.doctor import (
     build_report,
     client_check,
@@ -111,6 +111,7 @@ def test_build_report_and_failures(
         "kiro files",
         "kiro agent",
         "kiro agents",
+        "edit gate",
         "profiles",
         "daemon",
         "mcp client",
@@ -118,6 +119,12 @@ def test_build_report_and_failures(
     ]
     assert has_failures(report)  # no JAR bundled
     assert not has_failures([("ok", "a", ""), ("warn", "b", ""), ("info", "c", "")])
+
+
+def test_gate_check_names_the_mode() -> None:
+    assert doctor.gate_check(None)[0:2] == ("info", "edit gate") and "warn" in doctor.gate_check(None)[2]
+    assert doctor.gate_check({"hooks": {"preWrite": {"mode": "block"}}})[0] == "ok"
+    assert "off" in doctor.gate_check({"hooks": {"preWrite": {"enabled": False}}})[2]
 
 
 def test_daemon_check(tmp_path: Path, monkeypatch) -> None:

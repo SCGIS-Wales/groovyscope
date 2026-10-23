@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from groovyscope import __version__, daemon, kiro_agent, kiro_steer, profiles, sweep
+from groovyscope import __version__, daemon, gate, kiro_agent, kiro_steer, profiles, sweep
 from groovyscope import config as config_module
 from groovyscope.config import load_config_with_notes
 from groovyscope.jar import locate_jar
@@ -217,6 +217,20 @@ def profiles_check(root: Path, config: Mapping[str, Any] | None, home: Path) -> 
     return ("ok", "profiles", ", ".join(f"{p['name']} ({p['path']})" for p in found["profiles"]))
 
 
+def gate_check(config: Mapping[str, Any] | None) -> Check:
+    """The edit gate's mode: what a write that adds errors meets before it lands."""
+    settings = gate.settings(config or {})
+    if not settings["enabled"]:
+        return ("info", "edit gate", "off (hooks.preWrite.enabled); writes are checked only after they land")
+    if settings["mode"] == "block":
+        return ("ok", "edit gate", "block: a write that adds syntax or compile errors is refused")
+    return (
+        "info",
+        "edit gate",
+        "warn: a write that adds errors is reported, not refused; `hooks.preWrite.mode: block` refuses it",
+    )
+
+
 def build_report(
     root: Path,
     config_path: Path | None,
@@ -235,6 +249,7 @@ def build_report(
         kiro_check(root, kiro_home(environ, home or Path.home())),
         kiro_agent_check(root, kiro_home(environ, home or Path.home()), kiro),
         steering_check(root, kiro_home(environ, home or Path.home())),
+        gate_check(config),
         profiles_check(root, config, home or Path.home()),
         daemon_check(root, environ),
         client_check(root, environ),

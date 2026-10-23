@@ -21,6 +21,15 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
   prompt of the same name) that says which tools to call and how to report; follow it when the request
   matches, whether or not the user typed the slash command.
 
+## Editing Groovy
+
+- Change a method, class or import with `groovyscope.edit_symbol` (operation `replace`, `replace_body`,
+  `insert_before`, `insert_after`, `delete`, `add_member`, `add_import`): its dry run gives the diff, the gate's
+  verdict and the exact `old_str` and `new_str`; pass them unchanged to `write` (`str_replace`) so the user sees
+  the diff. Use `apply: true` only when the user asks groovyscope to write.
+- A `groovyscope gate:` line before a write names the errors the write would introduce; fix the text and
+  write again. A `BLOCKED` write did not happen.
+
 ## After every write
 
 - After you write a Groovy, Gradle or Jenkinsfile file, a hook checks that file and a `groovyscope checked ...`

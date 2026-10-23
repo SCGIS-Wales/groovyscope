@@ -68,9 +68,10 @@ INSTRUCTIONS = (
     "Groovy code intelligence for this workspace; use these tools instead of grep or reading whole files. Start "
     "with workspace_overview, then document_symbols and read_symbol. Navigation answers carry a confidence "
     "(DYNAMIC_UNKNOWN: matched by name only). Lists are paged: pass limit and next_cursor. Paths are "
-    "workspace-relative, lines and columns 1-based. Rename only through rename. Before finishing a change, call "
-    "review on the changed files and fix what it reports. GS100 means no classpath: suggest `groovyscope classpath`. "
-    "Call profile_status before editing a file a runtime profile governs. The groovy-* prompts hold the recipes."
+    "workspace-relative, lines and columns 1-based. Rename only through rename; edit declarations with "
+    "edit_symbol, then write its old_str/new_str. Before finishing a change, call review on the changed files and "
+    "fix what it reports. GS100 means no classpath: suggest `groovyscope classpath`. Call profile_status before "
+    "editing a file a runtime profile governs. The groovy-* prompts hold the recipes."
 )
 SEVERITY_NAMES = render.SEVERITY_NAMES
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "hint": 3}
