@@ -136,7 +136,8 @@ final class ExplainGraphRequests {
 
     /**
      * What a class, method or file does, as facts. Params: {@code symbol} (a qualified or hash-separated name) or
-     * {@code uri} (every class of the document), {@code root}.
+     * {@code uri} (every class of the document), {@code root}. Each class and method carries {@code helpers}, the
+     * utilities it could call (see {@link ReuseRequests#helpers}).
      */
     CompletableFuture<Map<String, Object>> explainCode(Map<String, Object> params) {
         return requests.heavy(cancel -> {
@@ -149,7 +150,10 @@ final class ExplainGraphRequests {
             if (symbol != null) {
                 for (ASTNode declaration : current.findDeclarations(snapshot, symbol)) {
                     if (declaration instanceof ClassNode classNode) {
-                        items.add(ExplainJson.classFacts(CodeFacts.ofClass(classNode, snapshot.index(), graph)));
+                        Map<String, Object> facts = ExplainJson.classFacts(CodeFacts.ofClass(classNode, snapshot.index(),
+                                graph));
+                        facts.put("helpers", ReuseRequests.helpers(current, snapshot, classNode, null));
+                        items.add(facts);
                     } else if (declaration instanceof MethodNode method) {
                         Map<String, Object> facts = ExplainJson.methodFacts(
                                 CodeFacts.ofMethod(method, snapshot.index(), graph));
@@ -158,6 +162,7 @@ final class ExplainGraphRequests {
                         facts.put("uri", snapshot.index().declarationEntry(method).map(NodeEntry::uri).orElse(null));
                         facts.put("testing", ExplainJson.seams(TestSeams.of(method, graph, current::declarationOf,
                                 snapshot.result().modules(), current.workspace()::text)));
+                        facts.put("helpers", ReuseRequests.helpers(current, snapshot, method.getDeclaringClass(), method));
                         items.add(facts);
                     } else if (declaration instanceof PropertyNode property) {
                         Map<String, Object> facts = ExplainJson.fieldFacts(CodeFacts.fieldFacts(property.getField(), true));
@@ -176,7 +181,10 @@ final class ExplainGraphRequests {
                 if (module != null && current.workspace().contains(uri)) {
                     for (ClassNode classNode : module.getClasses()) {
                         if (classNode.getLineNumber() > 0 && !classNode.getName().contains("$_")) {
-                            items.add(ExplainJson.classFacts(CodeFacts.ofClass(classNode, snapshot.index(), graph)));
+                            Map<String, Object> facts = ExplainJson.classFacts(CodeFacts.ofClass(classNode,
+                                    snapshot.index(), graph));
+                            facts.put("helpers", ReuseRequests.helpers(current, snapshot, classNode, null));
+                            items.add(facts);
                         }
                     }
                 }

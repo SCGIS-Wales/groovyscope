@@ -521,6 +521,42 @@
         }
       }
     },
+    "reuse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "callOverlap": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ignoreCalls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "helperMaxLines": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "helpersLimit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minLines": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "blockReview": {
+          "type": "boolean"
+        }
+      }
+    },
     "diagram": {
       "type": "object",
       "additionalProperties": false,
