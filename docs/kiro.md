@@ -94,8 +94,13 @@ in `.groovyscope.yaml`; then the Groovy files changed in the working tree (git s
 any has compile errors, the hook answers `{"decision": "block", "reason": ...}` so the agent fixes them before
 finishing. Whether Kiro V3 honours a blocking `Stop` answer is documented both ways; the owner's check decides.
 
+With `hooks.coverageGate: true` the same `Stop` hook also reads the build's JaCoCo report (it never runs Gradle):
+when the report is newer than the files changed this session and one of them is under `coverage.minimumPercent`
+(80) line coverage, the turn is refused with the classes named, and `test_plan` says which tests to add. A stale or
+missing report never blocks.
+
 Settings: `hooks.afterWrite` (default true), `hooks.afterWriteInclude`, `hooks.afterWriteMaxFindings` (12),
-`hooks.stopGate` (false), `hooks.timeoutSeconds` (25).
+`hooks.stopGate` (false), `hooks.coverageGate` (false), `hooks.timeoutSeconds` (25).
 
 ## Before every write: the edit gate
 

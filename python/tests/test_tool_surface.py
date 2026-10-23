@@ -15,7 +15,7 @@ from groovyscope import mcp_server, tools_catalog
 # return of the boilerplate; raise it only with the numbers in docs/roadmap.md. Stage 22 (merge conflicts): the
 # 29 tools came to 13,986 bytes, the three merge tools add about 1,000. Stage 23 (unused code): find_unused adds
 # 452, to 15,455. Stage 24 (edit gate): edit_symbol adds 715, to 16,170; the edit intelligence plan lets the
-# later phases' tools take it towards 18,500. Stage 29 (lean tests): test_plan adds 487, to 16,657.
+# later phases' tools take it towards 18,500. Stage 28 (lean tests): test_plan adds 487, to 16,657.
 SCHEMA_BUDGET_BYTES = 16_700
 DESCRIPTION_LIMIT = 230
 INSTRUCTIONS_LIMIT = 700
