@@ -205,12 +205,6 @@ def hook_check(root: Path, name: str, payload: Mapping[str, Any], effective: Map
         click.echo(text)
 
 
-def plan_store(root: Path) -> Path:
-    """Where the edit plans of a workspace are kept."""
-    environ = dict(os.environ)
-    return daemon_lifecycle.cache_dir(environ) / "plans" / daemon_lifecycle.workspace_key(root)
-
-
 def planned_outcomes(root: Path, paths: Sequence[Path], effective: Mapping[str, Any]) -> list[str]:
     """After a write: one line per written file that has an edit plan, saying whether the plan landed."""
     ttl = float((effective.get("edits") or {}).get("planTtlMinutes", config_module.default("edits", "planTtlMinutes")))
@@ -220,7 +214,7 @@ def planned_outcomes(root: Path, paths: Sequence[Path], effective: Mapping[str, 
             written = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        found = plans.outcome(plan_store(root), path, written, clock=time.time, ttl_minutes=ttl)
+        found = plans.outcome(plans.store_for(root, dict(os.environ)), path, written, clock=time.time, ttl_minutes=ttl)
         if found is None:
             continue
         state, plan = found
@@ -259,7 +253,7 @@ def hook_pre_write(root: Path, payload: Mapping[str, Any], effective: Mapping[st
     plan = None
     if intent["command"] == "str_replace":
         plan = plans.matching(
-            plan_store(root),
+            plans.store_for(root, dict(os.environ)),
             intent["path"],
             intent["before"],
             intent["old_str"],
@@ -291,30 +285,17 @@ def gate_with_engine(
         click.echo(f"groovyscope gate: write to {shown} not checked, the engine daemon is not running")
         return 0
     timeout = float(hooks.settings(effective)["timeoutSeconds"])
-    uri = intent["path"].as_uri()
+
+    def call(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        return dict(common._RPC(socket_file, method, params, timeout))
+
     try:
-        preview = common._RPC(
-            socket_file,
-            "groovyscope/preview",
-            {"root": str(root), "texts": [{"uri": uri, "text": intent["after"]}]},
-            timeout,
+        verdict = gate.check_candidate(
+            call, root, intent["path"], before=intent["before"], after=str(intent["after"]), mode=settings["mode"]
         )
-        current: dict[str, Any] = {}
-        if intent["path"].is_file():
-            params = {"root": str(root), "uris": [uri], "include": ["compile", "lint", "practices"]}
-            current = common._RPC(socket_file, "groovyscope/check", params, timeout).get("diagnostics", {})
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"groovyscope gate: write to {shown} not checked ({exc})")
         return 0
-    found = (preview.get("results") or {}).get(uri) or {}
-    verdict = gate.evaluate(
-        common.finding_rows({uri: found.get("diagnostics") or []}, root),
-        common.finding_rows(current, root),
-        syntax=found.get("syntax") or [],
-        mode=settings["mode"],
-        before=intent["before"],
-        after=str(intent["after"]),
-    )
     text = gate.render(verdict, shown, planned=planned)
     if verdict["decision"] == "block":
         click.echo(text, err=True)

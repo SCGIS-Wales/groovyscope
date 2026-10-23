@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TypedDict, cast
 
-from groovyscope import atomic
+from groovyscope import atomic, daemon
 
 Clock = Callable[[], float]
 
@@ -51,6 +51,11 @@ def make(path: Path, before: str, after: str, *, old_str: str, new_str: str, now
         "after_hash": digest(after),
         "created": now,
     }
+
+
+def store_for(root: Path, environ: Mapping[str, str]) -> Path:
+    """The plan store of a workspace: under the cache, one folder per workspace."""
+    return daemon.cache_dir(environ) / "plans" / daemon.workspace_key(root)
 
 
 def store_file(store: Path, path: Path) -> Path:

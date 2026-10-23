@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import difflib
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from groovyscope import config as config_module
@@ -20,6 +21,8 @@ from groovyscope.source_lines import line_kinds
 Decision = Literal["block", "warn", "pass"]
 ERROR_LEVEL = 1
 SHOWN = 8  # findings named in a verdict; the rest are counted
+INCLUDE = ["compile", "lint", "practices"]
+EngineCall = Callable[[str, dict[str, Any]], Mapping[str, Any]]
 
 
 class GateSettings(TypedDict):
@@ -122,6 +125,44 @@ def evaluate(
         "existing": max(0, len(candidate) - len(found)),
         "change": change(before, after),
     }
+
+
+def rows(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """LSP diagnostics as the rows the gate compares: 1-based line and column, level, source, code, message."""
+    out = []
+    for item in items:
+        start = (item.get("range") or {}).get("start") or {}
+        out.append(
+            {
+                "line": int(start.get("line", 0)) + 1,
+                "column": int(start.get("character", 0)) + 1,
+                "level": int(item.get("severity", 3)),
+                "source": item.get("source", ""),
+                "code": item.get("code", ""),
+                "message": item.get("message", ""),
+            }
+        )
+    return out
+
+
+def check_candidate(call: EngineCall, root: Path, path: Path, *, before: str, after: str, mode: str) -> Verdict:
+    """The verdict on writing ``after`` to ``path``: the engine previews the candidate (nothing is written) and
+    checks the current file, so only what the write introduces counts. Engine errors propagate."""
+    uri = path.as_uri()
+    preview = call("groovyscope/preview", {"root": str(root), "texts": [{"uri": uri, "text": after}]})
+    current: Sequence[Mapping[str, Any]] = []
+    if path.is_file():
+        checked = call("groovyscope/check", {"root": str(root), "uris": [uri], "include": INCLUDE})
+        current = (checked.get("diagnostics") or {}).get(uri) or []
+    found = (preview.get("results") or {}).get(uri) or {}
+    return evaluate(
+        rows(found.get("diagnostics") or []),
+        rows(current),
+        syntax=found.get("syntax") or [],
+        mode=mode,
+        before=before,
+        after=after,
+    )
 
 
 def render(verdict: Verdict, shown: str, *, planned: bool = False) -> str:

@@ -41,12 +41,12 @@ from groovyscope import classpath as classpath_export
 from groovyscope import test_results as test_results_module
 from groovyscope.edits import (
     FileEdit,
+    apply_verified,
     changed_line_count,
     counts_by_path,
     file_edits,
     fix_outcome,
     settle,
-    write_document,
 )
 from groovyscope.kiro import write_atomically
 from groovyscope.paths import (
@@ -1068,57 +1068,6 @@ def rename(
     if apply and changed:
         result.update(apply_verified(root, call, changed))
     return with_decision(result, decision)
-
-
-def apply_verified(root: Path, call: Call, changed: list[FileEdit]) -> dict[str, Any]:
-    """Write the edits, recompile the changed files, and restore every file when a write fails, the engine
-    cannot verify, or the rename left new compile errors: the workspace is either fully renamed or untouched."""
-    uris = [edit["path"].as_uri() for edit in changed]
-    try:
-        errors_before = compile_errors(root, call, uris)
-    except (OSError, RuntimeError) as exc:
-        return {"renamed": False, "reason": f"nothing written: the engine could not compile first ({exc})"}
-    written: list[FileEdit] = []
-    try:
-        for edit in changed:
-            write_document(edit["path"], edit["after"], expected=edit["before"])
-            written.append(edit)
-        errors_after = compile_errors(root, call, uris)
-    except (OSError, RuntimeError) as exc:
-        failed = restore(root, written)
-        reason = f"{exc}; the files already changed were restored"
-        if failed:
-            reason += f", except {', '.join(failed)}: restore them from version control"
-        return {"renamed": False, "rolledBack": True, "reason": reason}
-    if errors_after > errors_before:
-        failed = restore(root, written)
-        reason = (
-            f"the rename left {errors_after - errors_before} new compile error(s); the files were restored. "
-            "Check the symbol (a same-named member in another class?) or rename by hand"
-        )
-        if failed:
-            reason += f". Restore {', '.join(failed)} from version control"
-        return {"renamed": False, "rolledBack": True, "reason": reason}
-    return {"verified": "the changed files compile with no new errors"}
-
-
-def restore(root: Path, written: list[FileEdit]) -> list[str]:
-    """Put the original text back; the paths that could not be restored."""
-    failed: list[str] = []
-    for edit in written:
-        try:
-            write_document(edit["path"], edit["before"], expected=edit["after"])
-        except OSError:
-            failed.append(relative_path(edit["path"].as_uri(), root))
-    return failed
-
-
-def compile_errors(root: Path, call: Call, uris: list[str]) -> int:
-    """Compile errors in the given documents, as the engine reports them after re-reading the files."""
-    raw = call("groovyscope/check", {"root": str(root), "uris": uris, "include": ["compile"]})
-    return sum(
-        1 for items in raw.get("diagnostics", {}).values() for item in items if int(item.get("severity", 3)) == 1
-    )
 
 
 def rename_tools(

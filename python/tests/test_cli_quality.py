@@ -768,7 +768,7 @@ def test_a_planned_write_is_trusted_and_its_outcome_reported(
     target = tmp_path / "A.groovy"
     before, after = "class A {\n    int a() { 1 }\n}\n", "class A {\n    int a() { 2 }\n}\n"
     target.write_text(before, encoding="utf-8")
-    store = cli.quality.plan_store(tmp_path)
+    store = plans.store_for(tmp_path, dict(os.environ))
     plan = plans.make(target, before, after, old_str="{ 1 }", new_str="{ 2 }", now=time.time())
     plans.save(store, plan, kept=5, clock=time.time, ttl_minutes=120)
     tool_input = {"path": str(target), "command": "str_replace", "old_str": "{ 1 }", "new_str": "{ 2 }"}

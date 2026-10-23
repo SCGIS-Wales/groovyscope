@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from groovyscope import atomic
-from groovyscope.paths import GROOVY_SUFFIXES, uri_to_path
+from groovyscope.paths import GROOVY_SUFFIXES, Call, relative_path, uri_to_path
 
 # Files the engine may hand back edits for; anything else is refused.
 BMP_MAX = 0xFFFF  # characters above this take two UTF-16 code units
@@ -210,3 +210,57 @@ def fix_outcome(raw: Mapping[str, Any], refused: Sequence[str]) -> FixOutcome:
         "needsReview": counts_by_path(raw.get("needsReview", {})),
         "rejected": rejected,
     }
+
+
+def apply_verified(
+    root: Path, call: Call, changed: list[FileEdit], *, flag: str = "renamed", what: str = "the rename"
+) -> dict[str, Any]:
+    """Write the edits, recompile the changed files, and restore every file when a write fails, the engine
+    cannot verify, or the edit left new compile errors: the workspace is either fully changed or untouched.
+    ``flag`` is the result's key that says whether the edit landed."""
+    uris = [edit["path"].as_uri() for edit in changed]
+    try:
+        errors_before = compile_errors(root, call, uris)
+    except (OSError, RuntimeError) as exc:
+        return {flag: False, "reason": f"nothing written: the engine could not compile first ({exc})"}
+    written: list[FileEdit] = []
+    try:
+        for edit in changed:
+            write_document(edit["path"], edit["after"], expected=edit["before"])
+            written.append(edit)
+        errors_after = compile_errors(root, call, uris)
+    except (OSError, RuntimeError) as exc:
+        failed = restore(root, written)
+        reason = f"{exc}; the files already changed were restored"
+        if failed:
+            reason += f", except {', '.join(failed)}: restore them from version control"
+        return {flag: False, "rolledBack": True, "reason": reason}
+    if errors_after > errors_before:
+        failed = restore(root, written)
+        reason = (
+            f"{what} left {errors_after - errors_before} new compile error(s); the files were restored. "
+            "Check the symbol (a same-named member in another class?) or edit by hand"
+        )
+        if failed:
+            reason += f". Restore {', '.join(failed)} from version control"
+        return {flag: False, "rolledBack": True, "reason": reason}
+    return {"verified": "the changed files compile with no new errors"}
+
+
+def restore(root: Path, written: list[FileEdit]) -> list[str]:
+    """Put the original text back; the paths that could not be restored."""
+    failed: list[str] = []
+    for edit in written:
+        try:
+            write_document(edit["path"], edit["before"], expected=edit["after"])
+        except OSError:
+            failed.append(relative_path(edit["path"].as_uri(), root))
+    return failed
+
+
+def compile_errors(root: Path, call: Call, uris: list[str]) -> int:
+    """Compile errors in the given documents, as the engine reports them after re-reading the files."""
+    raw = call("groovyscope/check", {"root": str(root), "uris": uris, "include": ["compile"]})
+    return sum(
+        1 for items in raw.get("diagnostics", {}).values() for item in items if int(item.get("severity", 3)) == 1
+    )
