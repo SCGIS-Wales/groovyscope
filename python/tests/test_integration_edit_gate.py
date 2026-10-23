@@ -235,3 +235,32 @@ def test_change_signature_and_extract_method_through_the_daemon(
         assert checked.exit_code == 0, checked.output
     finally:
         runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])
+
+
+@pytest.mark.skipif(not engine_available(), reason="needs a JDK and an engine JAR (bundled or GROOVYSCOPE_JAR)")
+def test_class_design_finds_two_jobs_in_one_class(
+    tmp_path: Path, short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "ws"
+    folder = workspace / "src" / "main" / "groovy" / "demo"
+    folder.mkdir(parents=True)
+    (folder / "Desk.groovy").write_text(
+        "package demo\n\nclass Desk {\n    List<String> notes = []\n    int coins = 0\n\n"
+        "    void note(String text) { notes << text }\n    int noteCount() { notes.size() }\n"
+        "    void pay(int amount) { coins += amount }\n    int balance() { coins }\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(daemon.SOCKET_DIR_ENV, str(short_dir))
+    monkeypatch.setenv(daemon.CACHE_DIR_ENV, str(tmp_path / "cache"))
+    monkeypatch.setenv("GROOVYSCOPE_DAEMON__IDLETIMEOUTMINUTES", "1")
+    runner = CliRunner()
+    obj = {"config_path": None, "root": workspace.resolve(), "log_level": "WARNING", "log_file": None}
+    try:
+        socket_file, _ = common.daemon_socket_for(obj)
+        tools = common.workspace_tools(obj, socket_file, load_config(obj["root"], None, {}))
+        (desk,) = tools["class_design"](symbol="demo.Desk")["items"]
+        assert desk["cohesion"]["lcom4"] == 2, desk
+        groups = sorted(sorted(group["methods"]) for group in desk["cohesion"]["groups"])
+        assert groups == [["balance", "pay"], ["note", "noteCount"]]
+    finally:
+        runner.invoke(cli.main, ["--root", str(workspace), "daemon", "stop"])

@@ -536,10 +536,18 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   side effects, an override, instance state or a private field the move would lose) and an `Extract method` code
   action; `change_signature`, `extract_method` (it asks `suggest_reuse` first) and `move_member` gate the files of a
   refactoring together in one preview, plan one Kiro `write` per file, or apply them after asking with a recompile
-  and rollback; every edit tool's dry run names the tests reaching the changed symbol. Design facts
-  (`groovyscope/design`, `class_design`) and GS090 to GS097 follow from the engine. Not done: `edit_symbol`'s
+  and rollback; every edit tool's dry run names the tests reaching the changed symbol. `groovyscope/design` and
+  `class_design`: responsibilities, cohesion (LCOM4, the groups that share fields, the separable ones), feature envy,
+  shared parameter lists, type switches, mutable state, size, and per finding the refactoring with the tool call that
+  performs it; GS090 (god class), GS091 (feature envy), GS092 (long parameter list), GS093 (type switch), GS094
+  (public mutable field or a getter handing out a mutable collection), GS095 (anemic data class), GS096 (primitive
+  obsession) and GS097 (a method using no instance state). Calibrated on CodeNarc's sources: every finding judged
+  correct after tuning (the first run had 8 of 9 GS091 and 7 of 9 GS094 false), GS097 142 findings with ten judged;
+  `class_design` on `CodeNarcRunner` names its plugin group as separable, its mutable plugin list and two stateless
+  methods, in 22 to 38 ms after the first request. Not done: `edit_symbol`'s
   `doc: concise` (a Javadoc sentence built from facts): the agent writes that one sentence from `explain_code`
-  better than a template, and the steering says how. Tool surface: the three refactoring tools add 1,642 bytes.
+  better than a template, and the steering says how. Tool surface: the three refactoring tools add 1,642 bytes and
+  `class_design` 389, to 19,241, over the plan's 18,500 by the design tool, kept as the plan decided.
   Done when: merged and released, verified from PyPI (`change_signature` on a method with three call sites updates
   them; `extract_method` leaves code that compiles).
 

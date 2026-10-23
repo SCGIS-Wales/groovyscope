@@ -42,6 +42,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "change_signature": ("Change a method signature", False),
     "extract_method": ("Extract a method", False),
     "move_member": ("Move a method to a class", False),
+    "class_design": ("How a class is designed", True),
     "read_symbol": ("Read one declaration", True),
     "find_code": ("Structural code search", True),
     "find_duplicates": ("Find duplicated code", True),
@@ -118,6 +119,7 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "extract_method": "Lines START_LINE to END_LINE of PATH into a new method NAME, from the data flow; APPLY writes.",
     "move_member": "Move SYMBOL to TO_CLASS with its imports and call sites; APPLY writes.",
+    "class_design": "SYMBOL's (or PATH's classes') responsibilities, cohesion, envy, mutable state, and refactors.",
 }
 
 

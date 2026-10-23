@@ -169,4 +169,34 @@ def refactor_tools(
             params["line"] = line
         return run("groovyscope/moveMember", params, f"Move {symbol} to {to_class}", apply)
 
-    return {"change_signature": change_signature, "extract_method": extract_method, "move_member": move_member}
+    def class_design(symbol: str | None = None, path: str | None = None) -> dict[str, Any]:
+        """How a class (SYMBOL) or every class of PATH is designed: responsibilities by verb, cohesion (the groups
+        of methods that share fields, and the separable ones), feature envy, shared parameter lists, type switches,
+        mutable state, size, and per finding the refactoring with the tool call that performs it."""
+        params: dict[str, Any] = {"root": str(root)}
+        if symbol:
+            params["symbol"] = symbol
+        elif path:
+            params["uri"] = to_uri(root, path)
+        else:
+            return {"error": "give a symbol (Class) or a path"}
+        raw = call("groovyscope/design", params)
+        items = [compact_design(item, cap) for item in raw.get("items") or []]
+        return {"found": bool(raw.get("found")), "items": items[:cap]}
+
+    return {
+        "change_signature": change_signature,
+        "extract_method": extract_method,
+        "move_member": move_member,
+        "class_design": class_design,
+    }
+
+
+def compact_design(item: Mapping[str, Any], cap: int) -> dict[str, Any]:
+    """One class's design facts with every list cut to ``cap`` and the empty ones left out."""
+    entry: dict[str, Any] = {}
+    for key, value in item.items():
+        if key == "uri" or value in (None, [], {}):
+            continue
+        entry[key] = value[:cap] if isinstance(value, list) else value
+    return entry

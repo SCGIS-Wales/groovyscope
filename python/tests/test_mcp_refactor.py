@@ -149,3 +149,30 @@ def test_extract_method_says_when_existing_code_does_it(workspace: Path) -> None
     assert similar[0]["text"] == "    int total(int a) { a }"
     quiet = tools(workspace, engine(workspace, answer))["extract_method"]("A.groovy", 2, 2, "twice")
     assert "existing" not in quiet
+
+
+def test_class_design_compacts_the_engine_answer(workspace: Path) -> None:
+    item = {
+        "class": "demo.A",
+        "uri": (workspace / "A.groovy").as_uri(),
+        "path": "A.groovy",
+        "cohesion": {"lcom4": 2, "groups": [{"methods": ["a"]}, {"methods": ["b"]}]},
+        "featureEnvy": [],
+        "suggestions": [{"kind": "split", "message": "two jobs", "tool": "extract_method(...)"}] * 9,
+        "dataOwner": None,
+    }
+    seen: list[dict[str, Any]] = []
+
+    def call(_method: str, params: dict[str, Any]) -> dict[str, Any]:
+        seen.append(params)
+        return {"found": True, "items": [item]}
+
+    design = mcp_refactor.refactor_tools(workspace, call, 5, {})["class_design"]
+    answer = design(symbol="demo.A")
+    (found,) = answer["items"]
+    assert answer["found"] is True and seen[0]["symbol"] == "demo.A"
+    assert "uri" not in found and "featureEnvy" not in found and "dataOwner" not in found
+    assert found["cohesion"]["lcom4"] == 2 and len(found["suggestions"]) == 5
+    design(path="A.groovy")
+    assert seen[-1]["uri"] == (workspace / "A.groovy").as_uri()
+    assert design() == {"error": "give a symbol (Class) or a path"}

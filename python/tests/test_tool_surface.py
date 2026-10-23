@@ -17,8 +17,9 @@ from groovyscope import mcp_server, tools_catalog
 # 452, to 15,455. Stage 24 (edit gate): edit_symbol adds 715, to 16,170; the edit intelligence plan lets the
 # later phases' tools take it towards 18,500. Stage 27 (reuse): suggest_reuse adds 553, to 16,723. Stage 28 (lean
 # tests): test_plan adds 487. Stage 29 (object oriented edits): change_signature, extract_method and move_member
-# add 1,642, to 18,852.
-SCHEMA_BUDGET_BYTES = 18_900
+# add 1,642, to 18,852, and class_design 389, to 19,241: over the plan's 18,500 by the design tool, which the plan
+# decided to keep rather than drop.
+SCHEMA_BUDGET_BYTES = 19_250
 DESCRIPTION_LIMIT = 230
 INSTRUCTIONS_LIMIT = 700
 
