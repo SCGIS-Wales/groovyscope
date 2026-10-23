@@ -187,7 +187,11 @@ public final class SymbolReader {
         return best;
     }
 
-    /** The first line of the Javadoc, comments and annotations directly above {@code line}. */
+    /**
+     * The first line (zero-based) of the Javadoc, comments and annotations directly above {@code line}: where a
+     * declaration's span begins for {@code readSymbol} and for {@link SymbolEditor}, which replaces, moves or deletes
+     * that span. A blank line ends the run.
+     */
     static int leadingStart(TextLines lines, int line) {
         int start = line;
         while (start > 0) {

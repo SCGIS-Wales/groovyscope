@@ -95,6 +95,7 @@ ignore = [
 # MCP tool functions take the session context (root, engine call, caps) as leading positional parameters that
 # functools.partial binds once per session; the client sees only the rest.
 "src/groovyscope/mcp_server.py" = ["PLR0917"]
+"src/groovyscope/mcp_edit.py" = ["PLR0917"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["groovyscope"]

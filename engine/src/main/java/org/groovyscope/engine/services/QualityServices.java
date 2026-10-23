@@ -18,6 +18,7 @@ package org.groovyscope.engine.services;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -67,6 +68,8 @@ public final class QualityServices {
     public static final String INCLUDE_PRACTICES = "practices";
     public static final Set<String> ALL_INCLUDES = Set.of(INCLUDE_LINT, INCLUDE_COMPILE, INCLUDE_TYPECHECK,
             INCLUDE_PRACTICES);
+    /** Includes accepted by {@link #preview}. */
+    public static final Set<String> PREVIEW_INCLUDES = Set.of(INCLUDE_COMPILE, INCLUDE_LINT, INCLUDE_PRACTICES);
     /** Most emulation results kept; each holds the findings of one profile's governed sources. */
     static final int EMULATION_CACHE_LIMIT = ProfileService.EMULATION_CACHE_LIMIT;
 
@@ -440,6 +443,109 @@ public final class QualityServices {
             list.sort((a, b) -> a.range().start().compareTo(b.range().start()));
         }
         return new CheckResult(result);
+    }
+
+    /**
+     * One finding of {@link #preview}, with whether it carries a quick fix (as {@link #fixable} answers for a
+     * published finding).
+     *
+     * @param diagnostic the finding
+     * @param fixable whether a quick fix comes with it
+     */
+    public record PreviewFinding(Diagnostic diagnostic, boolean fixable) {
+    }
+
+    /**
+     * The findings of candidate texts as if they were saved, with nothing written and the snapshot untouched: the
+     * compile diagnostics of the texts compiled on their own against the classes of the last full compile (see
+     * {@link LanguageServices#compileOverlay}), their practice findings, and CodeNarc on each text under the profile
+     * the document would get. Java documents are linted and compiled by nobody here, as in {@link #check}; a Gradle
+     * build script the compile does not read gets lint and the Gradle checks on its own tree.
+     *
+     * @param texts candidate text per document URI (the caller has checked that each one parses)
+     * @param include any of {@code compile}, {@code lint}, {@code practices}; empty means all three
+     * @return the findings per URI, in the order of {@code texts}, each list sorted by position
+     */
+    public Map<String, List<PreviewFinding>> preview(Map<String, String> texts, Set<String> include) {
+        Set<String> wanted = include == null || include.isEmpty() ? PREVIEW_INCLUDES : include;
+        boolean practicesOn = wanted.contains(INCLUDE_PRACTICES) && workspace.config().practices().enabled();
+        Map<String, List<PreviewFinding>> result = new LinkedHashMap<>();
+        Map<String, String> compiled = new LinkedHashMap<>();
+        Map<String, String> scripts = new LinkedHashMap<>();
+        Set<String> sourceUris = workspace.sourceUris();
+        for (Map.Entry<String, String> text : texts.entrySet()) {
+            result.put(text.getKey(), new ArrayList<>());
+            if (WorkspaceModel.isJavaUri(text.getKey())) {
+                continue;
+            }
+            (isBuildScript(text.getKey()) && !sourceUris.contains(text.getKey()) ? scripts : compiled)
+                    .put(text.getKey(), text.getValue());
+        }
+        List<String> targets = new ArrayList<>(texts.keySet());
+        CompletableFuture<Map<String, List<Diagnostic>>> linted = wanted.contains(INCLUDE_LINT)
+                ? CompletableFuture.supplyAsync(() -> lint.lintAll(targets, texts, null), LINT)
+                : CompletableFuture.completedFuture(Map.of());
+        if (!compiled.isEmpty() && (wanted.contains(INCLUDE_COMPILE) || practicesOn)) {
+            CompilationResult overlay = overlay(compiled);
+            try {
+                if (wanted.contains(INCLUDE_COMPILE)) {
+                    Map<String, List<Diagnostic>> compile = navigation.diagnosticsOf(overlay);
+                    for (String uri : compiled.keySet()) {
+                        for (Diagnostic diagnostic : compile.getOrDefault(uri, List.of())) {
+                            result.get(uri).add(new PreviewFinding(diagnostic, false));
+                        }
+                    }
+                }
+                if (practicesOn) {
+                    for (Map.Entry<String, String> text : compiled.entrySet()) {
+                        org.groovyscope.engine.concurrent.Cancellation.checkpoint();
+                        for (PracticeFinder.Practice practice : practicesOf(text.getKey(),
+                                overlay.modules().get(text.getKey()), text.getValue())) {
+                            result.get(text.getKey())
+                                    .add(new PreviewFinding(practice.diagnostic(), practice.fixable()));
+                        }
+                    }
+                }
+            } finally {
+                overlay.close();
+            }
+        }
+        if (practicesOn) {
+            for (Map.Entry<String, String> script : scripts.entrySet()) {
+                org.groovyscope.engine.concurrent.Cancellation.checkpoint();
+                compiler.parseOnly(script.getKey(), script.getValue()).ifPresent(module -> {
+                    for (PracticeFinder.Practice practice
+                            : GradleFinder.find(script.getKey(), module, script.getValue(), workspace.config())) {
+                        result.get(script.getKey()).add(new PreviewFinding(practice.diagnostic(), practice.fixable()));
+                    }
+                });
+            }
+        }
+        for (Map.Entry<String, List<Diagnostic>> entry : joined(linted).entrySet()) {
+            for (Diagnostic diagnostic : entry.getValue()) {
+                result.get(entry.getKey()).add(new PreviewFinding(diagnostic, fixable(diagnostic)));
+            }
+        }
+        for (List<PreviewFinding> list : result.values()) {
+            list.sort((a, b) -> a.diagnostic().range().start().compareTo(b.diagnostic().range().start()));
+        }
+        return result;
+    }
+
+    /**
+     * The overlay compile of {@link #preview}, tried once more when it fails: as for {@link #quickCompile}, a full
+     * compile publishing meanwhile can release the loader of the classes the candidates compile against, and the
+     * second try compiles against the new snapshot.
+     */
+    private CompilationResult overlay(Map<String, String> texts) {
+        try {
+            return navigation.compileOverlay(texts);
+        } catch (java.util.concurrent.CancellationException e) {
+            throw e;
+        } catch (RuntimeException | LinkageError e) {
+            org.groovyscope.engine.log.EngineLog.debug("candidate compile tried again: %s", e);
+            return navigation.compileOverlay(texts);
+        }
     }
 
     private static Map<String, String> withScripts(Map<String, String> sources, Map<String, String> scripts) {

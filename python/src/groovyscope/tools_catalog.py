@@ -37,6 +37,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "format": ("Format files", False),
     "fix": ("Apply safe fixes", False),
     "rename": ("Rename a symbol", False),
+    "edit_symbol": ("Edit one declaration, gated", False),
     "read_symbol": ("Read one declaration", True),
     "find_code": ("Structural code search", True),
     "find_duplicates": ("Find duplicated code", True),
@@ -74,6 +75,10 @@ DESCRIPTIONS: dict[str, str] = {
     "format": "Formatting edits for PATHS (all when empty); APPLY writes them.",
     "fix": "Safe fixes for PATHS and CODES (all when empty); APPLY writes them.",
     "rename": "Rename the symbol at PATH:LINE:COL to NEW_NAME everywhere; dry run unless APPLY.",
+    "edit_symbol": (
+        "Edit SYMBOL in PATH by OPERATION (replace, replace_body, insert_before, insert_after, delete, add_member, "
+        "add_import) with TEXT; gated on a preview. Dry run: diff, verdict, old_str/new_str for write. APPLY writes."
+    ),
     "read_symbol": "Source of one class, method or field in PATH (SYMBOL: name or Class.name); LINE picks an overload.",
     "find_code": (
         "Structural search (not grep). KIND: catch, throw, call, new, return-null, string-literal, annotation, "
@@ -102,10 +107,10 @@ DESCRIPTIONS: dict[str, str] = {
 
 
 # Tools whose `apply` overwrites workspace files, so a client should confirm before calling them that way.
-DESTRUCTIVE_TOOLS = frozenset({"fix", "format", "rename", "resolve_conflicts"})
+DESTRUCTIVE_TOOLS = frozenset({"edit_symbol", "fix", "format", "rename", "resolve_conflicts"})
 # Repeating the call with the same arguments does not give the same result: after a rename the symbol at the
-# position already carries the new name.
-NOT_IDEMPOTENT_TOOLS = frozenset({"rename"})
+# position already carries the new name, and an inserted member is inserted again.
+NOT_IDEMPOTENT_TOOLS = frozenset({"edit_symbol", "rename"})
 # Reaches beyond this workspace: the classpath export runs the project's build, which may download dependencies.
 OPEN_WORLD_TOOLS = frozenset({"refresh_classpath"})
 

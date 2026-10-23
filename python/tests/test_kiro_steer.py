@@ -32,8 +32,8 @@ def test_an_agent_reaches_groovyscope_through_its_servers_its_tools_or_the_mcp_f
 def test_missing_parts_name_server_steering_and_hooks() -> None:
     assert kiro_steer.loads_steering({"resources": ["file://.kiro/steering/**/*.md"]})
     assert not kiro_steer.loads_steering({"resources": "file://.kiro/steering/groovyscope.md"})
-    assert kiro_steer.hook_commands({"hooks": {"stop": [{"command": "x"}, "bad", {}], "bad": 1}}) == {"x"}
-    assert kiro_steer.hook_commands({"hooks": []}) == set()
+    assert kiro_steer.hook_pairs({"hooks": {"stop": [{"command": "x"}, "bad", {}], "bad": 1}}) == {("stop", "x")}
+    assert kiro_steer.hook_pairs({"hooks": []}) == set()
     assert kiro_steer.missing_parts({}, []) == ["server", "steering", "hooks"]
     complete = {
         "includeMcpJson": True,
@@ -43,6 +43,14 @@ def test_missing_parts_name_server_steering_and_hooks() -> None:
             "stop": [{"command": "groovyscope hook"}],
         },
     }
+    assert kiro_steer.missing_parts(complete, ["groovyscope"]) == ["hooks"]  # no gate before a write
+    complete["hooks"].update(
+        {
+            "preToolUse": [{"matcher": "write", "command": "groovyscope hook"}],
+            "postToolUse": [{"matcher": "write", "command": "groovyscope hook"}],
+            "userPromptSubmit": [{"command": "groovyscope hook"}],
+        }
+    )
     assert kiro_steer.missing_parts(complete, ["groovyscope"]) == []
 
 

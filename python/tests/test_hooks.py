@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from groovyscope import hooks
 
@@ -142,3 +143,43 @@ def test_stop_decision_blocks_on_compile_errors_only() -> None:
     assert decision is not None and decision["decision"] == "block"
     assert "3 compile error(s)" in decision["reason"] and "(+1 more)" in decision["reason"]
     assert json.loads(json.dumps(decision)) == decision
+
+
+def test_write_intent_rebuilds_the_text_a_write_would_leave(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "A.groovy"
+    target.parent.mkdir()
+    target.write_text("a\nb\nc", encoding="utf-8")
+
+    def intent(**tool_input: Any) -> hooks.WriteIntent | None:
+        payload = {"tool_name": "fs_write", "tool_input": {"path": str(target), **tool_input}}
+        return hooks.write_intent(payload, tmp_path)
+
+    replaced = intent(command="str_replace", old_str="b", new_str="B")
+    assert replaced is not None and replaced["after"] == "a\nB\nc" and replaced["before"] == "a\nb\nc"
+    twice = intent(command="str_replace", old_str="\n", new_str="")
+    assert twice is not None and twice["after"] is None and twice["reason"] == "old_str occurs 2 times in the file"
+    assert (intent(command="insert", insert_line=0, new_str="top") or {}).get("after") == "top\na\nb\nc"
+    assert (intent(command="insert", insert_line=3, new_str="end") or {}).get("after") == "a\nb\nc\nend\n"
+    assert (intent(command="insert", insert_line="x", new_str="y") or {}).get("after") is None
+    assert (intent(command="append", new_str="d") or {}).get("after") == "a\nb\nc\nd"
+    created = intent(file_text="class A {}\n")
+    assert created is not None and created["command"] == "create" and created["after"] == "class A {}\n"
+    assert (intent(command="create") or {}).get("reason") == "create without a file_text"
+    assert (intent(command="rename") or {}).get("reason") == "unknown write command rename"
+
+    new_file = {"tool_name": "write", "tool_input": {"path": "src/B.groovy", "content": "x"}}
+    fresh = hooks.write_intent(new_file, tmp_path)
+    assert fresh is not None and fresh["before"] == "" and fresh["after"] == "x"
+    assert hooks.write_intent({"tool_name": "read", "tool_input": {"path": str(target)}}, tmp_path) is None
+    assert hooks.write_intent({"tool_name": "write", "tool_input": {"path": "/etc/A.groovy"}}, tmp_path) is None
+    assert hooks.write_intent({"tool_name": "write", "tool_input": {"path": "README.md"}}, tmp_path) is None
+    assert hooks.write_intent({"tool_name": "write", "tool_input": {}}, tmp_path) is None
+    target.write_bytes(b"\xff\xfe")
+    assert intent(command="append", new_str="d") is None
+
+
+def test_prompt_text_and_groovy_prompts() -> None:
+    assert hooks.prompt_text({"prompt": "fix the Spock spec"}) == "fix the Spock spec"
+    assert hooks.prompt_text({"user_prompt": 3, "message": "m"}) == "m"
+    assert hooks.prompt_text({}) == ""
+    assert hooks.about_groovy("Fix the Spock spec") and not hooks.about_groovy("write a poem")

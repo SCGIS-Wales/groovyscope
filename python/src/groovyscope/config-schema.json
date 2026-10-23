@@ -321,6 +321,52 @@
         "timeoutSeconds": {
           "type": "integer",
           "minimum": 1
+        },
+        "preWrite": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "enum": [
+                "warn",
+                "block"
+              ]
+            },
+            "trustPlans": {
+              "type": "boolean"
+            },
+            "requirePlan": {
+              "type": "boolean"
+            },
+            "requirePlanAboveLines": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "userPrompt": {
+          "type": "boolean"
+        }
+      }
+    },
+    "edits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "plansKept": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "planTtlMinutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "diffLinesInQuestion": {
+          "type": "integer",
+          "minimum": 4
         }
       }
     },

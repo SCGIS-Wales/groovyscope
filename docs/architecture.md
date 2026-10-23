@@ -374,10 +374,14 @@ deliberately loose so shared runners do not fail the build.
 | `tools_catalog.py` | the MCP tool catalogue: which tools exist, what each is for and which change the workspace; Kiro's approval rules, the read only reviewer agent and each tool's MCP annotations (read only, destructive, idempotent, open world) are generated from it |
 | `interaction.py` | MCP elicitation (a confirmation before a write) and progress notes from inside a running tool |
 | `skills.py` | the Kiro skills shipped as templates, and the same recipes served as MCP prompts; the `groovy-fix` checklist is generated from the practices catalogue and the posting stance is shared by the fix and review skills |
-| `edits.py` | LSP text edits applied to documents and written back inside the workspace only, atomically, keeping line endings; `write_if_unchanged` |
+| `edits.py` | LSP text edits applied to documents and written back inside the workspace only, atomically, keeping line endings; `write_if_unchanged`; `apply_verified` (write, recompile, restore every file on new compile errors) |
+| `mcp_edit.py` | `edit_symbol`: the engine's `groovyscope/edit` plans an edit of one declaration, the gate checks a preview of the result, and the plan's exact `old_str` and `new_str` go back for Kiro's `write` (or, with `apply`, the edit is written here after asking) |
 | `atomic.py` | whole-file writes through a unique temporary file and a rename, with an optional mode and fsync |
 | `process.py` | child processes read as UTF-8 text, with bytes that are not UTF-8 kept as surrogate escapes |
-| `hooks.py` | `groovyscope hook`: the after-write check and the opt-in stop gate Kiro runs |
+| `hooks.py` | `groovyscope hook`: the write a `preToolUse` call is about to make (the text after it, rebuilt from the tool input), the after-write check and the opt-in stop gate Kiro runs |
+| `gate.py` | the edit gate's verdict on a candidate text: findings it introduces (by code and message, so old errors never lock a file), block or warn by `hooks.preWrite.mode`, the lines it adds, and the edit policy a Groovy prompt is shown |
+| `plans.py` | planned writes from `edit_symbol`, kept privately under the cache per workspace: the `preToolUse` gate trusts a write that applies one, and `postToolUse` says whether the file holds what was planned |
+| `source_lines.py` | a small Groovy lexer that tells comment lines from code lines and finds Javadoc blocks (strings and their four quotes included) |
 | `verify.py` | the tests a change reaches and the one Gradle command that compiles and runs them |
 | `test_results.py` | JUnit XML results from any folder or CI archive |
 | `practices.py` | the practice catalogue on the Python side: grouping for `review`, SARIF and short output |

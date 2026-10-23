@@ -78,6 +78,17 @@
         "command": "groovyscope checkup --agent"
       }
     ],
+    "userPromptSubmit": [
+      {
+        "command": "groovyscope hook"
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "write",
+        "command": "groovyscope hook"
+      }
+    ],
     "postToolUse": [
       {
         "matcher": "write",
