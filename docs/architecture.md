@@ -381,6 +381,7 @@ deliberately loose so shared runners do not fail the build.
 | `hooks.py` | `groovyscope hook`: the write a `preToolUse` call is about to make (the text after it, rebuilt from the tool input), the after-write check and the opt-in stop gate Kiro runs |
 | `gate.py` | the edit gate's verdict on a candidate text: findings it introduces (by code and message, so old errors never lock a file), block or warn by `hooks.preWrite.mode`, the lines it adds, and the edit policy a Groovy prompt is shown |
 | `coverage_check.py` | the coverage threshold: line coverage per changed source file (or of the workspace) from the JaCoCo report against `coverage.minimumPercent`; only a report newer than the change blocks, a stale or missing one names the command that refreshes it |
+| `mcp_testplan.py` | `test_plan`: the tests reaching a method (from `impact_of`), split unit and integration with their Gradle commands, the reaching tests a check marks as repeated, and `needed`, built from the JaCoCo line and branch counters of a fresh report or, without one, from the parameters' boundaries |
 | `plans.py` | planned writes from `edit_symbol`, kept privately under the cache per workspace: the `preToolUse` gate trusts a write that applies one, and `postToolUse` says whether the file holds what was planned |
 | `source_lines.py` | a small Groovy lexer that tells comment lines from code lines and finds Javadoc blocks (strings and their four quotes included) |
 | `verify.py` | the tests a change reaches and the one Gradle command that compiles and runs them |

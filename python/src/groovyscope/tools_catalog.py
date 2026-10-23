@@ -49,6 +49,7 @@ TOOL_INFO: dict[str, tuple[str, bool]] = {
     "check_naming": ("Naming findings and facts", True),
     "symbol_context": ("Symbol context in one call", True),
     "test_results": ("Test results from JUnit XML", True),
+    "test_plan": ("Tests to add, and only those", True),
     "merge_conflicts": ("Merge conflicts and their hunks", True),
     "resolve_conflicts": ("Resolve merge conflict hunks", False),
     "merge_review": ("Review a merge for lost code", True),
@@ -103,6 +104,10 @@ DESCRIPTIONS: dict[str, str] = {
         "or [{hunk, text}]; SUGGESTED for the rest; parsed first; APPLY writes."
     ),
     "merge_review": "Declarations a merge lost or changes it dropped, in Groovy files both sides changed (or PATHS).",
+    "test_plan": (
+        "For SYMBOL (Class.method) or every method the branch changed: the tests reaching it, repeated tests, and "
+        "`needed`: the gaps to test, nothing else."
+    ),
 }
 
 

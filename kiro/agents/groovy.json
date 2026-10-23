@@ -34,6 +34,7 @@
     "@groovyscope/check_naming",
     "@groovyscope/symbol_context",
     "@groovyscope/test_results",
+    "@groovyscope/test_plan",
     "@groovyscope/merge_conflicts",
     "@groovyscope/merge_review"
   ],

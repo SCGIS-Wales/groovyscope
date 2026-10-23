@@ -30,6 +30,7 @@ from groovyscope import (
     mcp_edit,
     mcp_merge,
     mcp_search,
+    mcp_testplan,
     mcp_understanding,
     practices,
     render,
@@ -1361,6 +1362,11 @@ def build_tools(
     tools.update(
         mcp_understanding.understanding_tools(
             root, call, cap, tools, confirm_policy=policy, shared_callers=shared_callers
+        )
+    )
+    tools.update(
+        mcp_testplan.test_plan_tools(
+            root, cap, tools, report_settings=report_settings or {}, verify_settings=verify_settings
         )
     )
     return tools
