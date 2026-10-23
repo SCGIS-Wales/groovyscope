@@ -149,7 +149,7 @@ def write_intent(payload: Mapping[str, Any], root: Path) -> WriteIntent | None:
     if not is_groovy_source(path) or not path.is_relative_to(root.resolve()) or path.is_dir():
         return None
     try:
-        before = path.read_text(encoding="utf-8") if path.is_file() else ""
+        before = path.read_bytes().decode("utf-8") if path.is_file() else ""
     except (OSError, UnicodeDecodeError):
         return None
     command = str(tool_input.get("command") or ("create" if _whole_text(tool_input) is not None else ""))

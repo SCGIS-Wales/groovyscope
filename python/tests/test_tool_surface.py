@@ -14,8 +14,9 @@ from groovyscope import mcp_server, tools_catalog
 # Before Stage 16 the 27 schemas came to 21,768 bytes. The budget leaves room for a tool or two, not for a
 # return of the boilerplate; raise it only with the numbers in docs/roadmap.md. Stage 22 (merge conflicts): the
 # 29 tools came to 13,986 bytes, the three merge tools add about 1,000. Stage 23 (unused code): find_unused adds
-# 452, to 15,455.
-SCHEMA_BUDGET_BYTES = 15_500
+# 452, to 15,455. Stage 24 (edit gate): edit_symbol adds 715, to 16,170; the edit intelligence plan lets the
+# later phases' tools take it towards 18,500.
+SCHEMA_BUDGET_BYTES = 16_200
 DESCRIPTION_LIMIT = 230
 INSTRUCTIONS_LIMIT = 700
 

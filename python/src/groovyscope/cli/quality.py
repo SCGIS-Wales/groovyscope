@@ -211,7 +211,7 @@ def planned_outcomes(root: Path, paths: Sequence[Path], effective: Mapping[str, 
     lines = []
     for path in paths:
         try:
-            written = path.read_text(encoding="utf-8")
+            written = path.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         found = plans.outcome(plans.store_for(root, dict(os.environ)), path, written, clock=time.time, ttl_minutes=ttl)
