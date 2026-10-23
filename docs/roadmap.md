@@ -439,7 +439,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   452 for `find_unused`; the budget goes from 15,100 to 15,500.
   Done when: merged and released (0.28.0, verified from PyPI: `groovyscope unused` lists the items and exits 1,
   `groovyscope review` opens with them); the owner's next review in Kiro is listed under the owner checks.
-- [ ] **Edit intelligence plan** — [docs/edit-intelligence-plan.md](edit-intelligence-plan.md), from 2026-10-23,
+- [x] **Edit intelligence plan** — Stages 24 to 30 released in 0.30.0 to 0.36.0; [docs/edit-intelligence-plan.md](edit-intelligence-plan.md), from 2026-10-23,
   one stage per phase (Stages 24 to 30): the edit gate, concise comments, value types, reuse, lean tests with
   coverage at 80%, object oriented edits, and the Kiro assets. Decisions taken with the plan's suggestions: the tool
   budget is raised rather than tools dropped, the gate starts in `warn` mode for one release, `requirePlan` is off
@@ -530,7 +530,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   `demo.Strings.slug`; `suggest_reuse` on it returns the original with a score).
   Verified from PyPI: 0.32.0 refuses writing the fixture's `Copied.groovy` with `[GS080] repeat demo.Strings.slug`.
 
-- [ ] **Stage 29: object oriented edits and design findings** (edit plan Phase 6, branch `feat/design-edits`): the
+- [x] **Stage 29: object oriented edits and design findings** — released in 0.35.0 (PR #143); edit plan Phase 6: the
   engine's `groovyscope/changeSignature`, `extractMethod` and `moveMember` (edits for every static call site, one
   exact replacement per file, refused on a call matched by name only, named or spread arguments, an argument with
   side effects, an override, instance state or a private field the move would lose) and an `Extract method` code
@@ -550,9 +550,11 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   `class_design` 389, to 19,241, over the plan's 18,500 by the design tool, kept as the plan decided.
   Done when: merged and released, verified from PyPI (`change_signature` on a method with three call sites updates
   them; `extract_method` leaves code that compiles).
+  Verified: the integration tests on the 0.35.0 engine apply both; 0.36.0 from PyPI reports GS097 on a stateless
+  method.
 
-- [ ] **Stage 30: Kiro assets and documentation for the edit intelligence plan** (edit plan Phase 7, branch
-  `docs/edit-intelligence`): the steering regrouped under "Every edit", 73 lines; four skills and MCP prompts
+- [x] **Stage 30: Kiro assets and documentation for the edit intelligence plan** — released in 0.36.0 (PR #145);
+  edit plan Phase 7: the steering regrouped under "Every edit", 73 lines; four skills and MCP prompts
   (`groovy-edit`, `groovy-tests`, `groovy-design`, `groovy-reuse`, eighteen in all); the reviewer agent gains the
   read-only `class_design`, `test_plan` and `suggest_reuse` from the catalogue, the edit tools stay out of
   `allowedTools` and ask under V3; README (the planned write flow), `docs/prompts.md` (four recipes),
@@ -561,6 +563,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   under the cache). Not done: the plan's benchmark repeat (tasks 3 and 4 with the gate on) costs Kiro credits, so it
   waits for the owner's say-so, as `docs/benchmark.md` requires. Done when: merged and released, verified from PyPI
   (`groovyscope kiro init` writes eighteen skills; the MCP server lists eighteen prompts).
+  Verified from PyPI: 0.36.0's `groovyscope kiro init` writes eighteen skills.
 
 ## Owner checks still open
 
