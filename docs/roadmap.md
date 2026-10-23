@@ -461,7 +461,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   `apply`: asked, written, recompiled, rolled back on new errors); `apply_verified` moved to `edits.py` and shared
   with `rename`; both hooks in the agent template, `kiro attach` adds them and `doctor` names agents without them
   and the gate's mode. Tool surface: 15,455 bytes, plus 715 for `edit_symbol`; the budget goes from 15,500 to
-  16,200. Done when: merged and released, verified from PyPI (`groovyscope hook` on a `preToolUse` payload that
+  16,200. Not done: static type errors in the preview (it compiles to class resolution, as `check`'s compile does); Stage 26 adds them with GS077. The publish of 0.29.0 failed after PyPI, on a partial upload of the GitHub Release assets; the upload now uses `--clobber` so a re-run completes it.
+  Done when: merged and released, verified from PyPI (`groovyscope hook` on a `preToolUse` payload that
   adds a compile error reports it; `doctor` shows the edit gate line).
 
 ## Owner checks still open
