@@ -33,12 +33,19 @@ class GateSettings(TypedDict):
     requirePlanAboveLines: int
 
 
+class CommentPolicy(TypedDict):
+    maxAddedShare: float
+    minAddedLines: int
+    exemptPublicJavadoc: bool
+
+
 class Change(TypedDict):
     addedLines: int
     removedLines: int
     addedCodeLines: int
     addedCommentLines: int
     addedComments: list[int]  # 1-based lines of the candidate
+    exemptJavadocLines: int  # one added Javadoc line per non-private member, left out of the comment share
 
 
 class Verdict(TypedDict):
@@ -66,6 +73,35 @@ def settings(effective: Mapping[str, Any]) -> GateSettings:
     }
 
 
+def comment_policy(effective: Mapping[str, Any]) -> CommentPolicy:
+    """The ``comments`` keys the gate reads, with the defaults filled in."""
+    section: Mapping[str, Any] = effective.get("comments") or {}
+
+    def value(key: str) -> Any:
+        return section.get(key, config_module.default("comments", key))
+
+    return {
+        "maxAddedShare": float(value("maxAddedShare")),
+        "minAddedLines": int(value("minAddedLines")),
+        "exemptPublicJavadoc": bool(value("exemptPublicJavadoc")),
+    }
+
+
+def exempt_javadoc(after: str, added: set[int], javadoc: Sequence[tuple[int, int]], code: set[int]) -> int:
+    """Javadoc blocks the write adds to, above a member that is not private: one line each."""
+    lines = after.splitlines()
+    exempt = 0
+    for first, last in javadoc:
+        if not added.intersection(range(first, last + 1)):
+            continue
+        following = next((n for n in range(last + 1, len(lines) + 1) if n in code), None)
+        while following is not None and lines[following - 1].lstrip().startswith("@"):
+            following = next((n for n in range(following + 1, len(lines) + 1) if n in code), None)
+        if following is not None and not lines[following - 1].lstrip().startswith("private "):
+            exempt += 1
+    return exempt
+
+
 def change(before: str, after: str) -> Change:
     """Lines added and removed by the write, and how many of the added lines are comment and how many code."""
     old, new = before.splitlines(), after.splitlines()
@@ -85,7 +121,27 @@ def change(before: str, after: str) -> Change:
         "addedCodeLines": len(code),
         "addedCommentLines": len(comments),
         "addedComments": comments,
+        "exemptJavadocLines": exempt_javadoc(after, set(added), kinds["javadoc"], kinds["code"]),
     }
+
+
+def comment_share_reason(found: Change, policy: CommentPolicy) -> str | None:
+    """Why the write adds too many comment lines, or None: the share applies to writes that add
+    ``comments.minAddedLines`` or more and counts one Javadoc line per non-private member out when allowed."""
+    if found["addedLines"] < policy["minAddedLines"]:
+        return None
+    exempt = found["exemptJavadocLines"] if policy["exemptPublicJavadoc"] else 0
+    counted = max(0, found["addedCommentLines"] - exempt)
+    share = counted / found["addedLines"]
+    if share <= policy["maxAddedShare"]:
+        return None
+    shown = ", ".join(str(n) for n in found["addedComments"][:SHOWN])
+    more = "..." if len(found["addedComments"]) > SHOWN else ""
+    return (
+        f"{counted} of the {found['addedLines']} added lines are comments ({share:.0%}, at most "
+        f"{policy['maxAddedShare']:.0%}, comments.maxAddedShare) at lines {shown}{more}: say why in one line, "
+        "or nothing"
+    )
 
 
 def introduced(candidate: Sequence[Mapping[str, Any]], current: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -109,12 +165,18 @@ def evaluate(
     mode: str,
     before: str,
     after: str,
+    comments: CommentPolicy | None = None,
 ) -> Verdict:
-    """The verdict on a write that turns ``before`` into ``after``."""
+    """The verdict on a write that turns ``before`` into ``after``; with ``comments``, a write whose added lines are
+    too much comment counts as a blocking reason too."""
     found = introduced(candidate, current)
     reasons = [f"line {e.get('line')}:{e.get('column')} does not parse: {e.get('message')}" for e in syntax]
     errors = [row for row in found if int(row.get("level", 3)) <= ERROR_LEVEL]
     reasons += [f"line {r.get('line')}: [{r.get('source')}/{r.get('code')}] {r.get('message')}" for r in errors]
+    changed = change(before, after)
+    share = comment_share_reason(changed, comments) if comments else None
+    if share:
+        reasons.append(share)
     decision: Decision = "pass"
     if reasons:
         decision = "block" if mode == "block" else "warn"
@@ -123,7 +185,7 @@ def evaluate(
         "reasons": reasons,
         "introduced": found,
         "existing": max(0, len(candidate) - len(found)),
-        "change": change(before, after),
+        "change": changed,
     }
 
 
@@ -145,7 +207,16 @@ def rows(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def check_candidate(call: EngineCall, root: Path, path: Path, *, before: str, after: str, mode: str) -> Verdict:
+def check_candidate(
+    call: EngineCall,
+    root: Path,
+    path: Path,
+    *,
+    before: str,
+    after: str,
+    mode: str,
+    comments: CommentPolicy | None = None,
+) -> Verdict:
     """The verdict on writing ``after`` to ``path``: the engine previews the candidate (nothing is written) and
     checks the current file, so only what the write introduces counts. Engine errors propagate."""
     uri = path.as_uri()
@@ -162,6 +233,7 @@ def check_candidate(call: EngineCall, root: Path, path: Path, *, before: str, af
         mode=mode,
         before=before,
         after=after,
+        comments=comments,
     )
 
 
@@ -197,6 +269,11 @@ def policy_summary(effective: Mapping[str, Any]) -> str:
             f"- every write is gated before it lands ({gate['mode']} mode): new syntax and compile errors "
             + ("block it" if gate["mode"] == "block" else "are reported")
         )
+    policy = comment_policy(effective)
+    lines.append(
+        f"- comments say why, in one line; at most {policy['maxAddedShare']:.0%} of a write's added lines may be "
+        "comments"
+    )
     if gate["requirePlan"]:
         lines.append(f"- writes to Groovy files over {gate['requirePlanAboveLines']} lines need an edit_symbol plan")
     return "\n".join(lines)

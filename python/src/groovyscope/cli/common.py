@@ -595,6 +595,7 @@ def tool_settings(effective: Mapping[str, Any], classpath: Mapping[str, Any] | N
         "verify": effective.get("verify", {}),
         "edits": effective.get("edits", {}),
         "hooks": effective.get("hooks", {}),
+        "comments": effective.get("comments", {}),
         "classpath": dict(classpath or {}),
         "mcp": dict(effective.get("mcp") or {}),
         "merge": {**(effective.get("merge") or {}), "maxFileBytes": effective["workspace"].get("maxFileBytes")},

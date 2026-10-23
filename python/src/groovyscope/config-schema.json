@@ -645,6 +645,10 @@
           "minimum": 0,
           "maximum": 1
         },
+        "minAddedLines": {
+          "type": "integer",
+          "minimum": 1
+        },
         "exemptPublicJavadoc": {
           "type": "boolean"
         }

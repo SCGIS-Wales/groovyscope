@@ -85,7 +85,8 @@ def fix_checklist(catalogue: Mapping[str, Any]) -> str:
     bullets = (
         f"Applied without naming a code, behaviour kept: {listed('preserving')}, and the semicolon, whitespace and "
         "blank line fixes the formatter also makes.",
-        f"Applied only when named in `codes`, because the fix changes behaviour: {listed('changing')}.",
+        f"Applied only when named in `codes`, because the fix changes behaviour or deletes what its author wrote: "
+        f"{listed('changing')}.",
     )
     return "\n".join(
         textwrap.fill(bullet, FIX_CHECKLIST_WIDTH, initial_indent="- ", subsequent_indent="  ") for bullet in bullets

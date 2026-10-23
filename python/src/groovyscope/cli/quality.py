@@ -291,7 +291,13 @@ def gate_with_engine(
 
     try:
         verdict = gate.check_candidate(
-            call, root, intent["path"], before=intent["before"], after=str(intent["after"]), mode=settings["mode"]
+            call,
+            root,
+            intent["path"],
+            before=intent["before"],
+            after=str(intent["after"]),
+            mode=settings["mode"],
+            comments=gate.comment_policy(effective),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"groovyscope gate: write to {shown} not checked ({exc})")

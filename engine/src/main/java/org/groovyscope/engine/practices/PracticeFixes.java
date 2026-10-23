@@ -88,7 +88,7 @@ public final class PracticeFixes {
         for (TextEdit edit : dynamic.edits()) {
             edits.add(edit.newText().endsWith("@CompileDynamic\n")
                     ? new TextEdit(edit.range(), edit.newText().replace("@CompileDynamic\n",
-                            "@CompileDynamic // TODO justify why this class stays dynamic (it does not type-check)\n"))
+                            "@CompileDynamic // dynamic: it does not type-check; say here why it must stay so\n"))
                     : edit);
         }
         return new CodeAction(dynamic.title(), dynamic.diagnostic(), edits);

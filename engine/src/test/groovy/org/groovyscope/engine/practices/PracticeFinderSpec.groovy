@@ -185,7 +185,7 @@ class PracticeFinderSpec extends Specification {
         then: '@CompileDynamic is the default made explicit; @CompileStatic and GS011 change behaviour'
         annotation('Clean.groovy') == null
         result.needsReview()[uri('Clean.groovy')].CompileStatic == 1
-        annotation('Numbers.groovy').startsWith('@CompileDynamic // TODO justify')
+        annotation('Numbers.groovy').startsWith('@CompileDynamic // dynamic: it does not type-check')
         annotation('Logging.groovy') == null // it type-checks: @CompileStatic, which needs review
         result.applied()[uri('ThingSpec.groovy')] == null
         result.needsReview()[uri('ThingSpec.groovy')] == [GS011: 1]

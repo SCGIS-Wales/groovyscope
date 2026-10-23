@@ -449,7 +449,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   [research/2026-10-23-edit-gate-facts.md](research/2026-10-23-edit-gate-facts.md) (the owner's capture of
   Kiro's payloads is pending), `scripts/edit_gate_metrics.py`, and the `edit-gate` fixture; released in 0.29.0
   (PR #131).
-- [ ] **Stage 24: the edit gate** (edit plan Phase 1, branch `feat/edit-gate`): the engine's `groovyscope/preview`
+- [x] **Stage 24: the edit gate** — released in 0.30.0 (PR #133); edit plan Phase 1: the engine's `groovyscope/preview`
   (compile, lint and practices on candidate texts, nothing written, the snapshot untouched) and `groovyscope/edit`
   (one declaration replaced, its body replaced, text inserted around it, deleted, a member or an import added,
   re-indented, with an `oldStr` unique in the file); `gate.py` (only introduced findings count, by code and
@@ -464,6 +464,21 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   16,200. Not done: static type errors in the preview (it compiles to class resolution, as `check`'s compile does); Stage 26 adds them with GS077. The publish of 0.29.0 failed after PyPI, on a partial upload of the GitHub Release assets; the upload now uses `--clobber` so a re-run completes it.
   Done when: merged and released, verified from PyPI (`groovyscope hook` on a `preToolUse` payload that
   adds a compile error reports it; `doctor` shows the edit gate line).
+  Verified from PyPI: 0.30.0 reports `unable to resolve class Gone` for a `preToolUse` write in warn mode, and
+  `doctor` prints the edit gate line; the GitHub Release carries all seven assets.
+- [ ] **Stage 25: concise comments** (edit plan Phase 2, branch `feat/comments-gate`): GS060 (a comment that
+  restates the next statement), GS061 (a comment block in a method body over `comments.maxBlockLines`), GS062
+  (Javadoc on a private member, over `comments.maxJavadocLines` text lines, or a tag that repeats the signature),
+  GS063 (commented out code, parsed to tell it from prose), GS064 (banners, empty comments, a TODO without an
+  owner) and GS065 (comment density over `comments.maxDensity`), in a new `comments` group, from a lexer that knows
+  the four Groovy string quotes; fixes remove the restating, dead and decorative lines (GS060 and GS063 only when
+  named). The edit gate holds back a write of `comments.minAddedLines` or more whose added lines are over
+  `comments.maxAddedShare` comment, one Javadoc line per non-private member exempt. The `@CompileDynamic` fix no
+  longer writes an unowned TODO. Calibrated on CodeNarc's sources (529 files): 105 findings, every GS060, GS061,
+  GS063 and GS065 finding and ten of GS062 and GS064 judged by hand, none false after the heuristics were tightened
+  (the first run had 2 of 7 GS060 and 7 of 12 GS063 false); the comment checks take about 350 ms for the corpus.
+  Done when: merged and released, verified from PyPI (the fixture's `Verbose.groovy` reports GS060, GS061 and GS065;
+  a write adding five comment lines to ten code lines is held back).
 
 ## Owner checks still open
 
@@ -489,6 +504,8 @@ without them.
 - Stage 24: one `edit_symbol` dry run applied through Kiro's `write` (the diff prompt shown, `planned write
   applied` after it), and one write that adds a compile error with `hooks.preWrite.mode: block` (refused, the
   reason shown to the agent).
+- Stage 25: one Kiro session that writes a heavily commented method, to see the gate's comment share message and
+  GS060 to GS065 in the after-write block.
 - Repository settings: the `RELEASE_PLEASE_TOKEN` secret, "Allow auto-merge", and the decisions listed in
   section 13 of the improvement plan (ruleset, `pypi` environment tag rule, GitHub App, Scorecard, lockfiles,
   code owner review).
