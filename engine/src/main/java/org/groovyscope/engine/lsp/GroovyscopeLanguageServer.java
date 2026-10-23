@@ -294,6 +294,24 @@ public final class GroovyscopeLanguageServer implements LanguageServer, Language
         return quality.parse(params);
     }
 
+    /**
+     * Findings of candidate texts of workspace documents as if saved, nothing written and the snapshot untouched
+     * (see {@link QualityRequests#preview}).
+     */
+    @JsonRequest("groovyscope/preview")
+    public CompletableFuture<Map<String, Object>> preview(Map<String, Object> params) {
+        return quality.preview(params);
+    }
+
+    /**
+     * One declaration edited as an object, answered as a new text and a {@code str_replace}, nothing written (see
+     * {@link QualityRequests#edit}).
+     */
+    @JsonRequest("groovyscope/edit")
+    public CompletableFuture<Map<String, Object>> edit(Map<String, Object> params) {
+        return quality.edit(params);
+    }
+
     /** Impact of changing a declaration (see {@link ExplainGraphRequests#impact}). */
     @JsonRequest("groovyscope/impact")
     public CompletableFuture<List<Map<String, Object>>> impact(Map<String, Object> params) {

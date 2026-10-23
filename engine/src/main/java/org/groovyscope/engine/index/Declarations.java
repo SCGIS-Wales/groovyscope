@@ -69,12 +69,31 @@ public final class Declarations {
     private Declarations() {
     }
 
+    /**
+     * One declaration with the syntax tree node it was read from, for callers that need more than its line range
+     * (the braces of a method body or of a class).
+     *
+     * @param declaration the declaration
+     * @param node its class, method, constructor, field or property node
+     */
+    public record Located(Declaration declaration, AnnotatedNode node) {
+    }
+
     /** The declarations of {@code module} in source order; empty for a null module. */
     public static List<Declaration> of(ModuleNode module) {
+        List<Declaration> declarations = new ArrayList<>();
+        for (Located located : located(module)) {
+            declarations.add(located.declaration());
+        }
+        return declarations;
+    }
+
+    /** The declarations of {@code module} in source order, each with its node; empty for a null module. */
+    public static List<Located> located(ModuleNode module) {
         if (module == null) {
             return List.of();
         }
-        List<Declaration> found = new ArrayList<>();
+        List<Located> found = new ArrayList<>();
         for (ClassNode classNode : module.getClasses()) {
             if (anonymous(classNode)) {
                 continue;
@@ -101,16 +120,18 @@ public final class Declarations {
             if (placed && classNode.isScript()) {
                 // Groovy gives a script's class the extent of its statements; it is the whole script, methods
                 // included.
-                found.set(membersFrom - 1, spanning(found.get(membersFrom - 1),
-                        found.subList(membersFrom, found.size())));
+                Located script = found.get(membersFrom - 1);
+                found.set(membersFrom - 1, new Located(spanning(script.declaration(),
+                        found.subList(membersFrom, found.size())), script.node()));
             }
         }
-        found.sort(Comparator.comparingInt(Declaration::line).thenComparingInt(Declaration::column));
+        found.sort(Comparator.comparingInt((Located located) -> located.declaration().line())
+                .thenComparingInt(located -> located.declaration().column()));
         return found;
     }
 
     /** Adds the declaration unless it is synthetic or has no position; true when it was added. */
-    private static boolean add(List<Declaration> found, String name, Kind kind, AnnotatedNode node) {
+    private static boolean add(List<Located> found, String name, Kind kind, AnnotatedNode node) {
         if (node.isSynthetic() || node.getLineNumber() < 1) {
             return false;
         }
@@ -121,16 +142,17 @@ public final class Declarations {
             }
         }
         int endLine = Math.max(line, node.getLastLineNumber());
-        found.add(new Declaration(name, kind, line, endLine, Math.max(1, node.getColumnNumber())));
+        found.add(new Located(new Declaration(name, kind, line, endLine, Math.max(1, node.getColumnNumber())), node));
         return true;
     }
 
     /** {@code declaration} widened to cover {@code members} as well. */
-    private static Declaration spanning(Declaration declaration, List<Declaration> members) {
+    private static Declaration spanning(Declaration declaration, List<Located> members) {
         int line = declaration.line();
         int endLine = declaration.endLine();
         int column = declaration.column();
-        for (Declaration member : members) {
+        for (Located located : members) {
+            Declaration member = located.declaration();
             if (member.line() < line) {
                 line = member.line();
                 column = member.column();
