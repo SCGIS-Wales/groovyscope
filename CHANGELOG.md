@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.28.1...v0.29.0) (2026-10-23)
+
+
+### Features
+
+* edit gate baseline (hook capture, facts, metrics, fixture) ([#131](https://github.com/SCGIS-Wales/groovyscope/issues/131)) ([87c38e9](https://github.com/SCGIS-Wales/groovyscope/commit/87c38e940ce549c83bc6f824f868d81ca3fd1bc6))
+
 ## [0.28.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.28.0...v0.28.1) (2026-10-21)
 
 
