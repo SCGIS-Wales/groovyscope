@@ -466,7 +466,7 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   adds a compile error reports it; `doctor` shows the edit gate line).
   Verified from PyPI: 0.30.0 reports `unable to resolve class Gone` for a `preToolUse` write in warn mode, and
   `doctor` prints the edit gate line; the GitHub Release carries all seven assets.
-- [ ] **Stage 25: concise comments** (edit plan Phase 2, branch `feat/comments-gate`): GS060 (a comment that
+- [x] **Stage 25: concise comments** — released in 0.31.0 (PR #135); edit plan Phase 2: GS060 (a comment that
   restates the next statement), GS061 (a comment block in a method body over `comments.maxBlockLines`), GS062
   (Javadoc on a private member, over `comments.maxJavadocLines` text lines, or a tag that repeats the signature),
   GS063 (commented out code, parsed to tell it from prose), GS064 (banners, empty comments, a TODO without an
@@ -479,6 +479,8 @@ PyPI trusted publisher (workflow `workflow.yml`); engine in Java 21; Groovy only
   (the first run had 2 of 7 GS060 and 7 of 12 GS063 false); the comment checks take about 350 ms for the corpus.
   Done when: merged and released, verified from PyPI (the fixture's `Verbose.groovy` reports GS060, GS061 and GS065;
   a write adding five comment lines to ten code lines is held back).
+  Verified from PyPI: 0.31.0 reports GS060 (3), GS061, GS062 (2), GS063, GS064 (3) and GS065 on the fixture's
+  `Verbose.groovy`.
 
 ## Owner checks still open
 

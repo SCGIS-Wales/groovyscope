@@ -1054,3 +1054,14 @@ def test_read_symbol_takes_max_chars_as_documented(tmp_path: Path) -> None:
     assert seen[-1]["maxChars"] == 40
     asyncio.run(server.call_tool("read_symbol", {"path": "src/A.groovy", "symbol": "A", "max_chars": 99999}))
     assert seen[-1]["maxChars"] == 16000  # never above output.maxBytes
+
+
+def test_impact_lists_integration_tests_apart(tmp_path: Path) -> None:
+    def site(path: str) -> dict[str, Any]:
+        location = {"uri": (tmp_path / path).as_uri(), "range": {"start": {"line": 0, "character": 0}}}
+        return {"caller": {"name": "t", "location": location}, "callee": {"name": "save"}, "site": location}
+
+    report = {"symbol": {"name": "save"}, "tests": [site("src/test/groovy/A.groovy"), site("src/it/groovy/AIT.groovy")]}
+    compact = mcp_server.compact_report(report, tmp_path, 5)
+    assert [s["caller"]["location"]["path"] for s in compact["tests"]] == ["src/test/groovy/A.groovy"]
+    assert [s["caller"]["location"]["path"] for s in compact["integrationTests"]] == ["src/it/groovy/AIT.groovy"]

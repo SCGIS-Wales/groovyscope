@@ -132,6 +132,8 @@ verify:
   runTasks: ["test"]      # test tasks `groovyscope verify` runs; affected tests of other tasks (integrationTest) are listed for CI
   timeoutSeconds: 1800    # the Gradle run's budget
   coverageTask: "jacocoTestReport"  # `verify --coverage` adds it when the build applies JaCoCo, then reads reports.jacoco
+  integrationTasks: ["integrationTest"]  # `verify --integration` also runs these locally ...
+  integrationNeeds: []    # ... unless they need what a laptop lacks (["credentials"]): then they are listed with the reason
 classpath:
   timeoutSeconds: 900     # longest the build may run when `groovyscope classpath` or refresh_classpath exports the
                           # classpath; the MCP tool answers within mcp.requestTimeoutSeconds and the export goes on

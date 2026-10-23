@@ -392,3 +392,64 @@ def test_verify_coverage_fails_under_the_threshold_on_a_fresh_report(
     review["result"]["coverage"] = {"verdict": "stale", "note": "the report predates the change"}
     plain = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify"])
     assert plain.exit_code == 0 and "coverage: the report predates the change" in plain.output
+
+
+def test_integration_tests_left_behind_by_a_signature_change_are_gs049() -> None:
+    assert verify.is_integration_path("src/it/groovy/app/StoreIT.groovy")
+    assert verify.is_integration_path("src/integrationTest/java/app/Store.java")
+    assert verify.is_integration_path("src/test/groovy/app/StoreIT.groovy")
+    assert not verify.is_integration_path("src/test/groovy/app/StoreSpec.groovy")
+
+    def site(path: str) -> dict[str, Any]:
+        return {"caller": {"location": {"path": path}}}
+
+    declaration = {"symbol": "Store.save", "path": "src/main/groovy/app/Store.groovy", "lines": [5, 9]}
+    report = {
+        "directCallers": [site("src/main/groovy/app/Shop.groovy")],
+        "tests": [site("src/test/groovy/app/StoreSpec.groovy")],
+        "integrationTests": [site("src/it/groovy/app/StoreIT.groovy")],
+    }
+    ranges = {"src/main/groovy/app/Store.groovy": [[5, 5]]}
+    (finding,) = verify.integration_out_of_line([(declaration, report)], ranges)
+    assert finding["code"] == "GS049" and finding["severity"] == "error" and finding["line"] == 5
+    assert "src/it/groovy/app/StoreIT.groovy" in finding["message"]
+    both = {**ranges, "src/it/groovy/app/StoreIT.groovy": [[3, 4]]}
+    assert verify.integration_out_of_line([(declaration, report)], both) == []  # the branch updated it too
+    body_only = {"src/main/groovy/app/Store.groovy": [[7, 8]]}
+    assert verify.integration_out_of_line([(declaration, report)], body_only) == []
+    tests = verify.affected_tests([{"tests": [], "integrationTests": [
+        {"caller": {"name": "stores", "container": "app.StoreIT", "location": {"path": "src/it/groovy/app/StoreIT.groovy"}}}
+    ]}], [], verify.is_test_path)  # fmt: skip
+    assert tests == [
+        {"className": "app.StoreIT", "method": "stores", "path": "src/it/groovy/app/StoreIT.groovy", "sourceSet": "it"}
+    ]
+
+
+def test_verify_integration_runs_the_integration_tasks_or_says_what_they_need(tmp_path: Path) -> None:
+    from groovyscope.cli import quality
+
+    added, needs = quality.with_integration({"verify": {"runTasks": ["test"]}})
+    assert added["verify"]["runTasks"] == ["test", "integrationTest"] and needs == []
+    kept, needs = quality.with_integration({"verify": {"integrationNeeds": ["credentials"]}})
+    assert kept == {"verify": {"integrationNeeds": ["credentials"]}} and needs == ["credentials"]
+    plan_result = {"inCi": {"integrationTest": ["app.StoreIT"]}}
+    assert quality.held_back_lines(["credentials"], plan_result) == [
+        "integration tests not run here (they need credentials): name them in the change"
+    ]
+    assert quality.held_back_lines([], plan_result) == [] and quality.held_back_lines(["x"], {}) == []
+
+
+def test_verify_integration_flag_reaches_the_review(
+    review: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def tools(_obj: Any, _socket: Any, effective: dict[str, Any]) -> dict[str, Any]:
+        seen.append(effective)
+        return {"review_changes": lambda *_a: review["result"]}
+
+    monkeypatch.setattr(cli_common, "workspace_tools", tools)
+    review["result"]["tests"]["inCi"] = {"integrationTest": ["app.StoreIT"]}
+    out = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--integration", "--dry-run"])
+    assert out.exit_code == 0, out.output
+    assert seen[-1]["verify"]["runTasks"] == ["test", "integrationTest"]

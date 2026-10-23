@@ -208,6 +208,13 @@ def summarise(
     return (rest, extra)
 
 
+def integration_site(site: Mapping[str, Any]) -> bool:
+    """A call site in an integration test (its own source set, or an ``*IT`` class)."""
+    location = (site.get("caller") or {}).get("location") or {}
+    uri = str(location.get("uri") or "")
+    return verify.is_integration_path(uri.removeprefix("file://") or str(location.get("path") or ""))
+
+
 def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str, Any]:
     return {
         "symbol": compact_symbol(report["symbol"], root),
@@ -218,7 +225,8 @@ def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str,
         "directCallers": [compact_site(s, root) for s in report.get("directCallers", [])][:cap],
         "transitiveCallers": [compact_site(s, root) for s in report.get("transitiveCallers", [])][:cap],
         "overrides": [compact_symbol(s, root) for s in report.get("overrides", [])],
-        "tests": [compact_site(s, root) for s in report.get("tests", [])][:cap],
+        "tests": [compact_site(s, root) for s in report.get("tests", []) if not integration_site(s)][:cap],
+        "integrationTests": [compact_site(s, root) for s in report.get("tests", []) if integration_site(s)][:cap],
         "dynamicUnknowns": [compact_site(s, root) for s in report.get("dynamicUnknowns", [])][:cap],
         "suggestedChecks": report.get("suggestedChecks", []),
     }
@@ -1185,37 +1193,8 @@ def review_changes(
     limit = max(1, min(top, cap))
     dead = unused_review(inside, elsewhere, cap)
     kinds = dead["unused"]["byKind"]
-    impact: list[dict[str, Any]] = []
-    reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
-    touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
-    for file in existing[:cap]:
-        if len(reports) >= verify.MAX_DECLARATIONS:
-            break
-        outline = flat_outline(
-            call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
-        )
-        for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
-            touched.append({**declaration, "path": file["path"]})
-            if len(reports) >= verify.MAX_DECLARATIONS:
-                break
-            report = others["impact_of"](impact_target(declaration), "signature")
-            if not report.get("found"):
-                continue
-            first = report["reports"][0]
-            reports.append(first)
-            if len(impact) >= limit:
-                continue
-            impact.append(
-                {
-                    **declaration,
-                    "path": file["path"],
-                    "riskLevel": first.get("riskLevel"),
-                    "riskScore": first.get("riskScore"),
-                    "callers": first.get("counts", {}),
-                    "tests": len(first.get("tests", [])),
-                    "dynamicSites": len(first.get("dynamicUnknowns", [])),
-                }
-            )
+    impact, reports, touched, impacted = declaration_impacts(root, call, cap, existing, others, limit)
+    buckets["blocking"] += verify.integration_out_of_line(impacted, ranges)
     risky: list[dict[str, Any]] = []
     for kind in changes.RISKY_KINDS:
         matches = others["find_code"](kind, paths=paths).get("items", [])
@@ -1260,6 +1239,54 @@ def review_changes(
         result["verdict"], result["counts"], impact, len(uncovered), len(comments), unused_kinds=kinds
     )
     return result
+
+
+def declaration_impacts(
+    root: Path,
+    call: Call,
+    cap: int,
+    existing: Sequence[Mapping[str, Any]],
+    others: Mapping[str, Callable[..., Any]],
+    limit: int,
+) -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[tuple[dict[str, Any], dict[str, Any]]]
+]:
+    """For review_changes: the ``impact`` rows of the first ``limit`` changed declarations, every changed
+    declaration's impact report, the changed declarations, and each declaration paired with its report."""
+    impact: list[dict[str, Any]] = []
+    reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
+    touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
+    impacted: list[tuple[dict[str, Any], dict[str, Any]]] = []  # changed declarations with their impact reports
+    for file in existing[:cap]:
+        if len(reports) >= verify.MAX_DECLARATIONS:
+            break
+        outline = flat_outline(
+            call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
+        )
+        for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
+            touched.append({**declaration, "path": file["path"]})
+            if len(reports) >= verify.MAX_DECLARATIONS:
+                break
+            report = others["impact_of"](impact_target(declaration), "signature")
+            if not report.get("found"):
+                continue
+            first = report["reports"][0]
+            reports.append(first)
+            impacted.append(({**declaration, "path": file["path"]}, first))
+            if len(impact) >= limit:
+                continue
+            impact.append(
+                {
+                    **declaration,
+                    "path": file["path"],
+                    "riskLevel": first.get("riskLevel"),
+                    "riskScore": first.get("riskScore"),
+                    "callers": first.get("counts", {}),
+                    "tests": len(first.get("tests", [])),
+                    "dynamicSites": len(first.get("dynamicUnknowns", [])),
+                }
+            )
+    return impact, reports, touched, impacted
 
 
 def coverage_review(root: Path, settings: Mapping[str, Any], changed: Sequence[str], verdict: str) -> dict[str, Any]:

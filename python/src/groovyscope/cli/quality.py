@@ -539,6 +539,12 @@ def coverage_plan(plan_result: Mapping[str, Any]) -> dict[str, Any]:
     help="With --failed: folders or ZIP archives (a CI artifacts.zip) holding TEST-*.xml.",
 )
 @click.option("--coverage", is_flag=True, help="Also build the JaCoCo report and list changed methods no test ran.")
+@click.option(
+    "--integration",
+    is_flag=True,
+    help="Also run the reached integration tests (verify.integrationTasks), unless verify.integrationNeeds says what "
+    "they need here: then they are listed with that reason.",
+)
 @click.option("--dry-run", is_flag=True, help="Print the plan and the Gradle command without running it.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_obj
@@ -550,6 +556,7 @@ def verify_command(
     failed: bool,
     results_from: tuple[Path, ...],
     coverage: bool,
+    integration: bool,
     dry_run: bool,
     as_json: bool,
 ) -> None:
@@ -563,6 +570,7 @@ def verify_command(
         verify_failed(obj, results_from, dry_run=dry_run, as_json=as_json)
         return
     socket_file, effective = common.daemon_socket_for(obj)
+    effective, held_back = with_integration(effective) if integration else (effective, [])
     tools = common.workspace_tools(obj, socket_file, effective)
     result = tools["review_changes"](base, staged, 8)
     if result.get("error"):
@@ -576,6 +584,7 @@ def verify_command(
         plan_result = coverage_plan(plan_result)
     args = list(plan_result.get("commandArgs") or [])
     lines += verify.test_lines(plan_result)
+    lines += held_back_lines(held_back, plan_result)
     gradle: dict[str, Any] | None = None
     uncovered: dict[str, Any] | None = None
     if args and not dry_run:
@@ -603,6 +612,25 @@ def verify_command(
     under = coverage and threshold.get("verdict") == "below"
     if blocking or under or (gradle is not None and gradle["exitCode"] != 0):
         sys.exit(1)
+
+
+def held_back_lines(needs: Sequence[str], plan_result: Mapping[str, Any]) -> list[str]:
+    """Why the reached integration tests listed above did not run here."""
+    if not needs or not plan_result.get("inCi"):
+        return []
+    return [f"integration tests not run here (they need {', '.join(needs)}): name them in the change"]
+
+
+def with_integration(effective: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The configuration with ``verify.integrationTasks`` added to the tasks ``verify`` runs, or unchanged with
+    what they need (``verify.integrationNeeds``) when that is not empty."""
+    section: Mapping[str, Any] = effective.get("verify") or {}
+    needs = [str(n) for n in section.get("integrationNeeds", config_module.default("verify", "integrationNeeds"))]
+    if needs:
+        return dict(effective), needs
+    run = [str(t) for t in section.get("runTasks", config_module.default("verify", "runTasks"))]
+    extra = [str(t) for t in section.get("integrationTasks", config_module.default("verify", "integrationTasks"))]
+    return {**effective, "verify": {**section, "runTasks": [*run, *(t for t in extra if t not in run)]}}, []
 
 
 def threshold_after(
