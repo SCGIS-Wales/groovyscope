@@ -1,0 +1,9 @@
+plugins {
+    id 'groovy'
+}
+
+sourceSets {
+    it {
+        groovy.srcDir 'src/it/groovy'
+    }
+}

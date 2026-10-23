@@ -97,6 +97,11 @@ finishing. Whether Kiro V3 honours a blocking `Stop` answer is documented both w
 Settings: `hooks.afterWrite` (default true), `hooks.afterWriteInclude`, `hooks.afterWriteMaxFindings` (12),
 `hooks.stopGate` (false), `hooks.timeoutSeconds` (25).
 
+To see exactly what this Kiro sends a hook, add `--capture` to a hook command (`groovyscope hook --capture`):
+every payload is saved under `<cache>/hooks/<event>-<timestamp>.json`, readable by you only, and the hook
+runs as usual. The research note [2026-10-23-edit-gate-facts](research/2026-10-23-edit-gate-facts.md) says
+which captures confirm the edit gate's assumptions.
+
 ## Skills and prompts
 
 `groovyscope kiro init` writes fourteen skills under `.kiro/skills/groovy-*/SKILL.md` (`~/.kiro/skills/` with

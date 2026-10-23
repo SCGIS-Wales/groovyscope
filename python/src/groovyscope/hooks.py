@@ -77,6 +77,12 @@ def event_name(payload: Mapping[str, Any], override: str | None = None) -> str:
     return EVENT_NAMES.get(str(raw).replace("_", "").replace("-", "").lower(), str(raw))
 
 
+def capture_name(event: str, stamp_ns: int) -> str:
+    """``<event>-<timestamp>.json`` for a captured payload; the event is reduced to letters and digits."""
+    safe = "".join(ch for ch in event if ch.isalnum()) or "unknown"
+    return f"{safe}-{stamp_ns}.json"
+
+
 def is_groovy_source(path: Path) -> bool:
     return path.suffix in GROOVY_SUFFIXES or path.name.startswith("Jenkinsfile")
 
