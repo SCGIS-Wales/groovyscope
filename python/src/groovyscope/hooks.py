@@ -36,6 +36,19 @@ WARNING_LEVEL = 2
 Runner = Callable[[Sequence[str], Path], tuple[int, str]]
 
 
+class WriteIntent(TypedDict):
+    """A write Kiro is about to make: the file, the text before, and the text after (None when it cannot be told,
+    with the reason)."""
+
+    path: Path
+    command: str
+    before: str
+    after: str | None
+    old_str: str
+    new_str: str
+    reason: str
+
+
 class HookSettings(TypedDict):
     """``hooks`` from the effective configuration."""
 
@@ -118,6 +131,108 @@ def written_paths(payload: Mapping[str, Any], root: Path) -> list[Path]:
         if path not in found:
             found.append(path)
     return found
+
+
+def write_intent(payload: Mapping[str, Any], root: Path) -> WriteIntent | None:
+    """The Groovy file a write tool call is about to change inside ``root``, with the text it would hold after the
+    call, rebuilt from ``tool_input`` (``create`` gives the whole text; ``str_replace``, ``insert`` and ``append``
+    are applied to the file on disk); None for any other tool or file."""
+    tool = str(payload.get("tool_name", "")).split("/")[-1].lower()
+    tool_input = payload.get("tool_input")
+    if tool not in WRITE_TOOLS or not isinstance(tool_input, Mapping):
+        return None
+    raw = next((tool_input[k] for k in PATH_KEYS if isinstance(tool_input.get(k), str)), None)
+    if raw is None:
+        return None
+    path = Path(raw) if Path(raw).is_absolute() else root / raw
+    path = path.resolve()
+    if not is_groovy_source(path) or not path.is_relative_to(root.resolve()) or path.is_dir():
+        return None
+    try:
+        before = path.read_text(encoding="utf-8") if path.is_file() else ""
+    except (OSError, UnicodeDecodeError):
+        return None
+    command = str(tool_input.get("command") or ("create" if _whole_text(tool_input) is not None else ""))
+    old, new = str(tool_input.get("old_str") or ""), str(tool_input.get("new_str") or "")
+    after, reason = _after(command, before, tool_input, old, new)
+    return {
+        "path": path,
+        "command": command,
+        "before": before,
+        "after": after,
+        "old_str": old,
+        "new_str": new,
+        "reason": reason,
+    }
+
+
+def _whole_text(tool_input: Mapping[str, Any]) -> str | None:
+    for key in ("file_text", "content", "text"):
+        if isinstance(tool_input.get(key), str):
+            return str(tool_input[key])
+    return None
+
+
+Rebuilt = tuple[str | None, str]
+
+
+def _after(command: str, before: str, tool_input: Mapping[str, Any], old: str, new: str) -> Rebuilt:
+    """The text after a write command, or None with the reason it cannot be rebuilt."""
+    handler = REBUILDERS.get(command)
+    if handler is None:
+        return (None, f"unknown write command {command or '(none)'}")
+    return handler(before, tool_input, old, new)
+
+
+def _create(_before: str, tool_input: Mapping[str, Any], _old: str, _new: str) -> Rebuilt:
+    whole = _whole_text(tool_input)
+    return (whole, "") if whole is not None else (None, "create without a file_text")
+
+
+def _replace(before: str, _tool_input: Mapping[str, Any], old: str, new: str) -> Rebuilt:
+    count = before.count(old) if old else 0
+    return (before.replace(old, new, 1), "") if count == 1 else (None, f"old_str occurs {count} times in the file")
+
+
+def _insert(before: str, tool_input: Mapping[str, Any], _old: str, new: str) -> Rebuilt:
+    try:
+        at = int(tool_input.get("insert_line", 0))
+    except (TypeError, ValueError):
+        return (None, "insert without a numeric insert_line")
+    lines = before.splitlines(keepends=True)
+    added = new if new.endswith("\n") else new + "\n"
+    if at > 0 and lines and not lines[min(at, len(lines)) - 1].endswith("\n"):
+        added = "\n" + added
+    return ("".join([*lines[:at], added, *lines[at:]]), "")
+
+
+def _append(before: str, _tool_input: Mapping[str, Any], _old: str, new: str) -> Rebuilt:
+    joiner = "" if not before or before.endswith("\n") else "\n"
+    return (before + joiner + new, "")
+
+
+REBUILDERS: dict[str, Callable[[str, Mapping[str, Any], str, str], Rebuilt]] = {
+    "create": _create,
+    "str_replace": _replace,
+    "insert": _insert,
+    "append": _append,
+}
+
+
+def prompt_text(payload: Mapping[str, Any]) -> str:
+    """The user's prompt in a UserPromptSubmit payload, whatever key this Kiro uses."""
+    for key in ("prompt", "user_prompt", "message", "text"):
+        if isinstance(payload.get(key), str):
+            return str(payload[key])
+    return ""
+
+
+GROOVY_WORDS = ("groovy", "gradle", "jenkinsfile", "spock")
+
+
+def about_groovy(prompt: str) -> bool:
+    lowered = prompt.lower()
+    return any(word in lowered for word in GROOVY_WORDS)
 
 
 def render_after_write(rows: Sequence[Mapping[str, Any]], paths: Sequence[Path], root: Path, limit: int) -> str:

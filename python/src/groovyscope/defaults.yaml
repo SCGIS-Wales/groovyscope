@@ -80,6 +80,17 @@ hooks:
   afterWriteMaxFindings: 12 # findings listed after a write; the rest is counted
   stopGate: false           # Kiro Stop: refuse to end the turn while changed Groovy files have compile errors
   timeoutSeconds: 25        # engine request budget inside a hook, under Kiro's own hook limit; over it the hook says so
+  preWrite:                 # the edit gate: Kiro's PreToolUse hook on write checks the file as it would be
+    enabled: true
+    mode: warn              # warn: report what the write breaks; block: refuse it (exit 2, reasons to the agent)
+    trustPlans: true        # a write that applies an edit_symbol plan passed the gate when planned: not checked again
+    requirePlan: false      # true: refuse unplanned writes to Groovy files over requirePlanAboveLines
+    requirePlanAboveLines: 40
+  userPrompt: true          # Kiro's UserPromptSubmit: one line per edit rule when the prompt is about Groovy
+edits:
+  plansKept: 5              # edit_symbol plans kept per file
+  planTtlMinutes: 120       # a plan older than this no longer lets a write past the gate
+  diffLinesInQuestion: 40   # lines of the diff shown when edit_symbol asks before writing itself
 merge:
   contextLines: 3           # unchanged lines shown around each conflict hunk
   sideLines: 40             # lines shown per side of a hunk before the middle is elided (merge_conflicts)

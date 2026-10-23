@@ -18,8 +18,10 @@ import click
 from groovyscope import (
     atomic,
     changes,
+    gate,
     gitignore,
     hooks,
+    plans,
     practices,
     process,
     profiles,
@@ -123,17 +125,22 @@ def check(
 )
 @click.pass_obj
 def hook_command(obj: dict[str, Any], event: str | None, *, capture: bool) -> None:
-    """What Kiro's hooks run: reads the hook JSON from stdin. After a write (PostToolUse) the Groovy file just
-    written is checked and the findings printed for the agent; on Stop, with hooks.stopGate on, the turn is refused
-    while changed Groovy files have compile errors. Never fails the session."""
+    """What Kiro's hooks run: reads the hook JSON from stdin. Before a write (PreToolUse) the file as it would be
+    is gated; after a write (PostToolUse) the Groovy file just written is checked and the findings printed for the
+    agent; on Stop, with hooks.stopGate on, the turn is refused while changed Groovy files have compile errors; on
+    a prompt about Groovy (UserPromptSubmit) the edit policy is printed. Only a blocked write exits non-zero (2);
+    anything else that goes wrong is logged and the session goes on."""
     text = sys.stdin.read()
     if capture:
         hook_capture(text, event)
+    code = 0
     try:
-        run_hook(obj, event, text)
+        code = run_hook(obj, event, text)
     except Exception as exc:  # a broken .groovyscope.yaml or anything else: logged, and the session goes on
         common.LOG.warning("hook failed: %s", exc, exc_info=True)
         common.LOG.warning(f"groovyscope: hook skipped ({exc})")
+    if code:
+        sys.exit(code)
 
 
 def hook_capture(text: str, event: str | None) -> None:
@@ -149,18 +156,33 @@ def hook_capture(text: str, event: str | None) -> None:
         common.LOG.warning("hook payload not captured: %s", exc)
 
 
-def run_hook(obj: dict[str, Any], event: str | None, text: str) -> None:
-    """The body of ``groovyscope hook`` (see hook_command)."""
+def run_hook(obj: dict[str, Any], event: str | None, text: str) -> int:
+    """The body of ``groovyscope hook`` (see hook_command); the exit code (2 blocks a write)."""
     payload = hooks.parse_payload(text)
     name = hooks.event_name(payload, event)
     if name == "sessionStart":
         session_baseline(obj)
-        return
-    if name not in {"postToolUse", "stop"}:
-        return
+        return 0
+    if name not in {"postToolUse", "stop", "preToolUse", "userPromptSubmit"}:
+        return 0
     # Everything that needs no engine comes first: most hook events end here, in milliseconds.
-    settings = hooks.settings(load_config(obj["root"], obj["config_path"], dict(os.environ)))
-    paths, notes = hooks.split_conflicted(hook_targets(obj["root"], name, payload, settings), obj["root"])
+    effective = load_config(obj["root"], obj["config_path"], dict(os.environ))
+    if name == "userPromptSubmit":
+        hook_prompt(payload, effective)
+        return 0
+    if name == "preToolUse":
+        return hook_pre_write(obj["root"], payload, effective)
+    hook_check(obj["root"], name, payload, effective)
+    return 0
+
+
+def hook_check(root: Path, name: str, payload: Mapping[str, Any], effective: Mapping[str, Any]) -> None:
+    """PostToolUse and Stop: the written files' findings, or the stop gate's decision."""
+    settings = hooks.settings(effective)
+    if name == "postToolUse":
+        for line in planned_outcomes(root, hooks.written_paths(payload, root), effective):
+            click.echo(line)
+    paths, notes = hooks.split_conflicted(hook_targets(root, name, payload, settings), root)
     if notes:
         decision = hooks.conflict_decision(notes) if name == "stop" else None
         click.echo(json.dumps(decision) if decision else "\n".join(notes))
@@ -170,17 +192,136 @@ def run_hook(obj: dict[str, Any], event: str | None, text: str) -> None:
         return
     # A hook never starts the engine: a cold JVM would hold the agent for its start-up and compile. The LSP
     # session Kiro opens starts the daemon; until then the hook says so and steps aside.
-    socket_file = common.daemon_paths(obj["root"])[0]
+    socket_file = common.daemon_paths(root)[0]
     if common._PROBE(socket_file) is None:
         click.echo("groovyscope: hook skipped, the engine daemon is not running (it starts with the Kiro session)")
         return
     text = (
-        hook_after_write(socket_file, obj["root"], paths, settings)
+        hook_after_write(socket_file, root, paths, settings)
         if name == "postToolUse"
-        else hook_stop_gate(socket_file, obj["root"], paths, settings)
+        else hook_stop_gate(socket_file, root, paths, settings)
     )
     if text:
         click.echo(text)
+
+
+def plan_store(root: Path) -> Path:
+    """Where the edit plans of a workspace are kept."""
+    environ = dict(os.environ)
+    return daemon_lifecycle.cache_dir(environ) / "plans" / daemon_lifecycle.workspace_key(root)
+
+
+def planned_outcomes(root: Path, paths: Sequence[Path], effective: Mapping[str, Any]) -> list[str]:
+    """After a write: one line per written file that has an edit plan, saying whether the plan landed."""
+    ttl = float((effective.get("edits") or {}).get("planTtlMinutes", config_module.default("edits", "planTtlMinutes")))
+    lines = []
+    for path in paths:
+        try:
+            written = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        found = plans.outcome(plan_store(root), path, written, clock=time.time, ttl_minutes=ttl)
+        if found is None:
+            continue
+        state, plan = found
+        shown = common.shown_path(path, root)
+        if state == "applied":
+            lines.append(f"groovyscope: planned write applied to {shown} (plan {plan['plan_id'][:12]})")
+        else:
+            lines.append(
+                f"groovyscope: planned write drifted: {shown} is not what plan {plan['plan_id'][:12]} produces; "
+                "read the file again before the next edit"
+            )
+    return lines
+
+
+def hook_prompt(payload: Mapping[str, Any], effective: Mapping[str, Any]) -> None:
+    """UserPromptSubmit: the edit policy, one line per rule, when the prompt is about Groovy. No engine call."""
+    enabled = (effective.get("hooks") or {}).get("userPrompt", config_module.default("hooks", "userPrompt"))
+    if enabled and hooks.about_groovy(hooks.prompt_text(payload)):
+        click.echo(gate.policy_summary(effective))
+
+
+def hook_pre_write(root: Path, payload: Mapping[str, Any], effective: Mapping[str, Any]) -> int:
+    """PreToolUse on a write: gate the file as it would be. 2 (reasons on stderr) blocks the write; 0 lets it
+    through, with the findings on stdout. Never starts the engine; when it cannot check, it says so and lets the
+    write through."""
+    settings = gate.settings(effective)
+    intent = hooks.write_intent(payload, root)
+    if not settings["enabled"] or intent is None:
+        return 0
+    shown = common.shown_path(intent["path"], root)
+    if intent["after"] is None:
+        click.echo(f"groovyscope gate: write to {shown} not checked ({intent['reason']})")
+        return 0
+    edits = effective.get("edits") or {}
+    ttl = float(edits.get("planTtlMinutes", config_module.default("edits", "planTtlMinutes")))
+    plan = None
+    if intent["command"] == "str_replace":
+        plan = plans.matching(
+            plan_store(root),
+            intent["path"],
+            intent["before"],
+            intent["old_str"],
+            intent["new_str"],
+            clock=time.time,
+            ttl_minutes=ttl,
+        )
+    if plan is not None and settings["trustPlans"]:
+        click.echo(f"groovyscope gate: planned write to {shown} (plan {plan['plan_id'][:12]}, checked when planned)")
+        return 0
+    lines = intent["before"].count("\n")
+    if plan is None and settings["requirePlan"] and lines > settings["requirePlanAboveLines"]:
+        click.echo(
+            f"groovyscope gate: {shown} has {lines} lines; plan the change with groovyscope.edit_symbol first "
+            "(hooks.preWrite.requirePlan), then apply its old_str and new_str with write",
+            err=True,
+        )
+        return 2
+    return gate_with_engine(root, intent, settings, effective, planned=plan is not None)
+
+
+def gate_with_engine(
+    root: Path, intent: hooks.WriteIntent, settings: gate.GateSettings, effective: Mapping[str, Any], *, planned: bool
+) -> int:
+    """The gate's verdict from the engine's preview of the candidate against the file's current findings."""
+    shown = common.shown_path(intent["path"], root)
+    socket_file = common.daemon_paths(root)[0]
+    if common._PROBE(socket_file) is None:
+        click.echo(f"groovyscope gate: write to {shown} not checked, the engine daemon is not running")
+        return 0
+    timeout = float(hooks.settings(effective)["timeoutSeconds"])
+    uri = intent["path"].as_uri()
+    try:
+        preview = common._RPC(
+            socket_file,
+            "groovyscope/preview",
+            {"root": str(root), "texts": [{"uri": uri, "text": intent["after"]}]},
+            timeout,
+        )
+        current: dict[str, Any] = {}
+        if intent["path"].is_file():
+            params = {"root": str(root), "uris": [uri], "include": ["compile", "lint", "practices"]}
+            current = common._RPC(socket_file, "groovyscope/check", params, timeout).get("diagnostics", {})
+    except (OSError, RuntimeError, ValueError) as exc:
+        click.echo(f"groovyscope gate: write to {shown} not checked ({exc})")
+        return 0
+    found = (preview.get("results") or {}).get(uri) or {}
+    verdict = gate.evaluate(
+        common.finding_rows({uri: found.get("diagnostics") or []}, root),
+        common.finding_rows(current, root),
+        syntax=found.get("syntax") or [],
+        mode=settings["mode"],
+        before=intent["before"],
+        after=str(intent["after"]),
+    )
+    text = gate.render(verdict, shown, planned=planned)
+    if verdict["decision"] == "block":
+        click.echo(text, err=True)
+        return 2
+    if text:
+        click.echo(text)
+    return 0
 
 
 def hook_targets(root: Path, name: str, payload: Mapping[str, Any], settings: hooks.HookSettings) -> list[Path]:
