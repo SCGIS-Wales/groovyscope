@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.32.0...v0.33.0) (2026-10-23)
+
+
+### Features
+
+* lean tests, coverage at 80 and integration tests in line ([#139](https://github.com/SCGIS-Wales/groovyscope/issues/139)) ([f0714fa](https://github.com/SCGIS-Wales/groovyscope/commit/f0714faf8c5c0039ad1ddec0a3a151dabc8c0601))
+
 ## [0.32.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.31.0...v0.32.0) (2026-10-23)
 
 
