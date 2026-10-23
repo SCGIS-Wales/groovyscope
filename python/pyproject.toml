@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "groovyscope"
-version = "0.34.0"
+version = "0.35.0"
 description = "Groovy 5/6 code intelligence for AI coding agents: LSP and MCP front ends over one JVM engine"
 readme = "README.md"
 # The wheel bundles the engine JAR: its libraries' licences are listed in THIRD-PARTY-NOTICES.md.
