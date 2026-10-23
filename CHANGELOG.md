@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.30.0...v0.31.0) (2026-10-23)
+
+
+### Features
+
+* concise comments, GS060 to GS065 and the comment share gate ([#135](https://github.com/SCGIS-Wales/groovyscope/issues/135)) ([35454ea](https://github.com/SCGIS-Wales/groovyscope/commit/35454eabd21314152b6a7f56da38d1e1c24e3754))
+
 ## [0.30.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.29.0...v0.30.0) (2026-10-23)
 
 
