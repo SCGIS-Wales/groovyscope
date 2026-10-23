@@ -114,6 +114,7 @@ public final class PracticeFinder {
         PitfallFinder.find(context);
         JenkinsFinder.find(context);
         SpockFinder.find(context);
+        TestBloatChecks.find(context);
         GradleFinder.find(context);
         CommentChecks.find(context);
         return out;

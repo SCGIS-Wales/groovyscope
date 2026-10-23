@@ -111,6 +111,15 @@ coverage:
   minimumPercent: 80       # line coverage every changed class must reach (0: no threshold)
   scope: changed           # changed: each changed class; overall: the workspace's line coverage
   requireFreshReport: true # only a JaCoCo report newer than the change counts; an older one never blocks
+tests:
+  maxTestToCodeRatio: 3.0  # GS046: test file lines allowed per line of the file of the class under test
+  maxMethodsPerSubject: 40  # GS046: test methods allowed in one test class
+  # GS048: a good test name matches namePattern: a sentence (Spock), or an identifier of two words or more
+  namePattern: '^(?:.*\S\s+\S.*|_*[a-z][a-z0-9]*(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){1,}_*)$'
+  vagueNames: [  # GS048: words that alone say no behaviour; numbers and the names a test calls say none either
+    test, tests, testing, should, it, works, work, working, method, check, checks, verify, verifies, case, scenario,
+    simple, basic, happy, path, example, sample, ok, correct, correctly, properly, fine, success, successful, foo,
+    bar, baz, a, an, the, of, for, and, to, with, is, does]
 comments:
   restateShare: 0.7       # GS060: share of a comment's words the statement below it covers for it to restate the code
   maxBlockLines: 2        # GS061: consecutive comment lines allowed in a method body

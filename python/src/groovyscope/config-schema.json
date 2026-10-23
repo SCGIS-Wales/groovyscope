@@ -633,6 +633,31 @@
         }
       }
     },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxTestToCodeRatio": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxMethodsPerSubject": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "namePattern": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vagueNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "comments": {
       "type": "object",
       "additionalProperties": false,

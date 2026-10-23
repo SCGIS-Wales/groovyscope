@@ -165,3 +165,58 @@ changed:
 The fixture's `demo/Verbose.groovy` reports GS060 (lines 23, 25, 33), GS061 (28, 4 lines), GS062 (14, Javadoc on a
 private method; 16, `@return the counter` on a method returning `counter`), GS063 (35, two lines), GS064 (8 and 10,
 banners; 37, a bare TODO) and GS065 (22, 10 comment lines to 8 code lines).
+
+## Phase 5 calibration
+
+The test bloat checks GS044 to GS048 (`practices/TestBloatChecks.java` with `TestMethods`, `TestSize` and
+`DataTableFix`) were run with the default `tests` settings. CodeNarc's own tests are not in the benchmark corpus
+(`~/.groovyscope/benchmark/codenarc/` holds `src/main` only, and its `AbstractRuleTestCase` is a base class, not a
+test), and neither the Gradle cache nor a Maven repository on this machine holds a sources jar with Groovy tests. The
+corpus is therefore groovyscope's own Spock specifications, `engine/src/test/groovy`: 103 files (the 102 that existed
+before this phase and its own `TestBloatChecksSpec`), 100 test classes, 575 feature methods (29 data driven) and 2,290
+conditions. Each file was compiled on its own with Spock on the classpath, at its real path so that GS046 found the
+class under test in `engine/src/main/java` beside it, and every practice finder ran on it. The test bloat checks took
+538 ms for the files in one JVM, warm up included (about 5 ms a file).
+
+| Check | Findings | Judged | Correct | False |
+|---|---|---|---|---|
+| GS044 tests repeating one shape | 0 | none to judge | 0 | 0 |
+| GS045 trivial test | 0 | none to judge | 0 | 0 |
+| GS046 test class out of proportion | 0 | none to judge | 0 | 0 |
+| GS047 test repeating another's inputs | 0 | none to judge | 0 | 0 |
+| GS048 test name without behaviour | 0 | none to judge | 0 | 0 |
+
+No false positive, so every check is inside the 10% the plan allows; the corpus is a lean, deliberately written test
+suite, so it says nothing about how many repeats the checks miss. Grouping the same feature methods with the
+normalisation of `find_duplicates` (names read as `ID`) finds no repeated body either, so GS044's stricter shape (names
+kept, literals and descriptions set aside) loses nothing here and leaves out tests that differ only in which fixture
+they read.
+
+The numbers Phase 0 could not measure, on this corpus: test file lines over the lines of the file of the class under
+test, for the 49 specifications whose class under test exists by name: median 0.44, maximum 2.46 (`ProfilesSpec`, 313
+lines for 127); feature methods per test class (100 classes): median 4, P90 12, maximum 22 (`EditRequestSpec`,
+`LanguageServicesSpec`). `tests.maxTestToCodeRatio: 3.0` and `tests.maxMethodsPerSubject: 40` leave every class of it
+alone, as a deliberate suite should be left, and the defaults stay as the plan set them.
+
+A second sample, the test sources of the fixture projects under `engine/src/test/resources/projects` (deliberate cases
+for this and other checks; 11 test classes, 32 tests), reports 12 findings, all judged, all correct:
+
+| Check | Where | Verdict |
+|---|---|---|
+| GS044 | `edit-gate` `SubjectSpec.groovy:12`, `:17`, `:22`, `:35`: four features of `test1`'s shape, `square(n) == m` | correct |
+| GS045 | `edit-gate` `SubjectSpec.groovy:27`: `new Subject()` then `noExceptionThrown()` | correct |
+| GS046 | `edit-gate` `SubjectSpec.groovy:5`: 39 lines for the 8 of `Subject` (4.9 times) | correct |
+| GS046 | `test-doubles-sample` `StoreTest.groovy:5`: 58 lines for the 19 of `Store` (3.1 times) | correct by the limit |
+| GS047 | `edit-gate` `SubjectSpec.groovy:22`: `square(2) == 4` again | correct |
+| GS048 | `edit-gate` `SubjectSpec.groovy:7` `test1`, `:35` `shouldWork` | correct |
+| GS048 | `lint-profiles` `SampleTest.groovy:10` `alwaysPasses`; `test-doubles-sample` `StoreTest.groovy:17` `stubsSeams` | correct: the mechanism, not an expectation |
+
+What changed during the calibration: a Spock block description (`given: 'a shop'`) is documentation, so GS044's shape
+and GS047's comparison leave it out, and the fix keeps the first feature's descriptions. When a specification does not
+compile with the classes it tests (Spock missing from the classpath, an unresolved import), the compiler parses it on
+its own; GS046 then reads the class under test from disk beside the test, and the `where:` columns fall back to `a`,
+`b` where the parameter names cannot be resolved.
+
+The fixture's `src/test/groovy/demo/SubjectSpec.groovy` reports GS044 (12, 17, 22, 35, naming `test1`), GS045 (27),
+GS046 (5, 39 lines for 8, 6 test methods), GS047 (22) and GS048 (7, 35); `src/it/groovy/demo/SubjectIT.groovy`
+reports nothing.
