@@ -100,7 +100,7 @@ def affected_tests(
     ``path``, ``symbol`` and ``kind``); and a changed test file with no changed method as a whole class."""
     found: dict[tuple[str, str], TestRef] = {}
     for report in reports:
-        for site in report.get("tests", []):
+        for site in [*report.get("tests", []), *report.get("integrationTests", [])]:
             caller = site.get("caller") or {}
             path = str((caller.get("location") or {}).get("path") or "")
             located = source_set_of(path)
@@ -192,6 +192,58 @@ def not_run(tests: Sequence[TestRef], tasks: Mapping[str, str], run: Sequence[st
         if task not in run and test["className"] not in left.setdefault(task, []):
             left[task].append(test["className"])
     return left
+
+
+INTEGRATION_NAME_SUFFIXES = ("IT", "ITCase", "IntegrationTest")
+
+
+def is_integration_path(path: str) -> bool:
+    """A file in a test source set other than ``test`` (``src/it``, ``src/integrationTest``) or named like an
+    integration test (``*IT``, ``*ITCase``, ``*IntegrationTest``)."""
+    located = source_set_of(path)
+    stem = path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    in_set = located is not None and located[0] not in {"main", "test"}
+    return in_set or (is_test_path(path) and stem.endswith(INTEGRATION_NAME_SUFFIXES))
+
+
+def integration_out_of_line(
+    impacted: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]],
+    ranges: Mapping[str, Sequence[Sequence[int]]],
+) -> list[dict[str, Any]]:
+    """GS049: a changed declaration whose signature line the branch touched, called from integration test sources
+    the branch did not change. ``impacted`` pairs each changed declaration (``symbol``, ``path``, ``lines``) with
+    its impact report (``directCallers`` and ``tests`` call sites); ``ranges`` are the branch's changed lines."""
+    found: list[dict[str, Any]] = []
+    for declaration, report in impacted:
+        first = int((declaration.get("lines") or [0])[0])
+        path = str(declaration.get("path"))
+        if not any(start <= first <= end for start, end in ranges.get(path, ())):
+            continue
+        callers = sorted(
+            {
+                str(((site.get("caller") or {}).get("location") or {}).get("path") or "")
+                for site in [
+                    *report.get("directCallers", []),
+                    *report.get("tests", []),
+                    *report.get("integrationTests", []),
+                ]
+            }
+        )
+        stale = [c for c in callers if c and is_integration_path(c) and c not in ranges]
+        if stale:
+            found.append(
+                {
+                    "path": path,
+                    "line": first,
+                    "column": 1,
+                    "severity": "error",
+                    "source": "groovyscope",
+                    "code": "GS049",
+                    "message": f"{declaration.get('symbol')} changed but the integration tests calling it did not: "
+                    f"{', '.join(stale[:5])}; update them in this change",
+                }
+            )
+    return found
 
 
 def is_test_path(path: str) -> bool:

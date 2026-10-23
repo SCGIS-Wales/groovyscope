@@ -97,6 +97,10 @@ fileMatchPattern: ["**/*.groovy", "**/*.gradle", "**/Jenkinsfile*"]
   `@CompileStatic` code or on a double; reuse the test class's helpers instead of new harness code.
   `groovyscope.check` on the test file flags doubles that cannot take effect (GS013 to GS015) and tests that
   assert nothing (GS016).
+- Coverage of every changed class stays at 80% or above; `groovyscope.test_plan` says which tests to add (its
+  `needed`) and which already exist. One test per behaviour; a data table before a new feature method; never a
+  test that repeats another (GS044, GS047). A changed public method updates its unit and integration tests in the
+  same change (GS049); list the integration tests you could not run.
 - `classpath.state: stale` in an answer means a build file changed after the export: say so and offer
   `groovyscope.refresh_classpath` (trusted workspaces only) before judging unresolved classes; offer the
   same after you edit `build.gradle`, `pom.xml` or `libs.versions.toml`. Configuration and classpath changes

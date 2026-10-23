@@ -57,6 +57,29 @@ class EngineConfigSpec extends Specification {
         new EngineConfig.Practices(true, [:], null, null, null).comments() == EngineConfig.Comments.DEFAULTS
     }
 
+    def 'the test bloat settings are read from the tests section, each missing or invalid key keeping its default'() {
+        when:
+        def tuned = EngineConfig.fromJson('''
+            {"tests": {"maxTestToCodeRatio": 2.5, "maxMethodsPerSubject": 12, "namePattern": "^should.*",
+                       "vagueNames": ["test", "check"]}}
+        ''').practices().tests()
+        def partial = EngineConfig.fromJson('{"tests": {"maxTestToCodeRatio": 4, "namePattern": ""}}').practices().tests()
+        def defaults = EngineConfig.Tests.DEFAULTS
+
+        then:
+        tuned == new EngineConfig.Tests(2.5, 12, '^should.*', ['test', 'check'])
+        partial == new EngineConfig.Tests(4.0, 40, defaults.namePattern(), defaults.vagueNames())
+        EngineConfig.DEFAULTS.practices().tests() == defaults
+        new EngineConfig.Practices(true, [:], null, null, null, null, null).tests() == defaults
+        'should work' ==~ defaults.namePattern()
+        'returnsEmptyListForBlankQuery' ==~ defaults.namePattern()
+        'test_blank_query_gives_nothing' ==~ defaults.namePattern()
+        !('shouldWork' ==~ defaults.namePattern())
+        'chargesTax' ==~ defaults.namePattern()
+        !('testTotal' ==~ defaults.namePattern())
+        !('test1' ==~ defaults.namePattern())
+    }
+
     def 'each lint profile takes its own rule set path'() {
         when:
         def lint = EngineConfig.fromJson('''

@@ -204,6 +204,7 @@ def test_server_lists_every_tool_and_answers_calls(engine: dict[str, Any]) -> No
         "find_duplicates",
         "workspace_overview",
         "test_results",
+        "test_plan",
         "merge_conflicts",
         "resolve_conflicts",
         "merge_review",
@@ -849,7 +850,7 @@ def test_review_changes_composes_findings_impact_and_risky_sites(
     monkeypatch.setattr(mcp_server.changes, "changed_files", refuse)
     assert tools["review_changes"]() == {"error": "git is not installed"}
     assert mcp_server.TOOL_INFO["review_changes"][1] is True
-    assert len(mcp_server.TOOL_INFO) == 35
+    assert len(mcp_server.TOOL_INFO) == 36
 
 
 SARIF_LOG = {
@@ -896,6 +897,10 @@ JACOCO_XML = """<?xml version="1.0" encoding="UTF-8"?>
       <method name="run" desc="()V" line="4"><counter type="LINE" missed="3" covered="0"/></method>
       <counter type="LINE" missed="3" covered="2"/>
     </class>
+    <sourcefile name="A.groovy">
+      <line nr="4" mi="2" ci="0"/><line nr="5" mi="1" ci="0"/><line nr="6" mi="1" ci="0"/>
+      <counter type="LINE" missed="3" covered="2"/>
+    </sourcefile>
   </package>
   <counter type="LINE" missed="3" covered="2"/>
 </report>
@@ -938,6 +943,8 @@ def test_coverage_gaps_reads_jacoco(local_tools: dict[str, Any], tmp_path: Path)
     assert found["count"] == 2 and found["uncoveredMethods"] == 1
     assert found["items"][0]["name"] == "A" and found["items"][1]["name"] == "A.run"
     assert found["report"] == "build/reports/jacoco/test/jacocoTestReport.xml"
+    assert found["threshold"] == 80 and found["belowCount"] == 1
+    assert found["below"] == [{"class": "src/A.groovy", "percent": 40, "missedLines": "4-6"}]
     assert local_tools["coverage_gaps"](paths=["other"])["count"] == 0
     (tmp_path / "build" / "reports" / "jacoco" / "test" / "jacocoTestReport.xml").write_text("<x/>", encoding="utf-8")
     assert "not a JaCoCo report" in local_tools["coverage_gaps"]()["error"]
@@ -961,6 +968,8 @@ def test_review_changes_lists_uncovered_methods_in_the_change(
     assert result["counts"]["blocking"] == 1 and result["blocking"][0]["code"] == "NP_NULL"
     assert result["imported"] == {"spotbugs": 1}
     assert result["verdict"].startswith("request changes")
+    assert result["verdict"].endswith(", and 1 changed class(es) under 80% line coverage")
+    assert result["coverage"]["verdict"] == "below" and result["coverage"]["below"][0]["class"] == "src/A.groovy"
 
 
 def test_paths_the_workspace_does_not_have_are_refused_before_any_tool_runs(tmp_path: Path) -> None:
@@ -1046,3 +1055,14 @@ def test_read_symbol_takes_max_chars_as_documented(tmp_path: Path) -> None:
     assert seen[-1]["maxChars"] == 40
     asyncio.run(server.call_tool("read_symbol", {"path": "src/A.groovy", "symbol": "A", "max_chars": 99999}))
     assert seen[-1]["maxChars"] == 16000  # never above output.maxBytes
+
+
+def test_impact_lists_integration_tests_apart(tmp_path: Path) -> None:
+    def site(path: str) -> dict[str, Any]:
+        location = {"uri": (tmp_path / path).as_uri(), "range": {"start": {"line": 0, "character": 0}}}
+        return {"caller": {"name": "t", "location": location}, "callee": {"name": "save"}, "site": location}
+
+    report = {"symbol": {"name": "save"}, "tests": [site("src/test/groovy/A.groovy"), site("src/it/groovy/AIT.groovy")]}
+    compact = mcp_server.compact_report(report, tmp_path, 5)
+    assert [s["caller"]["location"]["path"] for s in compact["tests"]] == ["src/test/groovy/A.groovy"]
+    assert [s["caller"]["location"]["path"] for s in compact["integrationTests"]] == ["src/it/groovy/AIT.groovy"]

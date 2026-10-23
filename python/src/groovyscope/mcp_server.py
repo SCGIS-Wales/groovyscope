@@ -23,6 +23,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from groovyscope import (
     changes,
     config,
+    coverage_check,
     daemon,
     diagnostics,
     interaction,
@@ -30,6 +31,7 @@ from groovyscope import (
     mcp_merge,
     mcp_reuse,
     mcp_search,
+    mcp_testplan,
     mcp_understanding,
     practices,
     render,
@@ -207,6 +209,13 @@ def summarise(
     return (rest, extra)
 
 
+def integration_site(site: Mapping[str, Any]) -> bool:
+    """A call site in an integration test (its own source set, or an ``*IT`` class)."""
+    location = (site.get("caller") or {}).get("location") or {}
+    uri = str(location.get("uri") or "")
+    return verify.is_integration_path(uri.removeprefix("file://") or str(location.get("path") or ""))
+
+
 def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str, Any]:
     return {
         "symbol": compact_symbol(report["symbol"], root),
@@ -217,7 +226,8 @@ def compact_report(report: Mapping[str, Any], root: Path, cap: int) -> dict[str,
         "directCallers": [compact_site(s, root) for s in report.get("directCallers", [])][:cap],
         "transitiveCallers": [compact_site(s, root) for s in report.get("transitiveCallers", [])][:cap],
         "overrides": [compact_symbol(s, root) for s in report.get("overrides", [])],
-        "tests": [compact_site(s, root) for s in report.get("tests", [])][:cap],
+        "tests": [compact_site(s, root) for s in report.get("tests", []) if not integration_site(s)][:cap],
+        "integrationTests": [compact_site(s, root) for s in report.get("tests", []) if integration_site(s)][:cap],
         "dynamicUnknowns": [compact_site(s, root) for s in report.get("dynamicUnknowns", [])][:cap],
         "suggestedChecks": report.get("suggestedChecks", []),
     }
@@ -623,7 +633,7 @@ def quality_tools(
         "format": bind(format_files, root, call, cap, confirm_policy),
         "find_dynamic_code": bind(find_dynamic_code, root, call, paged),
         "workspace_status": bind(workspace_status, root, environ, call, classpath, export_job),
-        **coverage_tools(root, paged, settings),
+        **coverage_tools(root, paged, settings, cap),
         **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy, job=export_job),
     }
 
@@ -834,6 +844,7 @@ def await_export(job: ExportJob, worker: threading.Thread, wait_for: float, ever
 def coverage_gaps(
     root: Path,
     paged: Paged,
+    cap: int,
     settings: Mapping[str, Any],
     paths: list[str] | None = None,
     limit: int | None = None,
@@ -856,13 +867,31 @@ def coverage_gaps(
     result["report"] = relative_path(report.as_uri(), root)
     result["coverage"] = summary
     result["uncoveredMethods"] = sum(1 for g in gaps if g["kind"] == "method" and g["status"] == "uncovered")
+    threshold = coverage_check.policy(settings)["minimumPercent"]
+    if threshold > 0:
+        try:
+            files = coverage_check.by_file(reports.parse_report(report), root)
+        except ValueError:
+            files = {}
+        under = sorted(
+            (f for f in files.values() if f["percent"] < threshold and reports.under_paths(f["path"], paths or [])),
+            key=lambda f: f["percent"],
+        )
+        result["threshold"] = threshold
+        result["below"] = [
+            {"class": f["path"], "percent": f["percent"], "missedLines": coverage_check.ranges(f["missedLines"])}
+            for f in under[:cap]
+        ]
+        result["belowCount"] = len(under)
     return result
 
 
-def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:
+def coverage_tools(
+    root: Path, paged: Paged, settings: Mapping[str, Any], cap: int = 20
+) -> dict[str, Callable[..., Any]]:
     """coverage_gaps: the build's JaCoCo report as the list of what tests never executed."""
 
-    return {"coverage_gaps": bind(coverage_gaps, root, paged, settings)}
+    return {"coverage_gaps": bind(coverage_gaps, root, paged, cap, settings)}
 
 
 def test_results(root: Path, cap: int, sources: list[str] | None = None, limit: int | None = None) -> dict[str, Any]:
@@ -1165,37 +1194,8 @@ def review_changes(
     limit = max(1, min(top, cap))
     dead = unused_review(inside, elsewhere, cap)
     kinds = dead["unused"]["byKind"]
-    impact: list[dict[str, Any]] = []
-    reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
-    touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
-    for file in existing[:cap]:
-        if len(reports) >= verify.MAX_DECLARATIONS:
-            break
-        outline = flat_outline(
-            call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
-        )
-        for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
-            touched.append({**declaration, "path": file["path"]})
-            if len(reports) >= verify.MAX_DECLARATIONS:
-                break
-            report = others["impact_of"](impact_target(declaration), "signature")
-            if not report.get("found"):
-                continue
-            first = report["reports"][0]
-            reports.append(first)
-            if len(impact) >= limit:
-                continue
-            impact.append(
-                {
-                    **declaration,
-                    "path": file["path"],
-                    "riskLevel": first.get("riskLevel"),
-                    "riskScore": first.get("riskScore"),
-                    "callers": first.get("counts", {}),
-                    "tests": len(first.get("tests", [])),
-                    "dynamicSites": len(first.get("dynamicUnknowns", [])),
-                }
-            )
+    impact, reports, touched, impacted = declaration_impacts(root, call, cap, existing, others, limit)
+    buckets["blocking"] += verify.integration_out_of_line(impacted, ranges)
     risky: list[dict[str, Any]] = []
     for kind in changes.RISKY_KINDS:
         matches = others["find_code"](kind, paths=paths).get("items", [])
@@ -1233,6 +1233,7 @@ def review_changes(
             **imported_summary,
         }
     )
+    result.update(coverage_review(root, settings, [str(f["path"]) for f in existing], str(result["verdict"])))
     result.update(reuse_review(root, call, settings, existing, str(result["verdict"]), limit))
     comments = changes.draft_comments(buckets, risky[:limit], uncovered[:limit], limit=limit * COMMENTS_PER_TOP)
     result["comments"] = comments
@@ -1240,6 +1241,71 @@ def review_changes(
         result["verdict"], result["counts"], impact, len(uncovered), len(comments), unused_kinds=kinds
     )
     return result
+
+
+def declaration_impacts(
+    root: Path,
+    call: Call,
+    cap: int,
+    existing: Sequence[Mapping[str, Any]],
+    others: Mapping[str, Callable[..., Any]],
+    limit: int,
+) -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[tuple[dict[str, Any], dict[str, Any]]]
+]:
+    """For review_changes: the ``impact`` rows of the first ``limit`` changed declarations, every changed
+    declaration's impact report, the changed declarations, and each declaration paired with its report."""
+    impact: list[dict[str, Any]] = []
+    reports: list[dict[str, Any]] = []  # every changed declaration's impact, for the tests the change reaches
+    touched: list[dict[str, Any]] = []  # changed declarations (changed test methods run one by one)
+    impacted: list[tuple[dict[str, Any], dict[str, Any]]] = []  # changed declarations with their impact reports
+    for file in existing[:cap]:
+        if len(reports) >= verify.MAX_DECLARATIONS:
+            break
+        outline = flat_outline(
+            call("groovyscope/documentSymbols", {"root": str(root), "uri": to_uri(root, file["path"])})
+        )
+        for declaration in changes.touched_declarations(outline, file["ranges"], limit=verify.MAX_DECLARATIONS):
+            touched.append({**declaration, "path": file["path"]})
+            if len(reports) >= verify.MAX_DECLARATIONS:
+                break
+            report = others["impact_of"](impact_target(declaration), "signature")
+            if not report.get("found"):
+                continue
+            first = report["reports"][0]
+            reports.append(first)
+            impacted.append(({**declaration, "path": file["path"]}, first))
+            if len(impact) >= limit:
+                continue
+            impact.append(
+                {
+                    **declaration,
+                    "path": file["path"],
+                    "riskLevel": first.get("riskLevel"),
+                    "riskScore": first.get("riskScore"),
+                    "callers": first.get("counts", {}),
+                    "tests": len(first.get("tests", [])),
+                    "dynamicSites": len(first.get("dynamicUnknowns", [])),
+                }
+            )
+    return impact, reports, touched, impacted
+
+
+def coverage_review(root: Path, settings: Mapping[str, Any], changed: Sequence[str], verdict: str) -> dict[str, Any]:
+    """The ``coverage`` block of review_changes, and the verdict made blocking when a fresh JaCoCo report has changed
+    classes under ``coverage.minimumPercent``; nothing when the threshold is off."""
+    assessed = coverage_check.assess(
+        root,
+        coverage_check.policy(settings),
+        changed,
+        configured_report=settings.get("jacoco"),
+        command="groovyscope verify --coverage",
+    )
+    if assessed.get("verdict") == "off":
+        return {}
+    if assessed.get("verdict") == "below":
+        return {"coverage": assessed, "verdict": coverage_check.with_verdict(verdict, assessed)}
+    return {"coverage": assessed}
 
 
 def reuse_review(
@@ -1343,6 +1409,11 @@ def build_tools(
     tools.update(
         mcp_understanding.understanding_tools(
             root, call, cap, tools, confirm_policy=policy, shared_callers=shared_callers
+        )
+    )
+    tools.update(
+        mcp_testplan.test_plan_tools(
+            root, cap, tools, report_settings=report_settings or {}, verify_settings=verify_settings
         )
     )
     return tools

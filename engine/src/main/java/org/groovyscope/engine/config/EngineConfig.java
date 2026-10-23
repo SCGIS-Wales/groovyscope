@@ -298,9 +298,11 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
      * @param comments the comment checks' thresholds ({@code comments.*}, GS060 to GS065)
      * @param reuse the thresholds of the similar code search and of the helpers {@code explainCode} lists
      *     ({@code reuse.*})
+     * @param tests the test bloat checks' settings ({@code tests.*}, GS044 to GS048)
      */
     public record Practices(boolean enabled, Map<String, String> severities, Naming naming,
-            List<String> secretsAllow, Comments comments, Reuse reuse) {
+            List<String> secretsAllow, Comments comments, Reuse reuse,
+            Tests tests) {
         public static final Practices DEFAULTS = new Practices(true, Map.of(), Naming.DEFAULTS);
 
         public Practices {
@@ -309,12 +311,13 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             secretsAllow = List.copyOf(secretsAllow == null ? List.of() : secretsAllow);
             comments = comments == null ? Comments.DEFAULTS : comments;
             reuse = reuse == null ? Reuse.DEFAULTS : reuse;
+            tests = tests == null ? Tests.DEFAULTS : tests;
         }
 
-        /** Practices with the default reuse thresholds. */
+        /** Practices with the default reuse thresholds and test bloat settings. */
         public Practices(boolean enabled, Map<String, String> severities, Naming naming, List<String> secretsAllow,
                 Comments comments) {
-            this(enabled, severities, naming, secretsAllow, comments, Reuse.DEFAULTS);
+            this(enabled, severities, naming, secretsAllow, comments, Reuse.DEFAULTS, Tests.DEFAULTS);
         }
 
         /** Practices with the default comment thresholds. */
@@ -400,6 +403,37 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
             helpersLimit = Math.max(0, helpersLimit);
             minLines = Math.max(1, minLines);
             minStatements = Math.max(1, minStatements);
+        }
+    }
+
+    /**
+     * Test bloat checks (GS044 to GS048), on test sources only; the defaults mirror {@code defaults.yaml}.
+     *
+     * @param maxTestToCodeRatio test file lines allowed per line of the class under test's file (GS046)
+     * @param maxMethodsPerSubject test methods allowed in one test class (GS046)
+     * @param namePattern a regular expression every test method name matches (GS048)
+     * @param vagueNames words that say no behaviour on their own ({@code test}, {@code works}); a name made only of
+     *     them, numbers and the names of what it calls says nothing (GS048)
+     */
+    public record Tests(double maxTestToCodeRatio, int maxMethodsPerSubject, String namePattern,
+            List<String> vagueNames) {
+        /**
+         * A sentence of two words or more with a space (Spock), or an identifier of two words or more, where a leading
+         * {@code test} or {@code should} does not count as a word.
+         */
+        public static final String DEFAULT_NAME_PATTERN = "^(?:.*\\S\\s+\\S.*"
+                + "|(?:test|should)(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){2,}_*"
+                + "|(?!(?:test|should)(?:[A-Z_]|$))_*[a-z][a-z0-9]*(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){1,}_*)$";
+        public static final List<String> DEFAULT_VAGUE_NAMES = List.of("test", "tests", "testing", "should", "it",
+                "works", "work", "working", "method", "check", "checks", "verify", "verifies", "case", "scenario",
+                "simple", "basic", "happy", "path", "example", "sample", "ok", "correct", "correctly", "properly",
+                "fine", "success", "successful", "foo", "bar", "baz", "a", "an", "the", "of", "for", "and", "to",
+                "with", "is", "does");
+        public static final Tests DEFAULTS = new Tests(3.0, 40, DEFAULT_NAME_PATTERN, DEFAULT_VAGUE_NAMES);
+
+        public Tests {
+            namePattern = namePattern == null || namePattern.isBlank() ? DEFAULT_NAME_PATTERN : namePattern;
+            vagueNames = List.copyOf(vagueNames == null ? DEFAULT_VAGUE_NAMES : vagueNames);
         }
     }
 
@@ -639,6 +673,7 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
         JsonObject naming = objectOrEmpty(document.get("naming"));
         JsonObject secrets = objectOrEmpty(document.get("secrets"));
         JsonObject comments = objectOrEmpty(document.get("comments"));
+        JsonObject tests = objectOrEmpty(document.get("tests"));
         JsonObject reuse = objectOrEmpty(document.get("reuse"));
         JsonObject duplicates = objectOrEmpty(document.get("duplicates"));
         JsonObject diagnostics = objectOrEmpty(document.get("diagnostics"));
@@ -693,7 +728,11 @@ public record EngineConfig(List<String> sourceRoots, List<String> classpath, Lis
                                 integer(reuse.get("helpersLimit"), Reuse.DEFAULTS.helpersLimit()),
                                 integer(reuse.get("minLines"),
                                         integer(duplicates.get("minLines"), Reuse.DEFAULTS.minLines())),
-                                integer(duplicates.get("minStatements"), Reuse.DEFAULTS.minStatements()))),
+                                integer(duplicates.get("minStatements"), Reuse.DEFAULTS.minStatements())),
+                        new Tests(number(tests.get("maxTestToCodeRatio"), Tests.DEFAULTS.maxTestToCodeRatio()),
+                                integer(tests.get("maxMethodsPerSubject"), Tests.DEFAULTS.maxMethodsPerSubject()),
+                                string(tests.get("namePattern"), Tests.DEFAULT_NAME_PATTERN),
+                                strings(tests.get("vagueNames"), Tests.DEFAULT_VAGUE_NAMES))),
                 profiles(document.get("profiles")),
                 longValue(workspace.get("maxFileBytes"), DEFAULTS.maxFileBytes()),
                 new Diagnostics(string(diagnostics.get("push"), Diagnostics.DEFAULTS.push()),

@@ -349,6 +349,9 @@
         },
         "userPrompt": {
           "type": "boolean"
+        },
+        "coverageGate": {
+          "type": "boolean"
         }
       }
     },
@@ -588,6 +591,20 @@
         "coverageTask": {
           "type": "string",
           "pattern": "^[A-Za-z][A-Za-z0-9_:-]*$"
+        },
+        "integrationTasks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_:-]*$"
+          }
+        },
+        "integrationNeeds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -655,6 +672,31 @@
         }
       }
     },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxTestToCodeRatio": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxMethodsPerSubject": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "namePattern": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vagueNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "comments": {
       "type": "object",
       "additionalProperties": false,
@@ -715,6 +757,26 @@
         "progressSeconds": {
           "type": "number",
           "minimum": 0.5
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimumPercent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "scope": {
+          "enum": [
+            "changed",
+            "overall"
+          ]
+        },
+        "requireFreshReport": {
+          "type": "boolean"
         }
       }
     }

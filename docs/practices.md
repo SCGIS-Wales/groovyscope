@@ -436,6 +436,34 @@ class PricingSpec extends spock.lang.Specification {
 }
 ```
 
+### 10.1 Lean tests
+
+One test per behaviour, its cases in a data table; never a test that repeats another, and a test class in proportion
+to the class it tests. groovyscope checks test sources only (a source set other than `main`, a class named like a test,
+or a Spock specification): Spock feature methods, JUnit 4 and 5 `@Test` methods and JUnit 3 `test*` methods. Settings
+live in `.groovyscope.yaml`:
+
+```yaml
+tests:
+  maxTestToCodeRatio: 3.0   # GS046: test file lines allowed per line of the file of the class under test
+  maxMethodsPerSubject: 40  # GS046: test methods allowed in one test class
+  namePattern: '^(?:.*\S\s+\S.*|(?:test|should)(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){2,}_*|(?!(?:test|should)(?:[A-Z_]|$))_*[a-z][a-z0-9]*(?:_*[A-Z][a-z0-9]*|_+[a-z][a-z0-9]*){1,}_*)$'
+  vagueNames: [test, should, works, method, check, verify, example, ...]  # GS048: words that alone say nothing
+```
+
+The default `namePattern` accepts a sentence of two words or more (a Spock feature name) and an identifier of two
+words or more in camel or snake case (`chargesTax`, `returnsEmptyListForBlankQuery`, `test_blank_query_gives_nothing`),
+where a leading `test` or `should` does not count as a word; `test1`, `testTotal` and `shouldWork` do not match it. Whatever the pattern, a name made only of vague words, numbers and the
+names of what the test calls or creates (`testSquare` for a test of `square`) says no behaviour.
+
+| Code | Checks | Fix |
+|---|---|---|
+| GS044 | Tests of one class whose bodies are the same once comments, whitespace, literals and Spock block descriptions are set aside; names, calls and operators must match, so unlike `find_duplicates` a renamed variable makes another test. Reported at the second and later tests, naming the first | For Spock features that differ only in literals: the first feature with a `where:` table (each varying literal a column named after the parameter, property or variable it is given to, `expected` for what a result is compared with, else `a`, `b`), repeated rows dropped, the others deleted; applied only when the code is named. None for JUnit tests, data driven or annotated features, a literal over several lines, or a copy with a comment above it |
+| GS045 | A test whose steps only create objects, set properties and name literals, and whose conditions only say that a constructor did not throw (`noExceptionThrown()`, `notThrown`, `assertDoesNotThrow { new X() }`, not null), or only that getters return what a named argument, a constructor parameter or a setter gave them; or a test that creates an object and asserts nothing | none |
+| GS046 | The test file's lines over the lines of the file of the class under test above `maxTestToCodeRatio`, or more test methods than `maxMethodsPerSubject`; once per test class, both numbers in the message. The class under test is found by name (`FooSpec`, `FooTest`, `FooTests`, `FooIT` test `Foo`) among the main sources compiled with the test, else in `src/main/groovy` or `src/main/java` beside it; when it is not found, nothing is reported | none |
+| GS047 | A test making the same calls with the same literal arguments, with the same assertions and the same other steps as an earlier test of its class (its name and descriptions aside), reported at the later one | none |
+| GS048 | A test name that says no behaviour (only vague words, numbers or the names of what it calls), or one that does not match `namePattern` | none |
+
 ---
 
 ## 11. Formatting and style
@@ -681,6 +709,7 @@ Wire it in with `tasks.withType(GroovyCompile).configureEach { groovyOptions.con
 | Test doubles | none | none | GS013: Mockito or Spock stub on a private method; GS014: metaClass override `@CompileStatic` callers bypass; GS015: metaClass on a double |
 | Tests that check nothing | JUnitTestMethodWithoutAssert (junit rule set) | none | GS016: a JUnit test with no assert, verify or expected exception, helpers followed |
 | Spock structure | none | Spock's own transformation (not run by the analysis compile) | GS040: interaction in `then:` without a cardinality, or a double created there; GS041: data table column unused or declared twice; GS042: `@Unroll` without a pattern; GS043: exception condition outside `then:` or twice in one block |
+| Lean tests | none | none | GS044: tests repeating one shape with other literals; GS045: a test of a constructor or of getters echoing their inputs; GS046: a test class out of proportion to the class it tests; GS047: a test repeating another's inputs; GS048: a test name without behaviour |
 | Gradle build scripts | Gradle profile (`*.gradle`) | none | GS050: eager task API; GS051: dynamic version; GS052: `http://` repository (error) or `mavenLocal()` (warning) |
 | Version gating | none | none | GS010: Groovy 6 construct under a 5.x target |
 | Closures | ImplicitClosureParameter (excluded) | `@DelegatesTo`, `@ClosureParams` | GS017: a public Closure parameter without either; GS029: a multi-line closure on `it`; GS037: `return` inside `each` acts as continue |

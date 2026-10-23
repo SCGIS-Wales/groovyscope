@@ -56,6 +56,7 @@ class HookSettings(TypedDict):
     afterWriteInclude: list[str]
     afterWriteMaxFindings: int
     stopGate: bool
+    coverageGate: bool
     timeoutSeconds: int
 
 
@@ -71,6 +72,7 @@ def settings(effective: Mapping[str, Any]) -> HookSettings:
         "afterWriteInclude": [str(x) for x in value("afterWriteInclude")],
         "afterWriteMaxFindings": int(value("afterWriteMaxFindings")),
         "stopGate": bool(value("stopGate")),
+        "coverageGate": bool(value("coverageGate")),
         "timeoutSeconds": int(value("timeoutSeconds")),
     }
 
@@ -353,6 +355,18 @@ def stop_decision(rows: Sequence[Mapping[str, Any]], limit: int) -> dict[str, st
         "decision": "block",
         "reason": f"groovyscope: {len(errors)} compile error(s) in the files you changed{more}: {listed}. "
         "Fix them before finishing.",
+    }
+
+
+def coverage_decision(below: Sequence[Mapping[str, Any]], threshold: int) -> dict[str, str] | None:
+    """The ``Stop`` answer while a fresh JaCoCo report has changed classes under the threshold, else nothing."""
+    if not below:
+        return None
+    listed = "; ".join(f"{row.get('class')} {row.get('percent')}%" for row in below)
+    return {
+        "decision": "block",
+        "reason": f"groovyscope: {len(below)} changed class(es) under {threshold}% line coverage: {listed}. "
+        "Add the tests groovyscope.test_plan lists as needed, run them, then finish.",
     }
 
 

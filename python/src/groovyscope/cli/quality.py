@@ -11,13 +11,14 @@ import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
 from groovyscope import (
     atomic,
     changes,
+    coverage_check,
     gate,
     gitignore,
     hooks,
@@ -179,6 +180,11 @@ def run_hook(obj: dict[str, Any], event: str | None, text: str) -> int:
 def hook_check(root: Path, name: str, payload: Mapping[str, Any], effective: Mapping[str, Any]) -> None:
     """PostToolUse and Stop: the written files' findings, or the stop gate's decision."""
     settings = hooks.settings(effective)
+    if name == "stop" and settings["coverageGate"]:
+        held = coverage_stop(root, effective)
+        if held:
+            click.echo(json.dumps(held))
+            return
     if name == "postToolUse":
         for line in planned_outcomes(root, hooks.written_paths(payload, root), effective):
             click.echo(line)
@@ -343,6 +349,27 @@ def hook_after_write(socket_file: Path, root: Path, paths: Sequence[Path], setti
     """The after-write block for the Groovy files a write touched; empty when there is nothing to say."""
     rows = hook_check_rows(socket_file, root, paths, settings["afterWriteInclude"], settings["timeoutSeconds"])
     return "" if rows is None else hooks.render_after_write(rows, paths, root, settings["afterWriteMaxFindings"])
+
+
+def coverage_stop(root: Path, effective: Mapping[str, Any]) -> dict[str, str] | None:
+    """The coverage stop gate: reads the build's JaCoCo report (never runs Gradle) and blocks while a fresh one
+    has the Groovy files changed this session under ``coverage.minimumPercent``."""
+    changed = hooks.changed_since_baseline(
+        hooks.changed_groovy_files(root, changes.default_runner), session_baseline_file(root)
+    )
+    rules = coverage_check.policy(effective)
+    found = coverage_check.assess(
+        root,
+        {**rules, "requireFreshReport": True},
+        [common.shown_path(path, root) for path in changed],
+        configured_report=(effective.get("reports") or {}).get("jacoco"),
+        command="groovyscope verify --coverage",
+    )
+    return (
+        hooks.coverage_decision(found.get("below") or [], rules["minimumPercent"])
+        if found.get("verdict") == "below"
+        else None
+    )
 
 
 def hook_stop_gate(socket_file: Path, root: Path, changed: Sequence[Path], settings: hooks.HookSettings) -> str:
@@ -513,6 +540,12 @@ def coverage_plan(plan_result: Mapping[str, Any]) -> dict[str, Any]:
     help="With --failed: folders or ZIP archives (a CI artifacts.zip) holding TEST-*.xml.",
 )
 @click.option("--coverage", is_flag=True, help="Also build the JaCoCo report and list changed methods no test ran.")
+@click.option(
+    "--integration",
+    is_flag=True,
+    help="Also run the reached integration tests (verify.integrationTasks), unless verify.integrationNeeds says what "
+    "they need here: then they are listed with that reason.",
+)
 @click.option("--dry-run", is_flag=True, help="Print the plan and the Gradle command without running it.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_obj
@@ -524,6 +557,7 @@ def verify_command(
     failed: bool,
     results_from: tuple[Path, ...],
     coverage: bool,
+    integration: bool,
     dry_run: bool,
     as_json: bool,
 ) -> None:
@@ -537,6 +571,7 @@ def verify_command(
         verify_failed(obj, results_from, dry_run=dry_run, as_json=as_json)
         return
     socket_file, effective = common.daemon_socket_for(obj)
+    effective, held_back = with_integration(effective) if integration else (effective, [])
     tools = common.workspace_tools(obj, socket_file, effective)
     result = tools["review_changes"](base, staged, 8)
     if result.get("error"):
@@ -550,6 +585,7 @@ def verify_command(
         plan_result = coverage_plan(plan_result)
     args = list(plan_result.get("commandArgs") or [])
     lines += verify.test_lines(plan_result)
+    lines += held_back_lines(held_back, plan_result)
     gradle: dict[str, Any] | None = None
     uncovered: dict[str, Any] | None = None
     if args and not dry_run:
@@ -562,16 +598,56 @@ def verify_command(
             lines += coverage_lines(uncovered)
     elif args:
         lines.append("dry run: nothing was built")
+    threshold = threshold_after(obj["root"], effective, result, ran=gradle is not None and coverage)
+    lines += coverage_check.lines(threshold)
     blocking = int((result.get("counts") or {}).get("blocking", 0))
     if as_json:
         keys = ("base", "mode", "verdict", "triage", "counts", "files")
         payload = {**{k: result.get(k) for k in keys}, "tests": plan_result, "build": gradle}
+        if threshold.get("verdict") not in {None, "off"}:
+            payload["threshold"] = threshold
         click.echo(compact_json({**payload, "coverage": uncovered} if coverage else payload))
     else:
         for line in lines:
             click.echo(line)
-    if blocking or (gradle is not None and gradle["exitCode"] != 0):
+    under = coverage and threshold.get("verdict") == "below"
+    if blocking or under or (gradle is not None and gradle["exitCode"] != 0):
         sys.exit(1)
+
+
+def held_back_lines(needs: Sequence[str], plan_result: Mapping[str, Any]) -> list[str]:
+    """Why the reached integration tests listed above did not run here."""
+    if not needs or not plan_result.get("inCi"):
+        return []
+    return [f"integration tests not run here (they need {', '.join(needs)}): name them in the change"]
+
+
+def with_integration(effective: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The configuration with ``verify.integrationTasks`` added to the tasks ``verify`` runs, or unchanged with
+    what they need (``verify.integrationNeeds``) when that is not empty."""
+    section: Mapping[str, Any] = effective.get("verify") or {}
+    needs = [str(n) for n in section.get("integrationNeeds", config_module.default("verify", "integrationNeeds"))]
+    if needs:
+        return dict(effective), needs
+    run = [str(t) for t in section.get("runTasks", config_module.default("verify", "runTasks"))]
+    extra = [str(t) for t in section.get("integrationTasks", config_module.default("verify", "integrationTasks"))]
+    return {**effective, "verify": {**section, "runTasks": [*run, *(t for t in extra if t not in run)]}}, []
+
+
+def threshold_after(
+    root: Path, effective: Mapping[str, Any], review: Mapping[str, Any], *, ran: bool
+) -> coverage_check.Assessment:
+    """The coverage threshold for the changed files: read again from the report the run just wrote, or the
+    review's reading when nothing ran (a stale or missing report then only says how to refresh it)."""
+    if not ran:
+        return cast("coverage_check.Assessment", review.get("coverage") or {"verdict": "off"})
+    return coverage_check.assess(
+        root,
+        coverage_check.policy(effective),
+        [str(f.get("path")) for f in review.get("files") or []],
+        configured_report=(effective.get("reports") or {}).get("jacoco"),
+        command="groovyscope verify --coverage",
+    )
 
 
 def verify_failed(obj: dict[str, Any], sources: Sequence[Path], *, dry_run: bool, as_json: bool) -> None:
