@@ -71,3 +71,97 @@ from a number to a String, a List read with `.length`, a String used as a boolea
 key written with two kinds of value, a block copied from `Strings.slug`, a test class five times its subject with
 duplicated and trivial tests and names without behaviour, and an integration test in `src/it/groovy` calling a
 public method.
+
+## Phase 2 calibration
+
+The comment checks GS060 to GS065 (`practices/CommentChecks.java`) were run with the default `comments` settings
+on CodeNarc 4.0.0 `src/main`, 529 Groovy files: the benchmark copy groovyscope unpacks into
+`~/.groovyscope/benchmark/codenarc/`, because the Gradle cache holds only the binary CodeNarc jar and no sources jar.
+Each file was parsed on its own (the syntax only tree that `groovyscope/parse` uses) and every practice finder ran on
+it. The comment checks took 330 to 370 ms for the 529 files in one JVM, warm up included (under 1 ms a file).
+
+| Check | Findings | Files | Judged | Correct | False |
+|---|---|---|---|---|---|
+| GS060 comment restates the code | 4 | 4 | all 4 | 4 | 0 |
+| GS061 comment block in a method | 9 | 9 | all 9 | 9 | 0 |
+| GS062 Javadoc that adds nothing | 41 | 22 | 10 | 10 | 0 |
+| GS063 commented out code | 5 | 4 | all 5 | 5 | 0 |
+| GS064 decoration | 40 | 20 | 10 | 10 | 0 |
+| GS065 more comment than code | 6 | 6 | all 6 | 6 | 0 |
+
+GS060 and GS065 are at 0% false positives on their samples, inside the 10% the plan allows. Both report few
+findings on this corpus: they are tuned for precision, since a gate that blocks on a good comment teaches the agent to
+ignore it. GS062 is 13 Javadocs over 5 text lines (of the 175 documented methods, under the 10% the default of 5 was chosen
+for), 10 Javadocs on private members and 18 tags that repeat the signature.
+
+How a finding was judged: correct when the comment says what the code already says (its names, its condition, its
+call), narrates the steps, is code or decoration, or breaks the stated limit; false when it gives a reason, a caveat
+or a reference the code cannot carry and the check still counts it.
+
+GS060, all four:
+
+| Where | Comment, then the code | Verdict |
+|---|---|---|
+| `CodeNarc.groovy:318` | `// Output file` above `reportWriter.outputFile = parts[1]` | correct |
+| `results/DirectoryResults.groovy:99` | `// Missing DirectoryResults: create it` above `new DirectoryResults(subDir)` | correct |
+| `rule/design/CloneableWithoutCloneRule.groovy:40` | `// is this class a Cloneable?` above `ClassHelper.make(Cloneable)` | correct |
+| `rule/formatting/IndentationRule.groovy:400` | `// If this is a nested class, then add one to the outer class level` above `node.outerClass ? ... + 1 : 0` | correct |
+
+GS065, all six:
+
+| Where | Comment lines to code lines | Verdict |
+|---|---|---|
+| `report/AbstractJsonReportWriter.groovy:30` `writeReport` | 5 to 18: a block narrating the two output branches | correct |
+| `results/DirectoryResults.groovy:61` `addFileResultRecursive` | 5 to 18: a comment above every branch saying what it does | correct |
+| `rule/design/ReturnsNullInsteadOfEmptyCollectionRule.groovy:53` `handleClosure` | 3 to 5: a question restating the call, and a commented out `super` call | correct |
+| `rule/groovyism/CollectAllIsDeprecatedRule.groovy:40` `visitMethodCallExpression` | 4 to 7: a block describing the AST shape the next line tests | correct |
+| `rule/groovyism/ExplicitCallToDivMethodRule.groovy:47` `shouldIgnoreViolationForMethodCall` | 2 to 7: "Ignore if argument is a Map, Closure or a String" restates the return expression | correct |
+| `rule/unnecessary/UnnecessarySetterRule.groovy:41` `visitExpressionStatement` | 2 to 6: a narration and a commented out `super` call | correct |
+
+GS061, all nine (correct by the rule; four of them are reasons, with an example or a link, that one line and a link
+would carry): `report/AbstractJsonReportWriter.groovy:38`, `report/GitlabCodeQualityReportWriter.groovy:49`,
+`report/XmlReportUtil.groovy:32`, `rule/FieldReferenceAstVisitor.groovy:91`, `rule/groovyism/UseCollectManyRule.groovy:42`,
+`rule/groovyism/UseCollectNestedRule.groovy:82`, `rule/junit/SpockUtil.groovy:98`,
+`rule/unused/ReferenceCollector.groovy:41`, `rule/unused/UnusedVariableRule.groovy:145`.
+
+GS063, all five, all correct: `report/HtmlReportWriter.groovy:187` (`def violations = results.violations`), and four
+commented out `super.visit...(...)` calls kept below a sentence saying why they are not made
+(`ReturnsNullInsteadOfEmptyCollectionRule.groovy:59` and `:119`, `GStringExpressionWithinStringRule.groovy:57`,
+`UnnecessarySetterRule.groovy:46`); the sentence says it, the dead call is noise.
+
+GS062, every fourth finding, all correct: `CodeNarcRunner.groovy:58` (21 text lines), `results/DirectoryResults.groovy:85`
+(private method), `results/Results.groovy:52` (`@return the number of violations with the specified priority` on
+`getNumberOfViolationsWithPriority`), `rule/AbstractRuleTestCase.groovy:193` (9 lines), `rule/AstVisitor.groovy:30`
+(`@param rule - the Rule`), `rule/grails/GrailsUtil.groovy:32` (private constructor), `rule/junit/JUnitUtil.groovy:63`
+(6 lines), `ruleregistry/PropertiesFileRuleRegistry.groovy:43` (`@param ruleName - the rule name`),
+`source/SourceCodeCriteria.groovy:64` (`@param sourceCode - the SourceCode`), `util/SourceCodeUtil.groovy:45` (9 lines;
+correct by the limit, though its tags carry real contracts such as "has to be greater than zero").
+
+GS064, every fourth finding, all correct: eight `//------` banner lines around "Helper Methods" headings
+(`AbstractHtmlReportWriter.groovy:68`, `HtmlReportWriter.groovy:57`, `InlineXmlReportWriter.groovy:32`,
+`SortableHtmlReportWriter.groovy:61`, `AbstractRuleTestCase.groovy:52`, `ClassReferenceAstVisitor.groovy:141`,
+`IndentationRule.groovy:342`, `XmlReaderRuleSet.groovy:67`) and two TODOs without an owner
+(`JUnitStyleAssertionsRule.groovy:41`, `UnnecessarySafeNavigationOperatorRule.groovy:56`).
+
+What the first run found and what changed. The first run reported GS060 7 times (2 false: a comment whose second half
+gives a reason, "it may have an annotation", and an item of a list explaining what `'*'` means), GS063 12 times
+(7 false: examples after "e.g.:" and bullets such as "- Checks spaces only (not tabs)") and GS065 14 times (4 false
+and 2 borderline: methods whose comments are a reason with an example or a link, as in `UnusedVariableRule`,
+`ReferenceCollector`, `FieldReferenceAstVisitor` and `SpockUtil`). The defaults stayed as planned; the heuristics
+changed:
+
+1. A comment that gives a reason or a caveat (because, since, so that, in case, cannot, must, need, may, might,
+   could, e.g., the case, false negatives and similar words) is a why: GS060 leaves it alone and GS065 does not count
+   its lines. GS061 still limits how long it may be.
+2. GS060 leaves list items (a bullet or a number in front) and runs ending with a colon alone.
+3. GS063 reads a line as code only when it has the shape of code (a bracket, `=`, `{`, a closing `;` or `)`) and either
+   an operator standing alone (`=`, `{`, `->`, `&&`) or no more than half its tokens are words, brackets and quotes
+   stripped first; bullets are prose; code lines introduced by a colon, "e.g." or "for example" are an example and are
+   left alone.
+4. GS064 does not take an ellipsis (`...`) for a banner.
+5. GS061 counts text lines only, not the `/*` and `*/` delimiter lines, as GS062 does for Javadoc.
+6. Methods a transformation wrote (`@Generated`) are skipped.
+
+The fixture's `demo/Verbose.groovy` reports GS060 (lines 23, 25, 33), GS061 (28, 4 lines), GS062 (14, Javadoc on a
+private method; 16, `@return the counter` on a method returning `counter`), GS063 (35, two lines), GS064 (8 and 10,
+banners; 37, a bare TODO) and GS065 (22, 10 comment lines to 8 code lines).

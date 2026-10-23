@@ -181,9 +181,24 @@ public record PracticeContext(String uri, ModuleNode module, TextLines lines, En
         }
     }
 
+    /**
+     * {@link #report} at a text range rather than a node: for what the tree does not hold, such as comments.
+     * Nothing when the code is switched off.
+     */
+    public void report(String code, Range range, String message, String fixTitle, List<TextEdit> fix) {
+        Severity severity = PracticeFinder.severity(code, config);
+        if (severity != null) {
+            add(code, range, severity, message, fixTitle, fix, List.of());
+        }
+    }
+
     private void add(String code, ASTNode node, Severity severity, String message, String fixTitle,
             List<TextEdit> fix, List<PracticeFinder.Alternative> alternatives) {
-        Range range = AstRanges.rangeOf(node);
+        add(code, AstRanges.rangeOf(node), severity, message, fixTitle, fix, alternatives);
+    }
+
+    private void add(String code, Range range, Severity severity, String message, String fixTitle,
+            List<TextEdit> fix, List<PracticeFinder.Alternative> alternatives) {
         if (range == null) {
             return;
         }
