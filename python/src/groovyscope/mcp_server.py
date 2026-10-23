@@ -23,6 +23,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from groovyscope import (
     changes,
     config,
+    coverage_check,
     daemon,
     diagnostics,
     interaction,
@@ -622,7 +623,7 @@ def quality_tools(
         "format": bind(format_files, root, call, cap, confirm_policy),
         "find_dynamic_code": bind(find_dynamic_code, root, call, paged),
         "workspace_status": bind(workspace_status, root, environ, call, classpath, export_job),
-        **coverage_tools(root, paged, settings),
+        **coverage_tools(root, paged, settings, cap),
         **classpath_tools(root, environ, classpath, clip_at=clip_at, confirm_policy=confirm_policy, job=export_job),
     }
 
@@ -833,6 +834,7 @@ def await_export(job: ExportJob, worker: threading.Thread, wait_for: float, ever
 def coverage_gaps(
     root: Path,
     paged: Paged,
+    cap: int,
     settings: Mapping[str, Any],
     paths: list[str] | None = None,
     limit: int | None = None,
@@ -855,13 +857,31 @@ def coverage_gaps(
     result["report"] = relative_path(report.as_uri(), root)
     result["coverage"] = summary
     result["uncoveredMethods"] = sum(1 for g in gaps if g["kind"] == "method" and g["status"] == "uncovered")
+    threshold = coverage_check.policy(settings)["minimumPercent"]
+    if threshold > 0:
+        try:
+            files = coverage_check.by_file(reports.parse_report(report), root)
+        except ValueError:
+            files = {}
+        under = sorted(
+            (f for f in files.values() if f["percent"] < threshold and reports.under_paths(f["path"], paths or [])),
+            key=lambda f: f["percent"],
+        )
+        result["threshold"] = threshold
+        result["below"] = [
+            {"class": f["path"], "percent": f["percent"], "missedLines": coverage_check.ranges(f["missedLines"])}
+            for f in under[:cap]
+        ]
+        result["belowCount"] = len(under)
     return result
 
 
-def coverage_tools(root: Path, paged: Paged, settings: Mapping[str, Any]) -> dict[str, Callable[..., Any]]:
+def coverage_tools(
+    root: Path, paged: Paged, settings: Mapping[str, Any], cap: int = 20
+) -> dict[str, Callable[..., Any]]:
     """coverage_gaps: the build's JaCoCo report as the list of what tests never executed."""
 
-    return {"coverage_gaps": bind(coverage_gaps, root, paged, settings)}
+    return {"coverage_gaps": bind(coverage_gaps, root, paged, cap, settings)}
 
 
 def test_results(root: Path, cap: int, sources: list[str] | None = None, limit: int | None = None) -> dict[str, Any]:
@@ -1232,12 +1252,30 @@ def review_changes(
             **imported_summary,
         }
     )
+    result.update(coverage_review(root, settings, [str(f["path"]) for f in existing], str(result["verdict"])))
     comments = changes.draft_comments(buckets, risky[:limit], uncovered[:limit], limit=limit * COMMENTS_PER_TOP)
     result["comments"] = comments
     result["summaryComment"] = changes.summary_comment(
         result["verdict"], result["counts"], impact, len(uncovered), len(comments), unused_kinds=kinds
     )
     return result
+
+
+def coverage_review(root: Path, settings: Mapping[str, Any], changed: Sequence[str], verdict: str) -> dict[str, Any]:
+    """The ``coverage`` block of review_changes, and the verdict made blocking when a fresh JaCoCo report has changed
+    classes under ``coverage.minimumPercent``; nothing when the threshold is off."""
+    assessed = coverage_check.assess(
+        root,
+        coverage_check.policy(settings),
+        changed,
+        configured_report=settings.get("jacoco"),
+        command="groovyscope verify --coverage",
+    )
+    if assessed.get("verdict") == "off":
+        return {}
+    if assessed.get("verdict") == "below":
+        return {"coverage": assessed, "verdict": coverage_check.with_verdict(verdict, assessed)}
+    return {"coverage": assessed}
 
 
 def unused_review(

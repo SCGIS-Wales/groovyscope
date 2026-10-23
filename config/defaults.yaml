@@ -79,6 +79,7 @@ hooks:
   afterWriteInclude: ["compile", "lint", "practices"]  # analyses after a write (typecheck adds a whole-workspace compile)
   afterWriteMaxFindings: 12 # findings listed after a write; the rest is counted
   stopGate: false           # Kiro Stop: refuse to end the turn while changed Groovy files have compile errors
+  coverageGate: false       # Kiro Stop: also refuse while a fresh JaCoCo report has changed classes under coverage.minimumPercent
   timeoutSeconds: 25        # engine request budget inside a hook, under Kiro's own hook limit; over it the hook says so
   preWrite:                 # the edit gate: Kiro's PreToolUse hook on write checks the file as it would be
     enabled: true
@@ -106,6 +107,10 @@ naming:
   enabled: true           # GS020 to GS027: names that say what things are and do (docs/practices.md, section 18)
   allowedAbbreviations: []  # words the team reads fluently, never reported by GS024, e.g. [cfg, svc]
   vocabulary: {}          # the verb to use per family of synonyms, e.g. {fetch: get, retrieve: get, remove: delete}
+coverage:
+  minimumPercent: 80       # line coverage every changed class must reach (0: no threshold)
+  scope: changed           # changed: each changed class; overall: the workspace's line coverage
+  requireFreshReport: true # only a JaCoCo report newer than the change counts; an older one never blocks
 comments:
   restateShare: 0.7       # GS060: share of a comment's words the statement below it covers for it to restate the code
   maxBlockLines: 2        # GS061: consecutive comment lines allowed in a method body

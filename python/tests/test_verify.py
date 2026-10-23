@@ -367,3 +367,28 @@ def test_source_sets_join_the_roots_unless_turned_off(tmp_path: Path) -> None:
     ]
     off = {"sourceRoots": ["vars"], "sourceSets": False}
     assert workspace_init.with_source_sets(tmp_path, off) == off
+
+
+def test_verify_coverage_fails_under_the_threshold_on_a_fresh_report(
+    review: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    review["result"]["tests"]["coverageTask"] = "jacocoTestReport"
+    review["result"]["files"] = [{"path": "src/main/groovy/app/Store.groovy", "status": "modified"}]
+    (tmp_path / "src/main/groovy/app").mkdir(parents=True)
+    (tmp_path / "src/main/groovy/app/Store.groovy").write_text("x", encoding="utf-8")
+    review["reports"] = {"build/reports/jacoco/test/jacocoTestReport.xml": JACOCO}  # written by the run: fresh
+    change = {"base": "master", "mode": "branch", "files": [
+        {"path": "src/main/groovy/app/Store.groovy", "status": "modified", "ranges": [[2, 4]]}]}  # fmt: skip
+    monkeypatch.setattr(changes, "changed_files", lambda *_a, **_k: change)
+    out = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage"])
+    assert out.exit_code == 1, out.output
+    assert "coverage: changed classes at 80% or above: no, 1 under (workspace 0%)" in out.output
+    assert "  src/main/groovy/app/Store.groovy: 0%" in out.output
+    payload = json.loads(
+        CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify", "--coverage", "--json"]).output
+    )
+    assert payload["threshold"]["verdict"] == "below"
+
+    review["result"]["coverage"] = {"verdict": "stale", "note": "the report predates the change"}
+    plain = CliRunner().invoke(cli.main, ["--root", str(tmp_path), "verify"])
+    assert plain.exit_code == 0 and "coverage: the report predates the change" in plain.output

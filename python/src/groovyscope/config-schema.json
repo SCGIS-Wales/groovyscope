@@ -349,6 +349,9 @@
         },
         "userPrompt": {
           "type": "boolean"
+        },
+        "coverageGate": {
+          "type": "boolean"
         }
       }
     },
@@ -676,6 +679,26 @@
         "progressSeconds": {
           "type": "number",
           "minimum": 0.5
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimumPercent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "scope": {
+          "enum": [
+            "changed",
+            "overall"
+          ]
+        },
+        "requireFreshReport": {
+          "type": "boolean"
         }
       }
     }

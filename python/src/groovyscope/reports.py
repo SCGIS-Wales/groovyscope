@@ -226,16 +226,20 @@ def jacoco_file(root: Path, configured: str | None) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def under_paths(path: str, paths: Sequence[str]) -> bool:
+    """Whether ``path`` is one of ``paths`` (files or folders) or lies under one; True when none are given."""
+    wanted = [p.rstrip("/") for p in paths]
+    return not wanted or any(path == w or path.startswith(w + "/") for w in wanted)
+
+
 def filter_gaps(gaps: Sequence[Gap], paths: Sequence[str]) -> list[Gap]:
     """Gaps under any of ``paths`` (files or folders), or all when none are given."""
-    if not paths:
-        return list(gaps)
-    wanted = [p.rstrip("/") for p in paths]
-    return [g for g in gaps if any(g["path"] == w or g["path"].startswith(w + "/") for w in wanted)]
+    return [g for g in gaps if under_paths(g["path"], paths)]
 
 
 def reports_settings(config: Mapping[str, Any]) -> dict[str, Any]:
     section = config.get("reports")
+    coverage = dict(config.get("coverage") or {})
     if not isinstance(section, Mapping):
-        return {"sarif": [], "jacoco": None}
-    return {"sarif": list(section.get("sarif") or []), "jacoco": section.get("jacoco")}
+        return {"sarif": [], "jacoco": None, "coverage": coverage}
+    return {"sarif": list(section.get("sarif") or []), "jacoco": section.get("jacoco"), "coverage": coverage}

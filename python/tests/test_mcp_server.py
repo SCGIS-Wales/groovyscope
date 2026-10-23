@@ -895,6 +895,10 @@ JACOCO_XML = """<?xml version="1.0" encoding="UTF-8"?>
       <method name="run" desc="()V" line="4"><counter type="LINE" missed="3" covered="0"/></method>
       <counter type="LINE" missed="3" covered="2"/>
     </class>
+    <sourcefile name="A.groovy">
+      <line nr="4" mi="2" ci="0"/><line nr="5" mi="1" ci="0"/><line nr="6" mi="1" ci="0"/>
+      <counter type="LINE" missed="3" covered="2"/>
+    </sourcefile>
   </package>
   <counter type="LINE" missed="3" covered="2"/>
 </report>
@@ -937,6 +941,8 @@ def test_coverage_gaps_reads_jacoco(local_tools: dict[str, Any], tmp_path: Path)
     assert found["count"] == 2 and found["uncoveredMethods"] == 1
     assert found["items"][0]["name"] == "A" and found["items"][1]["name"] == "A.run"
     assert found["report"] == "build/reports/jacoco/test/jacocoTestReport.xml"
+    assert found["threshold"] == 80 and found["belowCount"] == 1
+    assert found["below"] == [{"class": "src/A.groovy", "percent": 40, "missedLines": "4-6"}]
     assert local_tools["coverage_gaps"](paths=["other"])["count"] == 0
     (tmp_path / "build" / "reports" / "jacoco" / "test" / "jacocoTestReport.xml").write_text("<x/>", encoding="utf-8")
     assert "not a JaCoCo report" in local_tools["coverage_gaps"]()["error"]
@@ -960,6 +966,8 @@ def test_review_changes_lists_uncovered_methods_in_the_change(
     assert result["counts"]["blocking"] == 1 and result["blocking"][0]["code"] == "NP_NULL"
     assert result["imported"] == {"spotbugs": 1}
     assert result["verdict"].startswith("request changes")
+    assert result["verdict"].endswith(", and 1 changed class(es) under 80% line coverage")
+    assert result["coverage"]["verdict"] == "below" and result["coverage"]["below"][0]["class"] == "src/A.groovy"
 
 
 def test_paths_the_workspace_does_not_have_are_refused_before_any_tool_runs(tmp_path: Path) -> None:

@@ -801,3 +801,31 @@ def test_a_groovy_prompt_gets_the_edit_policy(runner: CliRunner, tmp_path: Path)
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=other).output == ""
     (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  userPrompt: false\n")
     assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=prompt).output == ""
+
+
+def test_the_coverage_stop_gate_reads_a_fresh_report_and_never_runs_gradle(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROOVYSCOPE_CACHE_DIR", str(tmp_path / "cache"))
+    source = tmp_path / "src" / "main" / "groovy" / "A.groovy"
+    source.parent.mkdir(parents=True)
+    source.write_text("class A {}\n", encoding="utf-8")
+    monkeypatch.setattr(changes, "default_runner", lambda _c, _d: (0, " M src/main/groovy/A.groovy\0"))
+    monkeypatch.setattr(cli_common, "_PROBE", lambda _socket: pytest.fail("the coverage gate needs no engine"))
+    (tmp_path / ".groovyscope.yaml").write_text("hooks:\n  coverageGate: true\n", encoding="utf-8")
+    stop = json.dumps({"hook_event_name": "Stop"})
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop).output == ""  # no report yet
+    report = tmp_path / "build" / "reports" / "jacoco" / "test" / "jacocoTestReport.xml"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        '<report name="r"><package name=""><sourcefile name="A.groovy"><line nr="1" mi="3" ci="0"/>'
+        '<counter type="LINE" missed="3" covered="1"/></sourcefile></package>'
+        '<counter type="LINE" missed="3" covered="1"/></report>',
+        encoding="utf-8",
+    )
+    os.utime(report, (source.stat().st_mtime + 5,) * 2)
+    held = json.loads(runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop).output)
+    assert held["decision"] == "block" and "src/main/groovy/A.groovy 25%" in held["reason"]
+    assert "test_plan" in held["reason"]
+    os.utime(report, (source.stat().st_mtime - 5,) * 2)  # stale: never blocks
+    assert runner.invoke(cli.main, ["--root", str(tmp_path), "hook"], input=stop).output == ""
