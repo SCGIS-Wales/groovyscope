@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.36.0...v0.36.1) (2026-10-23)
+
+
+### Documentation
+
+* mark the edit intelligence plan released in 0.36.0 ([#147](https://github.com/SCGIS-Wales/groovyscope/issues/147)) ([e52ad5b](https://github.com/SCGIS-Wales/groovyscope/commit/e52ad5b7a7349cddcda1164656e7873dd2cce313))
+
 ## [0.36.0](https://github.com/SCGIS-Wales/groovyscope/compare/v0.35.0...v0.36.0) (2026-10-23)
 
 
