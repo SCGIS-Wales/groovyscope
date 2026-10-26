@@ -7,6 +7,7 @@
 
 * bump gradle-wrapper in /engine in the gradle-minor-patch group ([#149](https://github.com/SCGIS-Wales/groovyscope/issues/149)) ([febcce3](https://github.com/SCGIS-Wales/groovyscope/commit/febcce38e9a00232103f167cc3b42da056bfe966))
 * bump hypothesis in /python in the python-minor-patch group ([#150](https://github.com/SCGIS-Wales/groovyscope/issues/150)) ([b26c29d](https://github.com/SCGIS-Wales/groovyscope/commit/b26c29d21680ccfc05cddc2b09be4145451ef49b))
+* bump the actions-minor-patch group with 5 updates ([#151](https://github.com/SCGIS-Wales/groovyscope/issues/151)) ([a713ac9](https://github.com/SCGIS-Wales/groovyscope/commit/a713ac926075ab3acfa43a532b8eb69a6bc08007))
 
 ## [0.36.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.36.0...v0.36.1) (2026-10-23)
 
