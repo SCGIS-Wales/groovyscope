@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.2](https://github.com/SCGIS-Wales/groovyscope/compare/v0.36.1...v0.36.2) (2026-10-26)
+
+
+### Dependencies
+
+* bump gradle-wrapper in /engine in the gradle-minor-patch group ([#149](https://github.com/SCGIS-Wales/groovyscope/issues/149)) ([febcce3](https://github.com/SCGIS-Wales/groovyscope/commit/febcce38e9a00232103f167cc3b42da056bfe966))
+* bump hypothesis in /python in the python-minor-patch group ([#150](https://github.com/SCGIS-Wales/groovyscope/issues/150)) ([b26c29d](https://github.com/SCGIS-Wales/groovyscope/commit/b26c29d21680ccfc05cddc2b09be4145451ef49b))
+
 ## [0.36.1](https://github.com/SCGIS-Wales/groovyscope/compare/v0.36.0...v0.36.1) (2026-10-23)
 
 
