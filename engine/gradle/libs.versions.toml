@@ -8,7 +8,7 @@ spock = "2.5-groovy-6.0"
 shadow = "9.6.1"
 cyclonedx = "3.5.1"
 jacoco = "0.8.14"
-elk = "0.12.0"
+elk = "0.12.1"
 xbase-lib = "2.40.0"  # ELK needs it at run time (its POM does not say so); 2.41 and later need Java 21, the engine runs on 17
 guava = "33.7.2-jre"  # ELK asks for [15.0,); pinned so builds are reproducible
 
